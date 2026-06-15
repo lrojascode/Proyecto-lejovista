@@ -1,0 +1,99 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database import get_db
+from app.models.user import User
+from app.models.ai_action import AIAction
+from app.schemas.schemas import AIActionResponse, ActionApprove
+from app.utils.security import get_current_user
+from app.workers.tasks import execute_action_task
+import datetime
+from typing import List
+
+router = APIRouter(prefix="/actions", tags=["actions"])
+
+@router.get("", response_model=List[AIActionResponse])
+async def list_pending_actions(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retorna la lista de acciones propuestas por la IA que están pendientes de aprobación.
+    """
+    q = select(AIAction).where(
+        AIAction.organization_id == current_user.organization_id,
+        AIAction.status == "PROPOSED"
+    ).order_by(AIAction.proposed_at.desc())
+    
+    res = await db.execute(q)
+    return res.scalars().all()
+
+@router.get("/history", response_model=List[AIActionResponse])
+async def list_action_history(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retorna el historial de acciones procesadas (aprobadas, rechazadas, ejecutadas).
+    """
+    q = select(AIAction).where(
+        AIAction.organization_id == current_user.organization_id,
+        AIAction.status != "PROPOSED"
+    ).order_by(AIAction.proposed_at.desc())
+    
+    res = await db.execute(q)
+    return res.scalars().all()
+
+@router.post("/{action_id}/approve", response_model=AIActionResponse)
+async def approve_or_reject_action(
+    action_id: str,
+    payload: ActionApprove,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Aprueba o rechaza una acción sugerida por la IA.
+    Si se aprueba, se encola la tarea de ejecución en Celery de inmediato.
+    """
+    action = await db.get(AIAction, action_id)
+    if not action or action.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Acción propuesta no encontrada.")
+        
+    if action.status != "PROPOSED":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"La acción no se puede procesar porque ya está en estado '{action.status}'."
+        )
+
+    if payload.approve:
+        action.status = "APPROVED"
+        action.approved_at = datetime.datetime.utcnow()
+        action.approved_by = current_user.id
+        db.add(action)
+        await db.commit()
+        
+        # Encolar ejecución asíncrona
+        execute_action_task.delay(action.id)
+    else:
+        action.status = "REJECTED"
+        action.rejected_at = datetime.datetime.utcnow()
+        action.reject_reason = payload.reject_reason or "Rechazado por el usuario"
+        db.add(action)
+        await db.commit()
+        
+    return action
+
+@router.get("/{action_id}/status", response_model=AIActionResponse)
+async def get_action_status(
+    action_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retorna el estado de ejecución y resultado de una acción.
+    """
+    action = await db.get(AIAction, action_id)
+    if not action or action.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Acción no encontrada.")
+        
+    return action

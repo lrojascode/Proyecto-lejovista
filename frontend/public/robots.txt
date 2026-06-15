@@ -1,0 +1,6 @@
+# Robots.txt for LejoVista
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /actions/
+Disallow: /settings/
