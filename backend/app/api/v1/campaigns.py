@@ -7,6 +7,7 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ad_account import AdAccount
 from app.schemas.schemas import CampaignSnapshotResponse
 from app.utils.security import get_current_user
+from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List
 import datetime
@@ -86,6 +87,9 @@ async def trigger_manual_sync(
     """
     Dispara manualmente el worker de sincronización incremental para todas las cuentas del tenant.
     """
+    # Cooldown: el sync golpea Meta (rate limit / posible baneo). Evitar spam.
+    await enforce_cooldown("sync", current_user.organization_id, cooldown_seconds=60)
+
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
         AdAccount.status == "ACTIVE"

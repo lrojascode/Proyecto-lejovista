@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
 
+    # --- Observabilidad ---
+    SENTRY_DSN: str = Field(default="")   # vacío => Sentry desactivado
+    LOG_LEVEL: str = Field(default="INFO")
+
     # --- API credentials ---
     META_APP_ID: str = Field(default="mock_app_id")
     META_APP_SECRET: str = Field(default="mock_app_secret")

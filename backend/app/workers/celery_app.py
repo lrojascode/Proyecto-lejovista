@@ -1,6 +1,15 @@
+import logging
 from celery import Celery
 from celery.schedules import crontab
 from app.config import settings
+
+# Sentry opcional en el worker (aquí ocurren los fallos de sync/IA que hay que ver).
+if settings.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1)
+    except Exception:
+        logging.getLogger("lejovista.celery").warning("No se pudo inicializar Sentry en el worker.")
 
 celery_app = Celery(
     "lejovista_workers",

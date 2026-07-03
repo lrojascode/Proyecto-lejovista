@@ -7,6 +7,7 @@ from app.models.ai_insight import AIInsight
 from app.models.ad_account import AdAccount
 from app.schemas.schemas import AIInsightResponse
 from app.utils.security import get_current_user
+from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import run_ai_analysis
 from typing import List
 
@@ -55,6 +56,9 @@ async def trigger_manual_analysis(
     """
     Dispara manualmente el análisis en 3 capas de la IA en background.
     """
+    # Cooldown: el análisis invoca al LLM (costo). Evitar spam.
+    await enforce_cooldown("analyze", current_user.organization_id, cooldown_seconds=120)
+
     # Programar la tarea de celery
     run_ai_analysis.delay(current_user.organization_id)
     return {"message": "Análisis e insights de IA programados para ejecutarse en segundo plano."}

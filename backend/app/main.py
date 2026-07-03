@@ -13,9 +13,22 @@ from app.api.v1.ws import router as ws_router, redis_listener
 import logging
 import asyncio
 
-# Configurar logging
-logging.basicConfig(level=logging.INFO)
+# Configurar logging estructurado (formato con timestamp, nivel y logger).
+logging.basicConfig(
+    level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 logger = logging.getLogger("lejovista.main")
+
+# Sentry opcional: se activa solo si hay DSN configurado. Import guardado para no
+# romper si el paquete no está instalado.
+if settings.SENTRY_DSN:
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=settings.SENTRY_DSN, traces_sample_rate=0.1)
+        logger.info("Sentry inicializado.")
+    except Exception as e:
+        logger.warning(f"No se pudo inicializar Sentry: {e}")
 
 from contextlib import asynccontextmanager
 
