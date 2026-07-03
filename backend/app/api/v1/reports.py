@@ -7,7 +7,7 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.services.ai.engine import AIEngine
-from app.services.ai.llm import OpenRouterClient
+from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
 from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -47,9 +47,12 @@ async def get_master_brief_data(
         llm_client = OpenRouterClient()
         insights_summary = "Simulación inicial de Master Brief"
         narrative = await llm_client.analyze_campaigns(org, acc, insights_summary, raw_data)
-        
-        # Guardar en DB para siguientes llamadas
-        acc.cached_narrative = narrative[:5000]
+
+        # Guardar en DB para siguientes llamadas, con metadatos de trazabilidad.
+        acc.cached_narrative = narrative
+        acc.narrative_generated_at = datetime.datetime.utcnow()
+        acc.narrative_model = org.ai_model or None
+        acc.narrative_prompt_version = PROMPT_VERSION
         db.add(acc)
         await db.commit()
 

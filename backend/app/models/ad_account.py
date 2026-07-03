@@ -1,6 +1,6 @@
 from datetime import datetime
 import uuid
-from sqlalchemy import String, Float, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Text, Float, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from cryptography.fernet import Fernet
@@ -10,12 +10,16 @@ class AdAccount(Base):
     __tablename__ = "ad_accounts"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"))
+    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id", ondelete="CASCADE"))
     meta_credential_id: Mapped[str] = mapped_column(String, ForeignKey("meta_credentials.id", ondelete="SET NULL"), nullable=True)
     platform: Mapped[str] = mapped_column(String)  # META, GOOGLE
     external_account_id: Mapped[str] = mapped_column(String, index=True)  # act_XXX or Customer ID
     name: Mapped[str] = mapped_column(String)
-    cached_narrative: Mapped[str] = mapped_column(String, nullable=True)
+    # Narrativa del Master Brief cacheada + metadatos de trazabilidad (D-4)
+    cached_narrative: Mapped[str] = mapped_column(Text, nullable=True)
+    narrative_generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    narrative_model: Mapped[str] = mapped_column(String, nullable=True)
+    narrative_prompt_version: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="ACTIVE")  # ACTIVE, EXPIRED, PAUSED
     spend_cap: Mapped[float] = mapped_column(Float, default=0.0)
     amount_spent: Mapped[float] = mapped_column(Float, default=0.0)

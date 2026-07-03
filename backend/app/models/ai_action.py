@@ -8,9 +8,9 @@ class AIAction(Base):
     __tablename__ = "ai_actions"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    insight_id: Mapped[str] = mapped_column(String, ForeignKey("ai_insights.id"), nullable=True)
-    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"))
-    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"))
+    insight_id: Mapped[str] = mapped_column(String, ForeignKey("ai_insights.id", ondelete="SET NULL"), nullable=True)
+    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id", ondelete="CASCADE"))
+    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id", ondelete="CASCADE"))
     
     action_type: Mapped[str] = mapped_column(String)  # MODIFY_BUDGET, PAUSE_CAMPAIGN, CREATE_CAMPAIGN, etc.
     risk_level: Mapped[str] = mapped_column(String)  # LOW, MEDIUM, HIGH

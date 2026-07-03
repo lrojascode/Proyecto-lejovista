@@ -9,8 +9,8 @@ class SyncJob(Base):
     __tablename__ = "sync_jobs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"))
-    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"))
+    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id", ondelete="CASCADE"))
+    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id", ondelete="CASCADE"))
     
     status: Mapped[str] = mapped_column(String, default="PENDING")  # PENDING, RUNNING, COMPLETED, FAILED
     sync_type: Mapped[str] = mapped_column(String)  # FULL, INCREMENTAL, WEEKLY

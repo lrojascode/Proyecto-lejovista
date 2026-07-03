@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     DEFAULT_AI_MODEL: str = Field(default="google/gemini-2.5-flash")
 
     # --- Feature flags ---
+    # Crear tablas con Base.metadata.create_all al arrancar. Solo para dev/test.
+    # En producción debe ser false y usarse `alembic upgrade head` (evita drift).
+    AUTO_CREATE_TABLES: bool = Field(default=False)
+
     # Escrituras reales a Meta (pausar/ajustar/crear). Independiente de MOCK_SERVICES:
     # aunque MOCK_SERVICES=false (lecturas reales), las escrituras siguen simuladas
     # hasta que esto sea true. Evita mutaciones accidentales con parámetros aún sin validar.

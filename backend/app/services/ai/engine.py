@@ -1,5 +1,6 @@
 import logging
 import json
+import datetime
 from typing import Dict, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +9,7 @@ from app.models.organization import Organization
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.services.ai.rules import Capa1Rules
 from app.services.ai.statistics import Capa2Statistics
-from app.services.ai.llm import OpenRouterClient
+from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
 from app.services.ai.planner import AIPlanner
 
 logger = logging.getLogger("lejovista.ai_engine")
@@ -82,10 +83,12 @@ class AIEngine:
             proposed_actions = await planner.plan_actions(acc, all_insights)
             total_actions.extend(proposed_actions)
 
-            # Guardamos la narrativa en el AdAccount para fácil acceso posterior
-            # (Ademas de guardar los insights individuales)
-            acc.cached_narrative = narrative[:5000] # Usamos un campo para guardar la narrativa o lo guardamos en metadata
-            # Por simplicidad de la prueba piloto, guardamos el html en una columna extendida o archivo local
+            # Guardamos la narrativa en el AdAccount para fácil acceso posterior,
+            # junto con metadatos de trazabilidad (modelo, versión de prompt, timestamp).
+            acc.cached_narrative = narrative
+            acc.narrative_generated_at = datetime.datetime.utcnow()
+            acc.narrative_model = org.ai_model or None
+            acc.narrative_prompt_version = PROMPT_VERSION
             self.db.add(acc)
 
         await self.db.commit()

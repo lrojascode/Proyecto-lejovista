@@ -21,10 +21,14 @@ from contextlib import asynccontextmanager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Verificando y creando tablas de base de datos...")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Base de datos inicializada correctamente.")
+    if settings.AUTO_CREATE_TABLES:
+        # Conveniencia de dev/test. En producción se usa `alembic upgrade head`.
+        logger.info("AUTO_CREATE_TABLES=true → creando tablas con create_all (solo dev)...")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Base de datos inicializada (create_all).")
+    else:
+        logger.info("AUTO_CREATE_TABLES=false → el esquema se gestiona con Alembic (alembic upgrade head).")
     
     # Iniciar listener de Redis para WebSockets
     listener_task = asyncio.create_task(redis_listener())

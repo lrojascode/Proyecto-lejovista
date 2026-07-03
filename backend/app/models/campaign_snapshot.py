@@ -8,8 +8,8 @@ class CampaignSnapshot(Base):
     __tablename__ = "campaign_snapshots"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"), index=True)
-    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), index=True)
+    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id", ondelete="CASCADE"), index=True)
+    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     
     campaign_id: Mapped[str] = mapped_column(String, index=True)
     campaign_name: Mapped[str] = mapped_column(String)
