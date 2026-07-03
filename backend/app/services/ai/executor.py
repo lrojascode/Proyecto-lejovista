@@ -51,7 +51,11 @@ class AIExecutor:
                 # Modificación de campañas (pausar, presupuesto, placements)
                 result = await modifier.modify(ad_account, action)
 
-            # Éxito
+            # Éxito. Marcamos si fue una escritura real en Meta o una simulación
+            # (write-back desactivado), para que el frontend no dé por hecho que
+            # la campaña se pausó/modificó realmente (P-1).
+            if isinstance(result, dict):
+                result["simulated"] = settings.SIMULATE_META_WRITES
             action.status = "COMPLETED"
             action.execution_result = result
             

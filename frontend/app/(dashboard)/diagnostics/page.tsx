@@ -7,23 +7,27 @@ export default function Diagnostics() {
   const [insights, setInsights] = useState<any[]>([]);
   const [briefData, setBriefData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [dismissingId, setDismissingId] = useState("");
   const [isTriggering, setIsTriggering] = useState(false);
   const [triggerMessage, setTriggerMessage] = useState("");
 
   const fetchData = async () => {
+    setError("");
     try {
       const data = await api.getInsights();
       setInsights(data);
-      
+
       try {
         const brief = await api.getBriefData();
         setBriefData(brief);
       } catch (briefErr) {
+        // El brief puede no existir todavía (400 sin datos); no es un error duro.
         console.error("Error al obtener datos del reporte:", briefErr);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error fetching insights:", e);
+      setError(e?.message || "No se pudieron cargar los diagnósticos. Reintenta.");
     } finally {
       setLoading(false);
     }
@@ -92,12 +96,31 @@ export default function Diagnostics() {
             )}
           </button>
           {triggerMessage && (
-            <span style={{ fontSize: "0.85rem", color: "var(--accent-purple)", maxWidth: "250px", textAlign: "right" }}>
+            <span role="status" aria-live="polite" style={{ fontSize: "0.85rem", color: "var(--accent-purple)", maxWidth: "250px", textAlign: "right" }}>
               {triggerMessage}
             </span>
           )}
         </div>
       </div>
+
+      {error && (
+        <div role="alert" style={{
+          background: "rgba(239, 68, 68, 0.1)",
+          border: "1px solid rgba(239, 68, 68, 0.25)",
+          color: "var(--danger)",
+          borderRadius: "10px",
+          padding: "0.75rem 1rem",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: "1rem"
+        }}>
+          <span>⚠️ {error}</span>
+          <button className="btn-secondary" onClick={() => { setLoading(true); fetchData().finally(() => setLoading(false)); }} style={{ padding: "0.35rem 0.9rem", fontSize: "0.85rem" }}>
+            Reintentar
+          </button>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 2.8fr", gap: "2rem", flexGrow: 1, minHeight: 0 }}>
         {/* Sidebar Insights */}

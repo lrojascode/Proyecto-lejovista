@@ -85,10 +85,22 @@ export default function Actions() {
         <p style={{ color: "var(--text-secondary)" }}>
           Aprueba o rechaza los cambios que el motor de IA ha planificado según sus análisis de seguridad.
         </p>
+        <div role="note" style={{
+          marginTop: "0.75rem",
+          fontSize: "0.8rem",
+          color: "var(--text-muted)",
+          background: "rgba(245, 158, 11, 0.08)",
+          border: "1px solid rgba(245, 158, 11, 0.2)",
+          borderRadius: "8px",
+          padding: "0.5rem 0.75rem"
+        }}>
+          ℹ️ Al aprobar, la acción se ejecuta solo si el <strong>write-back a Meta</strong> está habilitado.
+          Si está desactivado, la ejecución es una simulación y se indica como tal en el historial.
+        </div>
       </div>
 
       {statusMsg && (
-        <div style={{
+        <div role="status" aria-live="polite" style={{
           background: "rgba(139, 92, 246, 0.1)",
           border: "1px solid rgba(139, 92, 246, 0.2)",
           color: "#fff",
@@ -249,7 +261,13 @@ export default function Actions() {
                     
                     {act.status === "COMPLETED" && act.execution_result && (
                       <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                        ID meta: <code>{act.execution_result.campaign_id || act.execution_result.id || "OK"}</code>
+                        {act.execution_result.simulated ? (
+                          <span style={{ color: "var(--warning)" }}>
+                            ⚠️ Simulación — no se aplicó en Meta (write-back desactivado).
+                          </span>
+                        ) : (
+                          <>Aplicado en Meta · ID: <code>{act.execution_result.campaign_id || act.execution_result.id || "OK"}</code></>
+                        )}
                       </div>
                     )}
                   </div>
