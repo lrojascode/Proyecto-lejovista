@@ -21,9 +21,16 @@ class MetaCredentialService:
         
         if not credential:
             raise ValueError(f"No active Meta credentials found for organization {organization_id}")
-        
+
+        # S-6: rechazar tokens expirados y marcarlos para que el usuario reconecte.
+        if credential.is_expired:
+            credential.status = "EXPIRED"
+            self.session.add(credential)
+            await self.session.commit()
+            raise ValueError(f"Meta token expired for organization {organization_id}; reconexión requerida.")
+
         token = credential.get_access_token()
         if not token:
             raise ValueError(f"Decrypted token is empty for organization {organization_id}")
-            
+
         return token

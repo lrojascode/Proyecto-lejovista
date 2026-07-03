@@ -1,5 +1,4 @@
 import asyncio
-import random
 import logging
 from typing import Dict, Any, Optional
 import httpx
@@ -15,14 +14,12 @@ class MetaAPIRateLimiter:
         # Contador de llamadas en la sesión actual
         self.call_count = 0
         
-        # Headers que imitan un navegador
+        # User-Agent honesto que identifica a la app (cumplimiento de Meta Platform
+        # Terms). NO se falsifica un navegador: la Marketing API es para consumo
+        # programático y el ritmo se controla con backoff por headers de Meta.
         self.headers = {
-            'User-Agent': ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                           'AppleWebKit/537.36 (KHTML, like Gecko) '
-                           'Chrome/124.0.0.0 Safari/537.36'),
+            'User-Agent': 'LejoVista/1.0 (+https://lejovista.com)',
             'Accept': 'application/json',
-            'Accept-Language': 'es-PE,es;q=0.9,en;q=0.8',
-            'Connection': 'keep-alive'
         }
 
     async def _log_api_call(self, method: str, endpoint: str, params: Dict[str, Any], status_code: int, response_preview: str):
@@ -43,27 +40,20 @@ class MetaAPIRateLimiter:
                 logger.error(f"Error logging API call to DB: {e}")
 
     async def _apply_delay(self, es_post: bool):
+        """Pausa de cortesía mínima entre llamadas.
+
+        El control de tasa real lo hace el backoff basado en la cabecera
+        `x-business-use-case-usage` de Meta (ver call_api). Aquí solo espaciamos
+        levemente para no ráfagas; NO se simula comportamiento humano.
+        """
         self.call_count += 1
-        
-        # En modo MOCK los delays se acortan para facilitar testing local ágil
+
         if settings.MOCK_SERVICES:
-            if self.call_count % 3 == 0:
-                delay = random.uniform(1.5, 3.0)
-                logger.info(f"[MOCK] Pausa larga entre llamadas: {delay:.2f}s")
-            else:
-                delay = random.uniform(0.5, 1.5)
-            await asyncio.sleep(delay)
+            await asyncio.sleep(0.05)
             return
 
-        # ---- PRODUCCIÓN: Delays anti-detección dinámicos y naturales ----
-        # Evitamos pausas fijas masivas de 45-75s que bloquean workers. Usamos pausas cortas.
-        if es_post:
-            delay = random.uniform(3.0, 6.0)  # Pausa corta natural entre escrituras
-        else:
-            delay = random.uniform(1.0, 2.5)  # Pausa corta natural entre lecturas
-            
-        logger.info(f"Pausa preventiva anti-detección: {delay:.2f} segundos...")
-        await asyncio.sleep(delay)
+        # Escrituras un poco más espaciadas que lecturas; valores fijos y modestos.
+        await asyncio.sleep(0.5 if es_post else 0.2)
 
     async def call_api(
         self, 

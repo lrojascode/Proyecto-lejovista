@@ -14,6 +14,7 @@ import uuid
 from fastapi import status
 from celery import chain
 
+from app.config import settings
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.campaign_validator import CampaignValidator
 from app.services.meta_api_client import MetaApiClient
@@ -101,29 +102,41 @@ async def trigger_manual_sync(
     return {"message": f"Sincronización manual programada para {len(accounts)} cuentas de anuncios."}
 
 
-# Mocks para dependencias. En producción se usaría un sistema de inyección (Depends).
-async def get_meta_client(db: AsyncSession = Depends(get_db)):
-    # Fake redis client for RateLimiter for now
+def build_meta_client(tenant_id: str, db: AsyncSession) -> MetaApiClient:
+    """Construye el cliente de Meta con dependencias reales (Redis de settings,
+    tenant autenticado). Antes estaba hardcodeado a localhost + 'mock-tenant'."""
     import redis.asyncio as redis
-    redis_client = redis.Redis.from_url("redis://localhost:6379/0")
-    rate_limiter = RateLimiter(redis_client)
-    cred_service = MetaCredentialService(db)
-    audit_service = AuditLogService(db)
-    return MetaApiClient("mock-tenant", cred_service, rate_limiter, audit_service)
+    redis_client = redis.Redis.from_url(settings.REDIS_URL)
+    return MetaApiClient(
+        tenant_id,
+        MetaCredentialService(db),
+        RateLimiter(redis_client),
+        AuditLogService(db),
+    )
 
 @router.post("/", status_code=status.HTTP_202_ACCEPTED)
 async def create_campaign(
     request: CampaignCreateRequest,
     current_user: User = Depends(get_current_user),
-    meta_client: MetaApiClient = Depends(get_meta_client),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Inicia la creación de una campaña en Meta Ads (Saga).
     """
     tenant_id = current_user.organization_id
+
+    # 0. Validar que la cuenta destino pertenezca al tenant autenticado.
+    q_acc = select(AdAccount).where(
+        AdAccount.id == request.ad_account_id,
+        AdAccount.organization_id == tenant_id
+    )
+    res_acc = await db.execute(q_acc)
+    if not res_acc.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+
+    meta_client = build_meta_client(tenant_id, db)
     validator = CampaignValidator(tenant_id, meta_client)
-    
+
     # 1. Validación síncrona
     await validator.validate(request)
     

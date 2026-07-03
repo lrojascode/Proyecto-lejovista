@@ -40,13 +40,13 @@ class AdAccount(Base):
     def set_access_token(self, token: str):
         if not self.meta_credential:
             from app.models.meta_credential import MetaCredential
-            self.meta_credential = MetaCredential()
+            self.meta_credential = MetaCredential(organization_id=self.organization_id)
         self.meta_credential.set_access_token(token)
 
     def set_refresh_token(self, token: str):
         if not self.meta_credential:
             from app.models.meta_credential import MetaCredential
-            self.meta_credential = MetaCredential()
+            self.meta_credential = MetaCredential(organization_id=self.organization_id)
         self.meta_credential.set_refresh_token(token)
 
     __table_args__ = (
