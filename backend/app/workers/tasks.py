@@ -70,7 +70,17 @@ def sync_ad_account(ad_account_id: str, sync_type: str = "INCREMENTAL"):
             logger.info(f"Iniciando sync {sync_type} para cuenta {acc.name} ({acc.id})...")
             job = await sync_service.run_sync(acc, sync_type)
             logger.info(f"Sync completada. Estado: {job.status}. Registros: {job.records_synced}")
-            
+
+            # Notificar al frontend por WebSocket (Redis Pub/Sub).
+            # El canal se indexa por organization_id, que es como se conecta el cliente.
+            try:
+                from app.services.notification_service import NotificationService
+                NotificationService().notify_job_status(
+                    acc.organization_id, job.id, job.status, event_type="sync_status"
+                )
+            except Exception:
+                logger.exception("No se pudo publicar la notificación de sync al WebSocket")
+
             # Al completar sync incremental o full, disparamos análisis de la organización
             if job.status == "COMPLETED":
                 run_ai_analysis.delay(acc.organization_id)

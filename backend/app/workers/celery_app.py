@@ -5,7 +5,11 @@ celery_app = Celery(
     "lejovista_workers",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["app.workers.tasks"]
+    include=[
+        "app.workers.tasks",
+        "app.workers.sync_tasks",
+        "app.workers.creation_tasks",
+    ]
 )
 
 # Configuración básica

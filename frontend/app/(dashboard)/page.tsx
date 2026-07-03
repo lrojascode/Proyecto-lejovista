@@ -41,7 +41,7 @@ export default function DashboardPage() {
       const msg = `[${new Date().toLocaleTimeString()}] ${lastEvent.event_type}: ${lastEvent.status}`;
       setNotifications(prev => [...prev, msg].slice(-3));
       
-      if (lastEvent.event_type === "SYNC_STATUS") {
+      if (lastEvent.event_type === "sync_status") {
         if (lastEvent.status === "COMPLETED") {
           setSyncing(false);
           setSyncMessage("Sincronización completada exitosamente.");

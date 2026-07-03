@@ -25,13 +25,22 @@ export const WebSocketProvider = ({ children, tenantId }: { children: ReactNode;
   const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
+    // No intentar conectar sin un tenant (organization_id) válido
+    if (!tenantId) {
+      setIsConnected(false);
+      return;
+    }
+
     let ws: WebSocket;
     let reconnectTimeout: NodeJS.Timeout;
 
     const connect = () => {
       // Usar variable de entorno en prod, en local asume puerto 8000
       const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
-      ws = new WebSocket(`${wsUrl}/ws/notifications/${tenantId}`);
+      // El backend exige el JWT por query param y valida la pertenencia al tenant
+      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+      ws = new WebSocket(`${wsUrl}/ws/notifications/${tenantId}${qs}`);
 
       ws.onopen = () => {
         console.log("WebSocket connected");

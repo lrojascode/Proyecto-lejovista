@@ -3,8 +3,10 @@ from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_db
+from app.models.user import User
 from app.models.sync_job import SyncJob
 from app.models.ad_account import AdAccount
+from app.utils.security import get_current_user
 from app.workers.sync_tasks import task_sync_tenant_data
 import uuid
 
@@ -14,21 +16,22 @@ router = APIRouter(prefix="/sync", tags=["Synchronization"])
 async def start_sync(
     ad_account_id: str,
     page_id: str,
-    # tenant_id se extraería idealmente del JWT (ej. current_user.tenant_id)
-    # Por ahora mockeamos con un string fijo o parámetro
-    tenant_id: str = "mock-tenant-id",
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Inicia el trabajo de sincronización asíncrona.
+    Inicia el trabajo de sincronización asíncrona para el tenant autenticado.
     """
-    # 1. Validar que la cuenta de ads pertenezca al tenant (simplificado)
-    stmt = select(AdAccount).where(AdAccount.id == ad_account_id, AdAccount.organization_id == tenant_id)
+    tenant_id = current_user.organization_id
+
+    # 1. Validar que la cuenta de ads pertenezca al tenant autenticado
+    stmt = select(AdAccount).where(
+        AdAccount.id == ad_account_id,
+        AdAccount.organization_id == tenant_id
+    )
     result = await db.execute(stmt)
     if not result.scalar_one_or_none():
-        # Descomentar cuando la base esté poblada
-        # raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización")
-        pass
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
     # 2. Crear SyncJob en PENDING
     sync_job = SyncJob(
@@ -54,7 +57,11 @@ async def start_sync(
 
 
 @router.get("/{job_id}/status")
-async def get_sync_status(job_id: str, db: AsyncSession = Depends(get_db)):
+async def get_sync_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """
     Permite al frontend consultar el estado del Sync (polling).
     Si está READY, retorna el Master Brief JSON.
@@ -63,7 +70,8 @@ async def get_sync_status(job_id: str, db: AsyncSession = Depends(get_db)):
     result = await db.execute(stmt)
     job = result.scalar_one_or_none()
 
-    if not job:
+    # No revelar existencia de jobs de otros tenants (evita IDOR)
+    if not job or job.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Sync Job not found")
 
     response = {

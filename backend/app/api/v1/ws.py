@@ -1,10 +1,15 @@
 import asyncio
 import json
 import logging
-from typing import Dict, List
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from typing import Dict, List, Optional
+import jwt
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.config import settings
+from app.database import async_session
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +82,50 @@ async def redis_listener():
             logger.error(f"Redis Pub/Sub error: {e}. Reconnecting in 5 seconds...")
             await asyncio.sleep(5)
 
+async def _authenticate_ws(token: Optional[str], tenant_id: str) -> bool:
+    """
+    Valida el JWT recibido por query param y comprueba que el usuario
+    pertenezca a la organización (tenant_id = organization_id) del canal.
+    Devuelve False ante cualquier fallo (token ausente, inválido o sin pertenencia).
+    """
+    if not token:
+        return False
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        user_id = payload.get("sub")
+    except Exception:
+        return False
+
+    if not user_id:
+        return False
+
+    async with async_session() as db:
+        q = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
+        res = await db.execute(q)
+        user = res.scalar_one_or_none()
+        if not user:
+            return False
+        user_org_ids = [ou.organization_id for ou in user.organizations]
+        return tenant_id in user_org_ids
+
+
 @router.websocket("/notifications/{tenant_id}")
-async def websocket_endpoint(websocket: WebSocket, tenant_id: str):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    tenant_id: str,
+    token: Optional[str] = Query(default=None)
+):
     """
     WebSocket endpoint para el frontend.
-    En un sistema real, tenant_id se extraería/validaría de un token (ej. pasando token por query param).
+    tenant_id es el organization_id (UUID) del tenant. Requiere ?token=<JWT>
+    y que ese usuario pertenezca a la organización; si no, se cierra la conexión.
     """
+    authorized = await _authenticate_ws(token, tenant_id)
+    if not authorized:
+        # 4401: violación de política / no autorizado en el handshake
+        await websocket.close(code=4401)
+        return
+
     await manager.connect(websocket, tenant_id)
     try:
         while True:

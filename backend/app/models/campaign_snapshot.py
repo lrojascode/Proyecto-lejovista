@@ -1,6 +1,6 @@
 from datetime import datetime, date
 import uuid
-from sqlalchemy import String, Integer, Float, DateTime, Date, ForeignKey, JSON, Index
+from sqlalchemy import String, Integer, Float, DateTime, Date, ForeignKey, JSON, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -32,6 +32,10 @@ class CampaignSnapshot(Base):
 
     __table_args__ = (
         Index("idx_snapshot_org_date", "organization_id", "date"),
+        # Query dominante del AIEngine: filtra por (ad_account_id, date >= X)
+        Index("idx_snapshot_acc_date", "ad_account_id", "date"),
+        # Idempotencia: un único snapshot por campaña y día en cada cuenta
+        UniqueConstraint("ad_account_id", "campaign_id", "date", name="uq_snapshot_acc_campaign_date"),
     )
 
     # Relaciones

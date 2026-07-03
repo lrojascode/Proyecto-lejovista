@@ -10,6 +10,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
+  const [orgId, setOrgId] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pathname = usePathname();
 
@@ -31,7 +32,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     try {
       const user = JSON.parse(userStr);
       setUserName(user.full_name);
-      
+      setOrgId(user.organization_id || "");
+
       // Capturar subdominio
       const hostParts = window.location.hostname.split(".");
       if (hostParts.length > 1 && hostParts[0] !== "localhost" && hostParts[0] !== "www" && hostParts[0] !== "api") {
@@ -150,7 +152,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       {/* Main Content Container */}
       <main className="main-content">
-        <WebSocketProvider tenantId={orgSlug}>
+        <WebSocketProvider tenantId={orgId}>
           {children}
         </WebSocketProvider>
       </main>

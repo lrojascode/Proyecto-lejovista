@@ -96,7 +96,6 @@ async def get_current_user(
         org = res_org.scalar_one_or_none()
         
         user_org_ids = [ou.organization_id for ou in user.organizations] if user.organizations else []
-        print(f"DEBUG: tenant_slug={tenant_slug}, org={org}, org.id={org.id if org else None}, user_org_ids={user_org_ids}, user.organizations={user.organizations}")
         if not org or org.id not in user_org_ids:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

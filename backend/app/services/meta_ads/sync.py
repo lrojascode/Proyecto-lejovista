@@ -315,23 +315,35 @@ class MetaAdsSyncService:
             except:
                 continue
 
-            snapshot = CampaignSnapshot(
-                ad_account_id=ad_account.id,
-                organization_id=ad_account.organization_id,
-                campaign_id=camp_id,
-                campaign_name=camp_info["name"],
-                status=camp_info["status"],
-                budget=camp_info["budget"],
-                spend=spend,
-                impressions=impressions,
-                clicks=clicks,
-                conversions=conversions,
-                cpl=cpl,
-                ctr=ctr,
-                frequency=frequency,
-                date=sync_date
+            # Idempotencia: si ya existe el snapshot de esa campaña y fecha, se actualiza
+            # en lugar de insertar un duplicado (protegido además por uq_snapshot_acc_campaign_date).
+            q_existing = select(CampaignSnapshot).where(
+                CampaignSnapshot.ad_account_id == ad_account.id,
+                CampaignSnapshot.campaign_id == camp_id,
+                CampaignSnapshot.date == sync_date
             )
-            self.db.add(snapshot)
+            res_existing = await self.db.execute(q_existing)
+            snapshot = res_existing.scalar_one_or_none()
+
+            if snapshot is None:
+                snapshot = CampaignSnapshot(
+                    ad_account_id=ad_account.id,
+                    organization_id=ad_account.organization_id,
+                    campaign_id=camp_id,
+                    date=sync_date
+                )
+                self.db.add(snapshot)
+
+            snapshot.campaign_name = camp_info["name"]
+            snapshot.status = camp_info["status"]
+            snapshot.budget = camp_info["budget"]
+            snapshot.spend = spend
+            snapshot.impressions = impressions
+            snapshot.clicks = clicks
+            snapshot.conversions = conversions
+            snapshot.cpl = cpl
+            snapshot.ctr = ctr
+            snapshot.frequency = frequency
             records_synced += 1
 
         return records_synced
