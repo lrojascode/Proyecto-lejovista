@@ -92,7 +92,7 @@ class AIExecutor:
         # PASO 1 — Verificar cuenta
         logger.info("[PASO 1] Verificando cuenta de anuncios...")
         steps_log.append("Paso 1: Verificando límites y status de la cuenta de anuncios.")
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             acc_info = await limiter.call_api(f"act_{ad_account.external_account_id}", {"fields": "amount_spent,spend_cap,account_status"}, access_token=token)
             if float(acc_info.get("spend_cap", 0)) > 0 and float(acc_info.get("amount_spent", 0)) >= float(acc_info.get("spend_cap", 0)):
                 raise Exception("Límite de gasto (spend_cap) alcanzado. Creación cancelada.")
@@ -106,7 +106,7 @@ class AIExecutor:
         logger.info("[PASO 2] Subiendo creativo...")
         steps_log.append("Paso 2: Subiendo imagen del creativo publicitario...")
         image_hash = "mock_hash_image_123456789"
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             # Lógica real de subida a Meta
             # image_res = await limiter.call_api(f"act_{ad_account.external_account_id}/adimages", {"filename": ...}, method="POST", access_token=token)
             # image_hash = image_res.get("images", {}).get("image.png", {}).get("hash")
@@ -119,7 +119,7 @@ class AIExecutor:
         logger.info("[PASO 3] Creando campaña...")
         steps_log.append("Paso 3: Creando estructura de Campaña (Outcomes: Leads, Estado: PAUSED)...")
         campaign_id = "camp_mock_new_" + str(random.randint(1000, 9999))
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             camp_payload = {
                 "name": params.get("campaign_name"),
                 "objective": params.get("objective"),
@@ -138,7 +138,7 @@ class AIExecutor:
         logger.info("[PASO 4] Creando Ad Set...")
         steps_log.append("Paso 4: Creando Ad Set con segmentación local (Lima Región) y placements optimizados...")
         adset_id = "adset_mock_new_" + str(random.randint(1000, 9999))
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             # Presupuesto diario en centavos
             budget_cents = int(params.get("daily_budget", 70.0) * 100)
             
@@ -166,7 +166,7 @@ class AIExecutor:
         
         # Obtener Page ID de manera dinámica
         page_id = params.get("page_id") or params.get("creative", {}).get("page_id")
-        if not page_id and not settings.MOCK_SERVICES:
+        if not page_id and not settings.SIMULATE_META_WRITES:
             try:
                 pages_res = await limiter.call_api(f"act_{ad_account.external_account_id}/promotable_page_ids", {"fields": "id,name"}, access_token=token)
                 pages_data = pages_res.get("data", [])
@@ -185,12 +185,12 @@ class AIExecutor:
                     logger.error(f"Error al recuperar Page ID desde me/accounts: {e2}")
 
         if not page_id:
-            if settings.MOCK_SERVICES:
+            if settings.SIMULATE_META_WRITES:
                 page_id = "mock_page_id"
             else:
                 raise Exception("No se pudo determinar el Page ID para el Ad Creative. Por favor, especifícalo en los parámetros de la acción o vincula una página de Facebook.")
 
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             # Payload complejo de creativo de Meta con link de WhatsApp y mensaje de bienvenida
             creative_payload = {
                 "name": f"Creative - {params.get('campaign_name')}",
@@ -216,7 +216,7 @@ class AIExecutor:
         logger.info("[PASO 6] Creando Anuncio...")
         steps_log.append("Paso 6: Publicando el anuncio vinculando el Ad Set y el Creativo...")
         ad_id = "ad_mock_new_" + str(random.randint(1000, 9999))
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             ad_payload = {
                 "name": f"Ad - {params.get('campaign_name')}",
                 "adset_id": adset_id,

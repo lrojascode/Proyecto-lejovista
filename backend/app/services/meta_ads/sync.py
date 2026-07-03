@@ -9,6 +9,7 @@ from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.sync_job import SyncJob
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
+from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
 
 logger = logging.getLogger("lejovista.sync")
 
@@ -47,7 +48,21 @@ class MetaAdsSyncService:
             job.status = "FAILED"
             job.error_message = str(e)
             job.completed_at = datetime.datetime.utcnow()
-            
+            await self.db.commit()
+
+            classified = classify_meta_error(e)
+            if isinstance(classified, TransientMetaError):
+                # Propagar para que la tarea de Celery reintente con backoff.
+                raise classified from e
+
+            # Fallo permanente: no reintentar. Alertar al equipo (log de nivel error
+            # que un colector como Sentry puede capturar).
+            logger.error(
+                "Sync permanentemente fallido para cuenta %s (org %s): %s",
+                ad_account.id, ad_account.organization_id, e
+            )
+            return job
+
         await self.db.commit()
         return job
 

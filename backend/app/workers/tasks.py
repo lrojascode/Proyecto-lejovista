@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from celery.utils.log import get_task_logger
 from app.workers.celery_app import celery_app
 from app.database import async_session
@@ -7,11 +8,16 @@ from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.ai_action import AIAction
 from app.services.meta_ads.sync import MetaAdsSyncService
+from app.services.meta_ads.exceptions import TransientMetaError
 from app.services.ai.engine import AIEngine
 from app.services.ai.executor import AIExecutor
 from sqlalchemy import select
 
 logger = get_task_logger(__name__)
+
+# Ventana de escalonado (segundos) para repartir el fan-out del Beat y no
+# golpear el rate limit de Meta con N cuentas sincronizando al mismo tiempo.
+BEAT_STAGGER_WINDOW_SECONDS = 1800  # 30 min
 
 def run_async(coro):
     """Ejecuta una corrutina asíncrona dentro del hilo síncrono de Celery."""
@@ -33,9 +39,13 @@ def schedule_all_syncs(sync_type: str = "INCREMENTAL"):
             res = await db.execute(q)
             accounts = res.scalars().all()
             for acc in accounts:
-                sync_ad_account.delay(acc.id, sync_type)
-            logger.info(f"Programadas sincronizaciones para {len(accounts)} cuentas.")
-    
+                # Escalonar con jitter para no saturar el rate limit de Meta.
+                sync_ad_account.apply_async(
+                    args=(acc.id, sync_type),
+                    countdown=random.randint(0, BEAT_STAGGER_WINDOW_SECONDS)
+                )
+            logger.info(f"Programadas sincronizaciones (escalonadas) para {len(accounts)} cuentas.")
+
     run_async(_impl())
 
 @celery_app.task(name="app.workers.tasks.schedule_all_analyses")
@@ -49,15 +59,28 @@ def schedule_all_analyses():
             res = await db.execute(q)
             orgs = res.scalars().all()
             for org in orgs:
-                run_ai_analysis.delay(org.id)
-            logger.info(f"Programados análisis de IA para {len(orgs)} organizaciones.")
-            
+                run_ai_analysis.apply_async(
+                    args=(org.id,),
+                    countdown=random.randint(0, BEAT_STAGGER_WINDOW_SECONDS)
+                )
+            logger.info(f"Programados análisis de IA (escalonados) para {len(orgs)} organizaciones.")
+
     run_async(_impl())
 
-@celery_app.task(name="app.workers.tasks.sync_ad_account")
-def sync_ad_account(ad_account_id: str, sync_type: str = "INCREMENTAL"):
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.sync_ad_account",
+    autoretry_for=(TransientMetaError,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=5,
+    acks_late=True,
+)
+def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
     """
     Sincroniza una cuenta de anuncios específica.
+    Reintenta automáticamente ante errores transitorios de Meta (429/5xx/red).
     """
     async def _impl():
         async with async_session() as db:

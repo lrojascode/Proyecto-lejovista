@@ -28,6 +28,17 @@ class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = Field(default="")
     DEFAULT_AI_MODEL: str = Field(default="google/gemini-3.5-flash")
 
+    # --- Feature flags ---
+    # Escrituras reales a Meta (pausar/ajustar/crear). Independiente de MOCK_SERVICES:
+    # aunque MOCK_SERVICES=false (lecturas reales), las escrituras siguen simuladas
+    # hasta que esto sea true. Evita mutaciones accidentales con parámetros aún sin validar.
+    ENABLE_META_WRITEBACK: bool = Field(default=False)
+
+    @property
+    def SIMULATE_META_WRITES(self) -> bool:
+        """True si NO se deben ejecutar escrituras reales en Meta."""
+        return self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK
+
     # Usar .env buscando de forma robusta en la raíz del proyecto o del backend
     model_config = SettingsConfigDict(
         env_file=(

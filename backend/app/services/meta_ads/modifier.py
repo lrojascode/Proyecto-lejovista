@@ -27,7 +27,7 @@ class MetaCampaignModifier:
 
         # 1. Obtener estado actual (Backup para rollback)
         backup_state = {}
-        if not settings.MOCK_SERVICES:
+        if not settings.SIMULATE_META_WRITES:
             # En producción, hacemos un GET del estado actual
             backup_state = await limiter.call_api(
                 f"{target_id}",

@@ -77,11 +77,15 @@ class MetaAPIRateLimiter:
         Soporta MOCK_SERVICES para simular la API localmente.
         """
         es_post = method.upper() == "POST"
-        
+
+        # Lecturas: reales si MOCK_SERVICES=false.
+        # Escrituras (POST): reales solo si el write-back está explícitamente habilitado.
+        simulate = settings.SIMULATE_META_WRITES if es_post else settings.MOCK_SERVICES
+
         # Aplicar el delay antes de la llamada
         await self._apply_delay(es_post)
 
-        if settings.MOCK_SERVICES:
+        if simulate:
             # Retornamos respuestas mockeadas (serán manejadas por los servicios específicos)
             logger.info(f"[MOCK] API CALL - {method} - {endpoint} - Params: {list(params.keys())}")
             # Registramos la llamada ficticia en base de datos
