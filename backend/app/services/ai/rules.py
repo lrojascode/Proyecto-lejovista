@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
+from app.services.ai.thresholds import get_thresholds_for_org
 
 class Capa1Rules:
     def __init__(self, db: AsyncSession):
@@ -15,6 +16,7 @@ class Capa1Rules:
         Analiza las reglas fijas de la Capa 1 sobre la cuenta de anuncios.
         Compara los datos agregados de los últimos 7 días.
         """
+        t = get_thresholds_for_org(getattr(ad_account, "organization", None))
         insights = []
         
         # 1. Reglas a nivel de CUENTA de anuncios
@@ -92,10 +94,10 @@ class Capa1Rules:
         
         if total_conversions > 0:
             target_cpl = total_spend / total_conversions
-            # Mantener un rango razonable por seguridad (entre S/.1.50 y S/.10.00)
-            target_cpl = max(1.50, min(10.00, target_cpl))
+            # Mantener un rango razonable por seguridad
+            target_cpl = max(t.target_cpl_floor, min(t.target_cpl_ceiling, target_cpl))
         else:
-            target_cpl = 3.50
+            target_cpl = t.target_cpl_fallback
 
         for c_id, data in campaign_data.items():
             # Solo analizamos campañas activas en la última sincronización
@@ -114,8 +116,8 @@ class Capa1Rules:
             freqs = [s.frequency for s in data["snapshots"] if s.frequency > 0]
             avg_frequency = sum(freqs) / len(freqs) if freqs else 1.0
 
-            # --- Regla A: CPL > 2x Objetivo (Campaña Fallida) ---
-            if conversions > 0 and cpl > (target_cpl * 2.0):
+            # --- Regla A: CPL > Nx Objetivo (Campaña Fallida) ---
+            if conversions > 0 and cpl > (target_cpl * t.cpl_critical_multiplier):
                 insights.append(AIInsight(
                     ad_account_id=ad_account.id,
                     organization_id=ad_account.organization_id,
@@ -127,8 +129,8 @@ class Capa1Rules:
                     suggested_action_type="PAUSE_CAMPAIGN"
                 ))
 
-            # --- Regla B: Alta Frecuencia > 3.0 (Audiencia Saturada) ---
-            if avg_frequency > 3.0:
+            # --- Regla B: Alta Frecuencia (Audiencia Saturada) ---
+            if avg_frequency > t.frequency_saturation:
                 insights.append(AIInsight(
                     ad_account_id=ad_account.id,
                     organization_id=ad_account.organization_id,
@@ -140,8 +142,8 @@ class Capa1Rules:
                     suggested_action_type="MODIFY_TARGETING"
                 ))
 
-            # --- Regla C: CTR < 0.5% (Creatividad Débil) ---
-            if impressions > 200 and ctr < 0.5:
+            # --- Regla C: CTR bajo (Creatividad Débil) ---
+            if impressions > t.min_impressions_for_ctr and ctr < t.ctr_min_pct:
                 insights.append(AIInsight(
                     ad_account_id=ad_account.id,
                     organization_id=ad_account.organization_id,
@@ -154,7 +156,7 @@ class Capa1Rules:
                 ))
 
             # --- Regla D: Clics sin Leads (Configuración Errónea / Landing Rota) ---
-            if impressions > 500 and conversions == 0:
+            if impressions > t.min_impressions_for_zero_conv and conversions == 0:
                 insights.append(AIInsight(
                     ad_account_id=ad_account.id,
                     organization_id=ad_account.organization_id,
@@ -173,11 +175,11 @@ class Capa1Rules:
                     pl_spend = pl_data.get("spend", 0.0)
                     pl_conv = pl_data.get("conversions", 0)
                     
-                    if pl_spend > 15.0: # Solo si tiene gasto representativo
+                    if pl_spend > t.placement_min_spend: # Solo si tiene gasto representativo
                         pl_cpl = pl_data.get("cpl", pl_spend)
-                        
-                        # Placements de Instagram ineficientes (CPL > S/.5.00)
-                        if "instagram" in pl_name and pl_cpl > 5.0:
+
+                        # Placements de Instagram ineficientes
+                        if "instagram" in pl_name and pl_cpl > t.instagram_cpl_ceiling:
                             insights.append(AIInsight(
                                 ad_account_id=ad_account.id,
                                 organization_id=ad_account.organization_id,
@@ -192,7 +194,7 @@ class Capa1Rules:
                         # Oportunidad en Reels (CPL Reels < Feed CPL * 0.7)
                         if "reels" in pl_name:
                             feed_cpl = latest.placements_breakdown.get("facebook_feed", {}).get("cpl", target_cpl)
-                            if pl_cpl < (feed_cpl * 0.7):
+                            if pl_cpl < (feed_cpl * t.reels_cpl_advantage):
                                 insights.append(AIInsight(
                                     ad_account_id=ad_account.id,
                                     organization_id=ad_account.organization_id,

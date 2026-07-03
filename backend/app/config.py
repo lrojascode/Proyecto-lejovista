@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     META_APP_ID: str = Field(default="mock_app_id")
     META_APP_SECRET: str = Field(default="mock_app_secret")
     OPENROUTER_API_KEY: str = Field(default="")
-    DEFAULT_AI_MODEL: str = Field(default="google/gemini-3.5-flash")
+    # Modelo por defecto unificado (coincide con .env). google/gemini-2.5-flash existe;
+    # el antiguo default "gemini-3.5-flash" no era un id válido.
+    DEFAULT_AI_MODEL: str = Field(default="google/gemini-2.5-flash")
 
     # --- Feature flags ---
     # Escrituras reales a Meta (pausar/ajustar/crear). Independiente de MOCK_SERVICES:

@@ -1,11 +1,12 @@
 import logging
 import datetime
-from typing import List
+from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.ad_account import AdAccount
 from app.models.ai_insight import AIInsight
 from app.models.ai_action import AIAction
+from app.models.campaign_snapshot import CampaignSnapshot
 
 logger = logging.getLogger("lejovista.planner")
 
@@ -20,7 +21,18 @@ class AIPlanner:
         Evita duplicar acciones propuestas que ya estén pendientes.
         """
         actions = []
-        
+
+        # Mapa campaign_id -> presupuesto del snapshot más reciente. Se usa como
+        # base real para MODIFY_BUDGET en lugar de valores hardcodeados (AI-2).
+        budget_map = {}
+        q_snaps = select(CampaignSnapshot).where(
+            CampaignSnapshot.ad_account_id == ad_account.id
+        ).order_by(CampaignSnapshot.date.desc())
+        res_snaps = await self.db.execute(q_snaps)
+        for s in res_snaps.scalars().all():
+            if s.campaign_id not in budget_map:
+                budget_map[s.campaign_id] = s.budget
+
         for ins in insights:
             if not ins.suggested_action_type:
                 continue
@@ -39,7 +51,7 @@ class AIPlanner:
                 continue # Ya hay un cambio de este tipo en cola
 
             # 2. Generar los detalles y parámetros según el tipo de acción
-            action = self._create_action_from_insight(ad_account, ins)
+            action = self._create_action_from_insight(ad_account, ins, budget_map.get(ins.campaign_id))
             if action:
                 self.db.add(action)
                 actions.append(action)
@@ -50,7 +62,7 @@ class AIPlanner:
             
         return actions
 
-    def _create_action_from_insight(self, ad_account: AdAccount, insight: AIInsight) -> AIAction:
+    def _create_action_from_insight(self, ad_account: AdAccount, insight: AIInsight, current_budget: Optional[float] = None) -> Optional[AIAction]:
         """
         Construye una instancia de AIAction en base al insight y sus métricas.
         """
@@ -83,33 +95,39 @@ class AIPlanner:
 
         elif action_type == "MODIFY_BUDGET":
             risk = "MEDIUM"
+
+            # AI-2: usar el presupuesto REAL del snapshot más reciente. Sin un
+            # presupuesto conocido no proponemos un cambio a ciegas.
+            if not current_budget or current_budget <= 0:
+                logger.warning(
+                    "MODIFY_BUDGET omitido para campaña %s: presupuesto actual desconocido.", c_id
+                )
+                return None
+            old_budget = float(current_budget)
+
             # Determinamos si el insight es para escalar (+25%) o recortar (-30%)
             is_escalation = "Excelente" in insight.title or "a la baja" in insight.description
-            
+
             if is_escalation:
                 title = "Incrementar presupuesto en campaña ganadora"
-                old_budget = 70.0 if c_id == "camp_cable_gpt" else 50.0
-                new_budget = old_budget * 1.25 # +25%
+                new_budget = round(old_budget * 1.25, 2) # +25%
                 description = f"Incrementar presupuesto diario de S/.{old_budget:.2f} a S/.{new_budget:.2f} (+25%) debido a excelente rendimiento de CPL."
-                parameters = {
-                    "old_budget": old_budget,
-                    "new_budget": new_budget
-                }
-                estimated_impact = f"Incrementa en ~20% la captación de leads manteniendo el CPL bajo."
+                estimated_impact = "Incrementa la captación de leads manteniendo el CPL bajo."
                 confidence = 0.80
             else:
                 title = "Reducir presupuesto en campaña de CPL alto"
-                old_budget = 50.0 if c_id == "camp_vulcanizado" else 40.0
-                new_budget = old_budget * 0.70 # -30%
+                new_budget = round(old_budget * 0.70, 2) # -30%
                 description = f"Reducir presupuesto diario de S/.{old_budget:.2f} a S/.{new_budget:.2f} (-30%) debido al alza en la tendencia del CPL."
-                parameters = {
-                    "old_budget": old_budget,
-                    "new_budget": new_budget
-                }
                 estimated_impact = "Reduce el gasto ineficiente en un 30% mientras se optimiza la segmentación."
                 confidence = 0.85
 
-            # El adset ID real se obtendría en producción, usamos el c_id como target
+            parameters = {
+                "old_budget": old_budget,
+                "new_budget": new_budget
+            }
+
+            # NOTA: el presupuesto en Meta suele vivir a nivel de adset. El adset ID
+            # real debe resolverse antes de habilitar el write-back (ver auditoría AI-2).
             planned_calls = [
                 {"method": "POST", "endpoint": f"{c_id}", "body": {"daily_budget": int(new_budget * 100)}}
             ]

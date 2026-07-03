@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
+from app.services.ai.thresholds import get_thresholds_for_org
 
 class Capa2Statistics:
     def __init__(self, db: AsyncSession):
@@ -16,8 +17,10 @@ class Capa2Statistics:
         Analiza estadísticas de Capa 2 (medias móviles, tendencias y anomalías por Z-score).
         Requiere datos históricos (analizamos los últimos 14 a 30 días).
         """
+        t = get_thresholds_for_org(getattr(ad_account, "organization", None))
         insights = []
-        
+        insufficient_history = []  # campañas sin días suficientes para estadística
+
         today = datetime.date.today()
         thirty_days_ago = today - datetime.timedelta(days=30)
         
@@ -41,13 +44,14 @@ class Capa2Statistics:
             campaign_history[s.campaign_id].append(s)
 
         for c_id, history in campaign_history.items():
-            # Necesitamos al menos 7 días de datos para un análisis estadístico mínimo
-            if len(history) < 7:
+            # Necesitamos un mínimo de días para un análisis estadístico con sentido.
+            if len(history) < t.min_history_days:
+                insufficient_history.append((history[0].campaign_name, len(history)))
                 continue
-                
+
             # Asumimos que history está ordenada desc (más reciente primero)
-            latest_snapshots = history[:3]  # Últimos 3 días
-            older_snapshots = history[3:14]  # Días 4 al 14
+            latest_snapshots = history[:t.trend_window_days]           # ventana reciente
+            older_snapshots = history[t.trend_window_days:t.base_window_days]  # ventana base
             
             # 1. Calcular CPL promedio de la última ventana (3 días) vs base (14 días)
             latest_spend = sum(s.spend for s in latest_snapshots)
@@ -61,7 +65,7 @@ class Capa2Statistics:
             # --- Regla de Tendencia: CPL Subiendo ---
             if latest_leads > 0 and base_leads > 0:
                 percent_increase = ((latest_cpl - base_cpl) / base_cpl) * 100.0
-                if percent_increase > 30.0:  # Incremento del CPL > 30%
+                if percent_increase > t.cpl_trend_pct:  # Incremento del CPL relevante
                     insights.append(AIInsight(
                         ad_account_id=ad_account.id,
                         organization_id=ad_account.organization_id,
@@ -75,7 +79,7 @@ class Capa2Statistics:
                         ),
                         suggested_action_type="MODIFY_BUDGET" # Reducir budget
                     ))
-                elif percent_increase < -30.0: # CPL bajó > 30% (¡Oportunidad!)
+                elif percent_increase < -t.cpl_trend_pct: # CPL bajó relevante (¡Oportunidad!)
                     insights.append(AIInsight(
                         ad_account_id=ad_account.id,
                         organization_id=ad_account.organization_id,
@@ -91,25 +95,27 @@ class Capa2Statistics:
                     ))
 
             # 2. Detección de Anomalías (Z-Score)
-            # Calculamos la media y desviación estándar de CPL sobre los últimos 14 días
+            # Calculamos la media y desviación estándar de CPL sobre la ventana base
             daily_cpls = []
-            for s in history[:14]:
+            for s in history[:t.base_window_days]:
                 if s.conversions > 0:
                     daily_cpls.append(s.spend / s.conversions)
                 else:
                     daily_cpls.append(s.spend) # Si es 0, usamos spend como penalización
-                    
-            if len(daily_cpls) >= 5:
-                mean_cpl = sum(daily_cpls) / len(daily_cpls)
-                variance = sum((x - mean_cpl) ** 2 for x in daily_cpls) / len(daily_cpls)
+
+            if len(daily_cpls) >= t.min_points_for_zscore:
+                n = len(daily_cpls)
+                mean_cpl = sum(daily_cpls) / n
+                # Desviación muestral (n-1): más honesta con pocos datos que la poblacional.
+                variance = sum((x - mean_cpl) ** 2 for x in daily_cpls) / (n - 1)
                 std_dev = math.sqrt(variance)
-                
-                if std_dev > 0.1: # Evitar división por cero o varianza ínfima
+
+                if std_dev > t.min_std_dev: # Evitar división por cero o varianza ínfima
                     # Tomamos el CPL del día más reciente
                     today_cpl = daily_cpls[0]
                     z_score = (today_cpl - mean_cpl) / std_dev
-                    
-                    if z_score > 2.0:
+
+                    if z_score > t.zscore_anomaly:
                         insights.append(AIInsight(
                             ad_account_id=ad_account.id,
                             organization_id=ad_account.organization_id,
@@ -123,5 +129,25 @@ class Capa2Statistics:
                             ),
                             suggested_action_type="PAUSE_CAMPAIGN"
                         ))
+
+        # AI-3: no callar cuando faltan datos. Emitir un aviso explícito para que
+        # el usuario sepa que la Capa 2 aún no puede opinar sobre esas campañas.
+        if insufficient_history:
+            nombres = ", ".join(
+                f"'{name}' ({days}d)" for name, days in insufficient_history
+            )
+            insights.append(AIInsight(
+                ad_account_id=ad_account.id,
+                organization_id=ad_account.organization_id,
+                level="INFO",
+                category="ACCOUNT",
+                title="Histórico insuficiente para análisis estadístico",
+                description=(
+                    f"Las siguientes campañas tienen menos de {t.min_history_days} días de datos, "
+                    f"por lo que el análisis de tendencias y anomalías (Capa 2) aún no se aplica: {nombres}. "
+                    f"Se activará automáticamente al acumular más historial."
+                ),
+                suggested_action_type=None
+            ))
 
         return insights

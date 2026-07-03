@@ -9,6 +9,11 @@ from app.models.ad_account import AdAccount
 
 logger = logging.getLogger("lejovista.llm")
 
+# Versión del prompt del Master Brief. Se persiste junto a la narrativa para
+# poder trazar qué versión generó cada informe (AI-4).
+PROMPT_VERSION = "master-brief-v1"
+
+
 class OpenRouterClient:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or settings.OPENROUTER_API_KEY
@@ -39,27 +44,38 @@ class OpenRouterClient:
         prompt = f"""
         Eres un experto en Meta Ads y analista de crecimiento (Growth Analyst) para la marca LejoVista.
         Analiza los siguientes datos y alertas de campañas del cliente '{org.name}' (cuenta: '{ad_account.name}'):
-        
+
         Alertas y Hallazgos Previos (Capas 1 y 2):
         {insights_summary}
-        
-        Resumen de Métricas de los Últimos 7 Días:
+
+        Resumen de Métricas de los Últimos 7 Días (ÚNICA fuente de verdad):
         {json.dumps(raw_data_summary, indent=2)}
-        
+
         Escribe un diagnóstico narrativo profesional de las campañas activas. Clasifícalas en:
         - ✅ GANADORAS (buen CPL, conversiones estables)
         - ⚠️ ALERTAS (frecuencia alta, CTR bajo, o CPL subiendo)
         - ❌ FALLIDAS (CPL > 2x objetivo, 0 conversiones, o anomalía crítica)
-        
+
         Da recomendaciones específicas sobre presupuesto, targeting y creativos para cada una.
         Usa un tono profesional, directo y orientado a la acción (en español).
         """
 
+        # Control de alucinación numérica: el modelo NO debe inventar cifras.
+        system_prompt = (
+            "Eres un asistente experto de IA que genera informes ejecutivos sobre publicidad "
+            "digital en Meta Ads. REGLA INQUEBRANTABLE: usa EXCLUSIVAMENTE las cifras presentes "
+            "en los datos provistos por el usuario. No inventes, redondees ni estimes números "
+            "(CPL, gasto, leads, CTR) que no aparezcan literalmente en esos datos. Si un dato no "
+            "está, dilo explícitamente ('dato no disponible') en lugar de suponerlo. Este informe "
+            "decide gasto publicitario real."
+        )
+
         model = org.ai_model or settings.DEFAULT_AI_MODEL
         payload = {
             "model": model,
+            "temperature": 0.2,  # menor creatividad => menos invención de cifras
             "messages": [
-                {"role": "system", "content": "Eres un asistente experto de IA que genera informes ejecutivos sobre publicidad digital en Meta Ads."},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt}
             ]
         }
@@ -397,50 +413,63 @@ class OpenRouterClient:
 
     def _generate_mock_narrative(self, org: Organization, ad_account: AdAccount, raw_data_summary: Dict[str, Any]) -> str:
         """
-        Generador local de diagnósticos narrativos realistas basado en plantillas para pruebas locales.
-        Simula perfectamente lo que respondería Claude o Gemini en base a los datos de la cuenta.
+        Generador local de diagnósticos narrativos para pruebas sin LLM.
+
+        IMPORTANTE (AI-1): todas las cifras que aparecen en el texto se derivan de
+        `raw_data_summary` (los datos reales de la cuenta). No se inventa ningún
+        número, porque este informe puede orientar decisiones de gasto real.
         """
-        # Clasificar campañas basadas en datos mockeados
-        ganadoras = []
-        alertas = []
-        fallidas = []
-        
-        for c_id, c_data in raw_data_summary.items():
-            spend = c_data["spend"]
-            conv = c_data["conversions"]
+        ganadoras, alertas, fallidas = [], [], []
+
+        for c_data in raw_data_summary.values():
+            spend = c_data.get("spend", 0.0)
+            conv = c_data.get("conversions", 0)
             cpl = spend / conv if conv > 0 else spend
-            
-            if c_id == "camp_cable_gpt" or cpl < 2.0:
-                ganadoras.append(c_data["name"])
-            elif c_id == "camp_thhn" or conv == 0 or cpl > 7.0:
-                fallidas.append(c_data["name"])
+            ctr = c_data.get("ctr", 0.0)
+            entry = {
+                "name": c_data.get("name", "(sin nombre)"),
+                "spend": spend, "conv": conv, "cpl": cpl, "ctr": ctr,
+            }
+            if conv == 0 or cpl > 7.0:
+                fallidas.append(entry)
+            elif cpl < 2.0:
+                ganadoras.append(entry)
             else:
-                alertas.append(c_data["name"])
+                alertas.append(entry)
+
+        total_spend = sum(c.get("spend", 0.0) for c in raw_data_summary.values())
+        total_conv = sum(c.get("conversions", 0) for c in raw_data_summary.values())
+        avg_cpl = (total_spend / total_conv) if total_conv > 0 else total_spend
+
+        def _fmt(items) -> str:
+            if not items:
+                return "  _Ninguna campaña en esta categoría._"
+            return "\n".join(
+                f"* **{e['name']}** — Inversión S/.{e['spend']:.2f}, {e['conv']} leads, "
+                f"CPL S/.{e['cpl']:.2f}, CTR {e['ctr']:.2f}%."
+                for e in items
+            )
 
         narrative = f"""### 📋 Análisis de Desempeño para {org.name}
 
-En base a la recopilación de datos de los últimos 7 días en la cuenta de anuncios **{ad_account.name}**, hemos realizado una auditoría completa del rendimiento de las campañas y estructurado recomendaciones inmediatas.
+Auditoría de los últimos 7 días en la cuenta **{ad_account.name}**. Inversión total: **S/.{total_spend:.2f}**, leads totales: **{total_conv}**, CPL promedio: **S/.{avg_cpl:.2f}**.
 
 ---
 
-### 🟢 Campañas GANADORAS:
-* **{", ".join(ganadoras) if ganadoras else "Ninguna"}**:
-  Esta campaña está mostrando una tracción excelente con un CPL de **S/.1.45**, lo cual está muy por debajo del objetivo estándar del cliente. El engagement en Facebook Reels es el motor principal, entregando leads un 40% más baratos que los feeds.
-  **Recomendación:** Escalar presupuesto de forma controlada (+25%) y enfocar un 70% de la inversión en el placement de Reels.
+### 🟢 Campañas GANADORAS (CPL < S/.2.00)
+{_fmt(ganadoras)}
+{"**Recomendación:** escalar presupuesto de forma controlada manteniendo el CPL bajo." if ganadoras else ""}
 
-### 🟡 Campañas en ALERTA:
-* **{", ".join(alertas) if alertas else "Ninguna"}**:
-  Esta campaña sufre fatiga de audiencia. La frecuencia acumulada en los últimos 7 días alcanzó **3.4**, lo que significa que el público objetivo local está saturado del mismo creativo. Esto ha causado que el CPL suba gradualmente de S/.3.20 a S/.4.85.
-  **Recomendación:** Ampliar la segmentación geográfica a distritos aledaños o rotar las imágenes activas de inmediato para refrescar la campaña.
+### 🟡 Campañas en ALERTA (CPL entre S/.2.00 y S/.7.00)
+{_fmt(alertas)}
+{"**Recomendación:** revisar frecuencia/creativo y vigilar la tendencia del CPL." if alertas else ""}
 
-### 🔴 Campañas FALLIDAS:
-* **{", ".join(fallidas) if fallidas else "Ninguna"}**:
-  Campaña ineficiente con un costo por lead de **S/.12.00** en promedio, y registrando 0 leads en las últimas 48 horas a pesar de un gasto de S/.80. La tasa de clics (CTR) es extremadamente baja (0.22%), lo que denota una nula relevancia del copy.
-  **Recomendación:** Pausar la campaña de inmediato para evitar mayor desperdicio de presupuesto, e iniciar una nueva campaña con una estructura optimizada basada en el ángulo de Cable GPT.
+### 🔴 Campañas FALLIDAS (0 leads o CPL > S/.7.00)
+{_fmt(fallidas)}
+{"**Recomendación:** pausar y rediseñar copy/segmentación antes de seguir invirtiendo." if fallidas else ""}
 
 ---
 
-### 🛡 Medidas de Seguridad Aplicadas de forma Autónoma:
-1. Se ha registrado el estado del spend cap de la cuenta. El balance es óptimo.
-2. Todas las acciones sugeridas se encuentran pendientes de aprobación en tu panel de control antes de ser enviadas a la API."""
+### 🛡 Nota
+Todas las acciones sugeridas quedan pendientes de aprobación en tu panel antes de aplicarse en Meta. Las cifras de este informe provienen directamente de los datos sincronizados de la cuenta."""
         return narrative
