@@ -80,8 +80,22 @@ class Capa1Rules:
             if s.date > campaign_data[c_id]["latest_snapshot"].date:
                 campaign_data[c_id]["latest_snapshot"] = s
 
-        # CPL objetivo de referencia para el cliente (S/.3.50 por defecto)
-        target_cpl = 3.50
+        # CPL objetivo de referencia dinámico basado en el promedio histórico de los snapshots de la cuenta
+        q_avg = select(CampaignSnapshot).where(
+            CampaignSnapshot.ad_account_id == ad_account.id
+        )
+        res_avg = await self.db.execute(q_avg)
+        all_snapshots = res_avg.scalars().all()
+        
+        total_spend = sum(s.spend for s in all_snapshots)
+        total_conversions = sum(s.conversions for s in all_snapshots)
+        
+        if total_conversions > 0:
+            target_cpl = total_spend / total_conversions
+            # Mantener un rango razonable por seguridad (entre S/.1.50 y S/.10.00)
+            target_cpl = max(1.50, min(10.00, target_cpl))
+        else:
+            target_cpl = 3.50
 
         for c_id, data in campaign_data.items():
             # Solo analizamos campañas activas en la última sincronización

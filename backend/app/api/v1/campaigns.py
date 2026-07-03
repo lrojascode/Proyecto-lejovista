@@ -10,6 +10,24 @@ from app.utils.security import get_current_user
 from app.workers.tasks import sync_ad_account
 from typing import List
 import datetime
+import uuid
+from fastapi import status
+from celery import chain
+
+from app.schemas.campaign_schemas import CampaignCreateRequest
+from app.services.campaign_validator import CampaignValidator
+from app.services.meta_api_client import MetaApiClient
+from app.services.meta_credential_service import MetaCredentialService
+from app.services.rate_limiter import RateLimiter
+from app.services.audit_log_service import AuditLogService
+from app.workers.creation_tasks import (
+    task_upload_image,
+    task_create_campaign,
+    task_create_adset,
+    task_create_creative,
+    task_create_ad,
+    task_handle_chain_error
+)
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -81,3 +99,64 @@ async def trigger_manual_sync(
         sync_ad_account.delay(acc.id, "INCREMENTAL")
         
     return {"message": f"Sincronización manual programada para {len(accounts)} cuentas de anuncios."}
+
+
+# Mocks para dependencias. En producción se usaría un sistema de inyección (Depends).
+async def get_meta_client(db: AsyncSession = Depends(get_db)):
+    # Fake redis client for RateLimiter for now
+    import redis.asyncio as redis
+    redis_client = redis.Redis.from_url("redis://localhost:6379/0")
+    rate_limiter = RateLimiter(redis_client)
+    cred_service = MetaCredentialService(db)
+    audit_service = AuditLogService(db)
+    return MetaApiClient("mock-tenant", cred_service, rate_limiter, audit_service)
+
+@router.post("/", status_code=status.HTTP_202_ACCEPTED)
+async def create_campaign(
+    request: CampaignCreateRequest,
+    current_user: User = Depends(get_current_user),
+    meta_client: MetaApiClient = Depends(get_meta_client),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Inicia la creación de una campaña en Meta Ads (Saga).
+    """
+    tenant_id = current_user.organization_id
+    validator = CampaignValidator(tenant_id, meta_client)
+    
+    # 1. Validación síncrona
+    await validator.validate(request)
+    
+    # 2. Registrar el intento (CampaignDraft)
+    # En un entorno real guardaríamos un CampaignDraft en BD.
+    draft_id = str(uuid.uuid4())
+    
+    # 3. Preparar el contexto inicial
+    initial_context = {
+        "draft_id": draft_id,
+        "ad_account_id": request.ad_account_id,
+        "page_id": request.page_id,
+        "product_name": request.product_name,
+        "zone": request.zone,
+        "budget": request.budget,
+        "days": request.days,
+        "whatsapp_number": request.whatsapp_number,
+        "image_url": request.image_url,
+        "image_hash": request.image_hash,
+        "copy_text": request.copy_text
+    }
+    
+    # 4. Despachar la Saga (Chain)
+    # El chain ejecuta secuencialmente. set(countdown=40) asegura la pausa requerida por protocolo.
+    creation_chain = chain(
+        task_upload_image.s(initial_context),
+        task_create_campaign.s().set(countdown=40),
+        task_create_adset.s().set(countdown=40),
+        task_create_creative.s().set(countdown=40),
+        task_create_ad.s().set(countdown=40)
+    ).on_error(task_handle_chain_error.s(draft_id))
+    
+    creation_chain.apply_async()
+    
+    return {"message": "Campaign creation started", "draft_id": draft_id}
+

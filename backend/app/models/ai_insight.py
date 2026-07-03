@@ -8,8 +8,8 @@ class AIInsight(Base):
     __tablename__ = "ai_insights"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"))
-    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"))
+    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"), index=True)
+    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), index=True)
     campaign_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     
     level: Mapped[str] = mapped_column(String)  # INFO, WARNING, CRITICAL

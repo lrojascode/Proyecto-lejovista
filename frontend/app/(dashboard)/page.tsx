@@ -1,23 +1,30 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell
+} from "recharts";
+import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { api } from "@/lib/api";
 import Link from "next/link";
 
-export default function Dashboard() {
+const COLORS = ['#8B5CF6', '#3B82F6', '#10B981', '#F59E0B', '#EF4444'];
+
+export default function DashboardPage() {
+  const { lastEvent, isConnected } = useWebSocket();
+  const [notifications, setNotifications] = useState<string[]>([]);
+  
   const [campaigns, setCampaigns] = useState<any[]>([]);
-  const [insights, setInsights] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
 
   const fetchData = async () => {
+    setLoading(true);
     try {
-      const campsData = await api.getRecentCampaigns();
-      const insightsData = await api.getInsights();
-      setCampaigns(campsData);
-      setInsights(insightsData);
+      const data = await api.getRecentCampaigns();
+      setCampaigns(data || []);
     } catch (e) {
       console.error("Error fetching dashboard data:", e);
     } finally {
@@ -29,191 +36,191 @@ export default function Dashboard() {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    if (lastEvent) {
+      const msg = `[${new Date().toLocaleTimeString()}] ${lastEvent.event_type}: ${lastEvent.status}`;
+      setNotifications(prev => [...prev, msg].slice(-3));
+      
+      if (lastEvent.event_type === "SYNC_STATUS") {
+        if (lastEvent.status === "COMPLETED") {
+          setSyncing(false);
+          setSyncMessage("Sincronización completada exitosamente.");
+          fetchData(); // Reload data
+        } else if (lastEvent.status === "FAILED") {
+          setSyncing(false);
+          setSyncMessage("Error en la sincronización.");
+        } else {
+          setSyncing(true);
+          setSyncMessage(`Sincronizando: ${lastEvent.status}`);
+        }
+      }
+    }
+  }, [lastEvent]);
+
   const handleSync = async () => {
     setSyncing(true);
-    setMsg("");
+    setSyncMessage("Iniciando sincronización...");
     try {
-      const res = await api.triggerSync();
-      setMsg("✓ Sincronización programada en segundo plano.");
-      // Recargar datos tras un momento para ver los cambios mock
-      setTimeout(fetchData, 1500);
-    } catch (err: any) {
-      setMsg(`❌ Error: ${err.message}`);
-    } finally {
+      await api.triggerSync();
+    } catch (e) {
+      console.error(e);
       setSyncing(false);
-    }
-  };
-
-  const handleAnalyze = async () => {
-    setAnalyzing(true);
-    setMsg("");
-    try {
-      await api.triggerAnalysis();
-      setMsg("✓ Análisis de IA programado en segundo plano.");
-      setTimeout(fetchData, 1500);
-    } catch (err: any) {
-      setMsg(`❌ Error: ${err.message}`);
-    } finally {
-      setAnalyzing(false);
+      setSyncMessage("Error al iniciar sincronización.");
     }
   };
 
   if (loading) {
-    return <div style={{ color: "var(--text-secondary)" }}>Cargando métricas...</div>;
+    return (
+      <div className="p-6 max-w-7xl mx-auto space-y-8 animate-pulse">
+        <div className="h-10 bg-gray-700 rounded w-1/3"></div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div className="h-[350px] bg-gray-800 rounded-lg"></div>
+          <div className="h-[350px] bg-gray-800 rounded-lg"></div>
+        </div>
+      </div>
+    );
   }
 
-  // Cálculos agregados
-  const totalSpend = campaigns.reduce((acc, curr) => acc + curr.spend, 0);
-  const totalLeads = campaigns.reduce((acc, curr) => acc + curr.conversions, 0);
-  const averageCpl = totalLeads > 0 ? totalSpend / totalLeads : totalSpend;
-  const activeCount = campaigns.filter(c => c.status === "ACTIVE").length;
+  const hasData = campaigns.length > 0;
+  
+  // Procesar datos para gráficos
+  const spendData = campaigns.map(c => ({
+    name: c.campaign_name.substring(0, 15) + "...",
+    spend: c.spend
+  })).sort((a, b) => b.spend - a.spend).slice(0, 5);
+
+  const cplData = campaigns.map(c => ({
+    name: c.campaign_name.substring(0, 15) + "...",
+    cpl: c.cpl
+  })).sort((a, b) => a.cpl - b.cpl).slice(0, 5);
 
   return (
-    <div>
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
+    <div className="p-6 max-w-7xl mx-auto space-y-8">
+      <div className="flex justify-between items-center">
         <div>
-          <h2 style={{ fontSize: "2rem", fontWeight: "700" }}>Resumen Ejecutivo</h2>
-          <p style={{ color: "var(--text-secondary)" }}>Visión general de tus campañas y alertas de optimización autónoma.</p>
+          <h1 className="text-3xl font-bold">Dashboard de Insights</h1>
+          <p className="text-gray-400 mt-2">Visión general del rendimiento de tus cuentas publicitarias conectadas.</p>
         </div>
-        
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-          {msg && <span style={{ fontSize: "0.85rem", color: "var(--accent-purple)" }}>{msg}</span>}
-          <button className="btn-secondary" onClick={handleSync} disabled={syncing}>
-            {syncing ? "Sincronizando..." : "🔄 Sincronizar API"}
-          </button>
-          <button className="btn-primary" onClick={handleAnalyze} disabled={analyzing}>
-            {analyzing ? "Analizando..." : "🧠 Correr IA"}
+        <div className="flex flex-col items-end space-y-2">
+          <div className="flex items-center space-x-2">
+            <div className={`w-3 h-3 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <span className="text-sm text-gray-500">{isConnected ? 'Conectado a Live Updates' : 'Desconectado'}</span>
+          </div>
+          <button 
+            onClick={handleSync}
+            disabled={syncing}
+            className={`px-4 py-2 rounded-lg font-medium transition-all ${syncing ? 'bg-gray-600 text-gray-300' : 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_15px_rgba(139,92,246,0.3)]'}`}
+          >
+            {syncing ? '🔄 Sincronizando...' : '🔄 Sincronizar Ahora'}
           </button>
         </div>
       </div>
 
-      {/* KPI Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1.5rem", marginBottom: "2.5rem" }}>
-        <div className="glass-card">
-          <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", textTransform: "uppercase" }}>Inversión (7D)</div>
-          <div style={{ fontSize: "2rem", fontWeight: "700", marginTop: "0.5rem" }}>S/.{totalSpend.toFixed(2)}</div>
+      {(syncMessage || notifications.length > 0) && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+          <h3 className="font-semibold text-blue-800 dark:text-blue-300 mb-2">Estado del Sistema</h3>
+          {syncMessage && <p className="text-blue-400 mb-2 font-medium">{syncMessage}</p>}
+          <ul className="text-sm space-y-1 text-gray-400">
+            {notifications.map((n, i) => <li key={i}>{n}</li>)}
+          </ul>
         </div>
-        <div className="glass-card">
-          <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", textTransform: "uppercase" }}>Leads Captados (7D)</div>
-          <div style={{ fontSize: "2rem", fontWeight: "700", marginTop: "0.5rem" }}>{totalLeads}</div>
-        </div>
-        <div className="glass-card">
-          <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", textTransform: "uppercase" }}>CPL Promedio</div>
-          <div style={{ fontSize: "2rem", fontWeight: "700", marginTop: "0.5rem", color: averageCpl < 3.5 ? "var(--success)" : "inherit" }}>
-            S/.{averageCpl.toFixed(2)}
+      )}
+
+      {!hasData ? (
+        <div className="bg-gray-800/50 border border-gray-700 rounded-xl p-12 text-center flex flex-col items-center justify-center space-y-6">
+          <div className="w-20 h-20 bg-gray-700 rounded-full flex items-center justify-center">
+            <span className="text-4xl">📊</span>
           </div>
-        </div>
-        <div className="glass-card">
-          <div style={{ color: "var(--text-secondary)", fontSize: "0.85rem", textTransform: "uppercase" }}>Campañas Activas</div>
-          <div style={{ fontSize: "2rem", fontWeight: "700", marginTop: "0.5rem" }}>{activeCount} / {campaigns.length}</div>
-        </div>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "2.5fr 1.5fr", gap: "2rem" }}>
-        {/* Table of campaigns */}
-        <div className="glass-card" style={{ padding: "1.75rem" }}>
-          <h3 style={{ fontSize: "1.25rem", marginBottom: "1.25rem" }}>🎯 Rendimiento por Campaña</h3>
-          {campaigns.length === 0 ? (
-            <p style={{ color: "var(--text-secondary)" }}>No hay datos. Presiona "Sincronizar API" para descargar datos de Meta Ads.</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border-color)", textAlign: "left" }}>
-                    <th style={{ padding: "0.75rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Nombre</th>
-                    <th style={{ padding: "0.75rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Spend</th>
-                    <th style={{ padding: "0.75rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Leads</th>
-                    <th style={{ padding: "0.75rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>CPL</th>
-                    <th style={{ padding: "0.75rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Estado</th>
-                    <th style={{ padding: "0.75rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {campaigns.map((c) => {
-                    const cpl = c.conversions > 0 ? c.spend / c.conversions : c.spend;
-                    let badgeClass = "badge-success";
-                    let badgeLabel = "Ganadora";
-                    
-                    if (cpl > 7.0 || c.conversions === 0) {
-                      badgeClass = "badge-danger";
-                      badgeLabel = "Fallida";
-                    } else if (cpl > 3.5 || c.frequency > 3.0) {
-                      badgeClass = "badge-warning";
-                      badgeLabel = "Alerta";
-                    }
-
-                    return (
-                      <tr key={c.id} style={{ borderBottom: "1px solid var(--border-color)" }}>
-                        <td style={{ padding: "1rem 0.5rem", fontWeight: "600" }}>{c.campaign_name}</td>
-                        <td style={{ padding: "1rem 0.5rem" }}>S/.{c.spend.toFixed(2)}</td>
-                        <td style={{ padding: "1rem 0.5rem" }}>{c.conversions}</td>
-                        <td style={{ padding: "1rem 0.5rem", fontWeight: "700" }}>S/.{cpl.toFixed(2)}</td>
-                        <td style={{ padding: "1rem 0.5rem" }}>
-                          <span className={`badge ${badgeClass}`}>{badgeLabel}</span>
-                        </td>
-                        <td style={{ padding: "1rem 0.5rem" }}>
-                          <Link href={`/campaigns/${c.campaign_id}`} className="btn-secondary" style={{ padding: "0.4rem 0.8rem", fontSize: "0.8rem" }}>
-                            Detalle
-                          </Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* Sidebar Alerts */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <div className="glass-card">
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "1.25rem" }}>💡 Hallazgos de IA</h3>
-            {insights.length === 0 ? (
-              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No se encontraron alertas críticas en la cuenta.</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                {insights.slice(0, 3).map((ins) => (
-                  <div 
-                    key={ins.id} 
-                    style={{ 
-                      padding: "1rem", 
-                      borderRadius: "10px", 
-                      background: ins.level === "CRITICAL" ? "rgba(239, 68, 68, 0.05)" : "rgba(245, 158, 11, 0.05)",
-                      border: `1px solid ${ins.level === "CRITICAL" ? "rgba(239, 68, 68, 0.15)" : "rgba(245, 158, 11, 0.15)"}` 
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
-                      <strong style={{ fontSize: "0.9rem", color: ins.level === "CRITICAL" ? "var(--danger)" : "var(--warning)" }}>
-                        {ins.title}
-                      </strong>
-                      <span className={`badge ${ins.level === "CRITICAL" ? "badge-danger" : "badge-warning"}`} style={{ fontSize: "0.6rem" }}>
-                        {ins.level}
-                      </span>
-                    </div>
-                    <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>{ins.description}</p>
-                  </div>
-                ))}
-                
-                <Link href="/diagnostics" style={{ color: "var(--accent-purple)", fontSize: "0.9rem", alignSelf: "flex-end", fontWeight: "600" }}>
-                  Ver todos los diagnósticos →
-                </Link>
-              </div>
-            )}
-          </div>
-
-          <div className="glass-card" style={{ background: "linear-gradient(135deg, rgba(139, 92, 246, 0.1) 0%, rgba(59, 130, 246, 0.1) 100%)" }}>
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "0.5rem" }}>🤖 Modo Autónomo</h3>
-            <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>
-              La IA analiza y propone mejoras a la cola de aprobación. Puedes configurar las políticas y el presupuesto máximo en Configuración.
-            </p>
-            <Link href="/actions" className="btn-primary" style={{ width: "100%" }}>
-              Cola de Acciones
+          <h2 className="text-2xl font-bold text-white">¡Bienvenido a LejoVista!</h2>
+          <p className="text-gray-400 max-w-lg text-lg">
+            Parece que tu cuenta publicitaria aún no tiene datos sincronizados, o acabas de conectarla. 
+            Haz clic en "Sincronizar Ahora" para extraer las campañas de Meta Ads y generar los primeros diagnósticos con Inteligencia Artificial.
+          </p>
+          <div className="flex space-x-4 pt-4">
+            <button onClick={handleSync} disabled={syncing} className="btn-primary text-lg px-8 py-3 rounded-xl font-bold">
+              {syncing ? 'Sincronizando...' : 'Comenzar Sincronización'}
+            </button>
+            <Link href="/settings" className="px-8 py-3 rounded-xl font-bold border border-gray-600 text-gray-300 hover:bg-gray-800 transition">
+              Revisar Configuración
             </Link>
           </div>
         </div>
-      </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border border-gray-100 dark:border-gray-700">
+              <h2 className="text-xl font-semibold mb-4">Top 5 Campañas por Inversión (S/)</h2>
+              <div className="h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={spendData} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} horizontal={true} vertical={false} />
+                    <XAxis type="number" stroke="#6B7280" />
+                    <YAxis dataKey="name" type="category" stroke="#6B7280" width={100} tick={{fontSize: 12}} />
+                    <Tooltip cursor={{fill: 'rgba(255, 255, 255, 0.1)'}} contentStyle={{ backgroundColor: '#1F2937', borderColor: '#374151', color: '#fff' }} />
+                    <Bar dataKey="spend" name="Inversión (S/)" fill="#8B5CF6" radius={[0, 4, 4, 0]}>
+                      {spendData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow border border-gray-100 dark:border-gray-700">
+              <h2 className="text-xl font-semibold mb-4">Top 5 Campañas por Menor CPL (S/)</h2>
+              <div className="h-[300px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={cplData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+                    <XAxis dataKey="name" stroke="#6B7280" tick={{fontSize: 12}} />
+                    <YAxis stroke="#6B7280" />
+                    <Tooltip cursor={{fill: 'rgba(255, 255, 255, 0.1)'}} contentStyle={{ backgroundColor: '#1F2937', borderColor: '#374151', color: '#fff' }} />
+                    <Bar dataKey="cpl" name="CPL (S/)" fill="#10B981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-100 dark:border-gray-700 overflow-hidden">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+              <h2 className="text-xl font-semibold">Resumen de Campañas Activas</h2>
+              <Link href="/campaigns" className="text-purple-400 hover:text-purple-300 text-sm font-medium">Ver todas →</Link>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700">
+                    <th className="p-4 font-semibold text-gray-600 dark:text-gray-300">Campaña</th>
+                    <th className="p-4 font-semibold text-gray-600 dark:text-gray-300 text-right">CPL (S/)</th>
+                    <th className="p-4 font-semibold text-gray-600 dark:text-gray-300 text-right">Inversión</th>
+                    <th className="p-4 font-semibold text-gray-600 dark:text-gray-300 text-center">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.slice(0, 5).map((campaign) => (
+                    <tr key={campaign.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                      <td className="p-4 font-medium">{campaign.campaign_name}</td>
+                      <td className="p-4 text-right text-blue-600 dark:text-blue-400 font-bold">{campaign.cpl.toFixed(2)}</td>
+                      <td className="p-4 text-right text-gray-600 dark:text-gray-400">{campaign.spend.toFixed(2)}</td>
+                      <td className="p-4 text-center">
+                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                          campaign.status === 'ACTIVE' 
+                            ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
+                            : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
+                        }`}>
+                          {campaign.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

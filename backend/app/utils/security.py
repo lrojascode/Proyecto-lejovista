@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
-from typing import Optional, Union, Any
+from typing import Optional, Union, Any, Dict, Tuple
 import jwt
+import uuid
+import time
 from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
@@ -13,6 +15,9 @@ from app.models.user import User
 # Usamos bcrypt para hashes de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
+
+# Token temporal: key -> (user_id, expiration_timestamp)
+temp_tokens: Dict[str, Tuple[str, float]] = {}
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
@@ -30,6 +35,25 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
+def create_temp_token(user_id: str, expires_in: int = 30) -> str:
+    token = str(uuid.uuid4())
+    temp_tokens[token] = (user_id, time.time() + expires_in)
+    return token
+
+def consume_temp_token(token: str) -> Optional[str]:
+    now = time.time()
+    # Limpieza perezosa de expirados
+    expired = [k for k, v in list(temp_tokens.items()) if v[1] < now]
+    for k in expired:
+        temp_tokens.pop(k, None)
+        
+    val = temp_tokens.pop(token, None)
+    if val:
+        user_id, expiration = val
+        if expiration >= now:
+            return user_id
+    return None
+
 async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -41,22 +65,42 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    # Check fallback in query params if header not present
-    if not token:
-        token = request.query_params.get("token")
-        
-    if not token:
-        raise credentials_exception
-        
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+    user_id = None
+    
+    # 1. Intentar validar usando token JWT en headers
+    if token:
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+            user_id = payload.get("sub")
+        except Exception:
             raise credentials_exception
-    except Exception:
+
+    if not user_id:
         raise credentials_exception
         
-    user = await db.get(User, user_id)
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select
+    q_user = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
+    res_user = await db.execute(q_user)
+    user = res_user.scalar_one_or_none()
+    
     if user is None:
         raise credentials_exception
+        
+    # Validar aislamiento de inquilino (tenant isolation)
+    tenant_slug = request.headers.get("X-Tenant-Slug")
+    if tenant_slug:
+        from app.models.organization import Organization
+        q_org = select(Organization).where(Organization.slug == tenant_slug)
+        res_org = await db.execute(q_org)
+        org = res_org.scalar_one_or_none()
+        
+        user_org_ids = [ou.organization_id for ou in user.organizations] if user.organizations else []
+        print(f"DEBUG: tenant_slug={tenant_slug}, org={org}, org.id={org.id if org else None}, user_org_ids={user_org_ids}, user.organizations={user.organizations}")
+        if not org or org.id not in user_org_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Acceso denegado: No tienes permisos para acceder a esta organización."
+            )
+            
     return user

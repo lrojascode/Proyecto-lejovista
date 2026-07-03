@@ -163,12 +163,39 @@ class AIExecutor:
         logger.info("[PASO 5] Creando Ad Creative...")
         steps_log.append("Paso 5: Configurando el creativo (Creative Copy + Botón de WhatsApp)...")
         creative_id = "creative_mock_new_" + str(random.randint(1000, 9999))
+        
+        # Obtener Page ID de manera dinámica
+        page_id = params.get("page_id") or params.get("creative", {}).get("page_id")
+        if not page_id and not settings.MOCK_SERVICES:
+            try:
+                pages_res = await limiter.call_api(f"act_{ad_account.external_account_id}/promotable_page_ids", {"fields": "id,name"}, access_token=token)
+                pages_data = pages_res.get("data", [])
+                if pages_data:
+                    page_id = pages_data[0].get("id")
+                    logger.info(f"Page ID recuperado automáticamente (promotable_page_ids): {page_id}")
+            except Exception as e:
+                logger.warning(f"No se pudo recuperar promotable_page_ids: {e}. Intentando me/accounts...")
+                try:
+                    pages_res = await limiter.call_api("me/accounts", {"fields": "id,name"}, access_token=token)
+                    pages_data = pages_res.get("data", [])
+                    if pages_data:
+                        page_id = pages_data[0].get("id")
+                        logger.info(f"Page ID recuperado automáticamente (me/accounts): {page_id}")
+                except Exception as e2:
+                    logger.error(f"Error al recuperar Page ID desde me/accounts: {e2}")
+
+        if not page_id:
+            if settings.MOCK_SERVICES:
+                page_id = "mock_page_id"
+            else:
+                raise Exception("No se pudo determinar el Page ID para el Ad Creative. Por favor, especifícalo en los parámetros de la acción o vincula una página de Facebook.")
+
         if not settings.MOCK_SERVICES:
             # Payload complejo de creativo de Meta con link de WhatsApp y mensaje de bienvenida
             creative_payload = {
                 "name": f"Creative - {params.get('campaign_name')}",
                 "object_story_spec": {
-                    "page_id": "mock_page_id", # Inyectado por el brief
+                    "page_id": page_id,
                     "link_data": {
                         "image_hash": image_hash,
                         "message": params.get("creative", {}).get("body"),
@@ -183,7 +210,7 @@ class AIExecutor:
                 raise Exception(f"Fallo al crear el Creativo: {creative_res}")
         else:
             await asyncio.sleep(1.0)
-        steps_log.append(f"Paso 5: Ad Creative configurado con ID: {creative_id}")
+        steps_log.append(f"Paso 5: Ad Creative configurado con ID: {creative_id} usando Page ID: {page_id}")
 
         # PASO 6 — Crear el Anuncio final (Ad)
         logger.info("[PASO 6] Creando Anuncio...")

@@ -62,25 +62,29 @@ async def connect_ad_account(
     )
     res = await db.execute(q)
     existing = res.scalar_one_or_none()
+    
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Esta cuenta de anuncios ya se encuentra conectada a tu organización."
+        # Si la cuenta ya existe, simplemente actualizamos el token
+        existing.set_access_token(acc_in.access_token)
+        if acc_in.refresh_token:
+            existing.set_refresh_token(acc_in.refresh_token)
+        existing.status = "ACTIVE"
+        db.add(existing)
+        ad_acc = existing
+    else:
+        # 2. Crear nueva cuenta y cifrar credenciales
+        ad_acc = AdAccount(
+            organization_id=current_user.organization_id,
+            platform=acc_in.platform,
+            external_account_id=acc_in.external_account_id,
+            name=acc_in.name,
+            status="ACTIVE"
         )
+        ad_acc.set_access_token(acc_in.access_token)
+        if acc_in.refresh_token:
+            ad_acc.set_refresh_token(acc_in.refresh_token)
+        db.add(ad_acc)
 
-    # 2. Crear nueva cuenta y cifrar credenciales
-    ad_acc = AdAccount(
-        organization_id=current_user.organization_id,
-        platform=acc_in.platform,
-        external_account_id=acc_in.external_account_id,
-        name=acc_in.name,
-        status="ACTIVE"
-    )
-    ad_acc.set_access_token(acc_in.access_token)
-    if acc_in.refresh_token:
-        ad_acc.set_refresh_token(acc_in.refresh_token)
-
-    db.add(ad_acc)
     await db.commit()
 
     # 3. Disparar Sincronización Inicial FULL en background

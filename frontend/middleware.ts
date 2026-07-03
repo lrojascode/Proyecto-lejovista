@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export function proxy(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const url = request.nextUrl.clone();
   const hostname = request.headers.get("host") || "";
 
@@ -39,8 +39,14 @@ export function proxy(request: NextRequest) {
     requestHeaders.set("x-tenant-slug", subdomain);
   }
 
-  // Si estamos en la raíz (sin subdominio) y no estamos logueados, podríamos mostrar el selector de inquilino
-  // Pero permitimos que Next.js renderice la ruta correspondiente
+  // Si estamos en la raíz (sin subdominio) redirigir internamente a la landing page
+  if (!subdomain && url.pathname === "/") {
+    return NextResponse.rewrite(new URL("/landing", request.url));
+  }
+
+  // Si no hay subdominio y tratan de entrar a una ruta de la app (ej. /login o /dashboard)
+  // Opcionalmente podríamos forzarlos a la landing, pero por ahora lo dejamos pasar.
+
   return NextResponse.next({
     request: {
       headers: requestHeaders,
@@ -48,6 +54,6 @@ export function proxy(request: NextRequest) {
   });
 }
 
-export const proxyConfig = {
+export const config = {
   matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };

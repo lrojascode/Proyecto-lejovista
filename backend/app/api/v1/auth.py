@@ -2,13 +2,31 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
+from app.models.organization_user import OrganizationUser
 from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse
 from app.utils.security import verify_password, get_password_hash, create_access_token, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+def enrich_user(user: User):
+    org_role = "USER"
+    org_id = ""
+    if hasattr(user, 'organizations') and user.organizations:
+        org_role = user.organizations[0].role
+        org_id = user.organizations[0].organization_id
+        
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": org_role,
+        "organization_id": org_id,
+        "created_at": user.created_at
+    }
 
 @router.post("/signup", response_model=TokenResponse)
 async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -39,24 +57,34 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     user = User(
         email=user_in.email,
         hashed_password=get_password_hash(user_in.password),
-        full_name=user_in.full_name,
-        role="ADMIN",
-        organization_id=org.id
+        full_name=user_in.full_name
     )
     db.add(user)
+    await db.flush()
+    
+    # Vincular usuario a la organizacion
+    org_user = OrganizationUser(
+        user_id=user.id,
+        organization_id=org.id,
+        role="ADMIN"
+    )
+    db.add(org_user)
+    
     await db.commit()
 
     # 4. Crear token JWT
     access_token = create_access_token(subject=user.id)
+    user.organizations = [org_user]
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user
+        "user": enrich_user(user)
     }
 
 @router.post("/login", response_model=TokenResponse)
 async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
-    q = select(User).where(User.email == login_data.email)
+    q = select(User).options(selectinload(User.organizations)).where(User.email == login_data.email)
     res = await db.execute(q)
     user = res.scalar_one_or_none()
     
@@ -67,12 +95,13 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
         )
         
     access_token = create_access_token(subject=user.id)
+    
     return {
         "access_token": access_token,
         "token_type": "bearer",
-        "user": user
+        "user": enrich_user(user)
     }
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
+    return enrich_user(current_user)

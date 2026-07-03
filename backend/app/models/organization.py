@@ -10,15 +10,17 @@ class Organization(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     slug: Mapped[str] = mapped_column(String, unique=True, index=True)
     name: Mapped[str] = mapped_column(String)
-    ai_model: Mapped[str] = mapped_column(String, default="google/gemini-2.5-flash")
+    ai_model: Mapped[str] = mapped_column(String, default="google/gemini-3.5-flash")
     max_budget: Mapped[float] = mapped_column(Float, default=1000.0)  # Límite financiero mensual de seguridad
     status: Mapped[str] = mapped_column(String, default="ACTIVE")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones
-    users = relationship("User", back_populates="organization", cascade="all, delete-orphan")
+    users = relationship("OrganizationUser", back_populates="organization", cascade="all, delete-orphan")
     ad_accounts = relationship("AdAccount", back_populates="organization", cascade="all, delete-orphan")
     campaign_snapshots = relationship("CampaignSnapshot", back_populates="organization", cascade="all, delete-orphan")
     insights = relationship("AIInsight", back_populates="organization", cascade="all, delete-orphan")
     actions = relationship("AIAction", back_populates="organization", cascade="all, delete-orphan")
     sync_jobs = relationship("SyncJob", back_populates="organization", cascade="all, delete-orphan")
+    meta_credentials = relationship("MetaCredential", back_populates="organization", cascade="all, delete-orphan")
+    meta_pages = relationship("MetaPage", back_populates="organization", cascade="all, delete-orphan")

@@ -8,9 +8,9 @@ export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000
 export const getApiUrl = (): string => {
   // Si estamos en el navegador y el host es api.localhost, usamos la url absoluta
   if (typeof window !== "undefined") {
-    // Si la API corre en el mismo host pero puerto 8000, o por Nginx
+    // Si la API corre en el mismo host
     if (window.location.hostname.endsWith("localhost")) {
-      return "http://api.localhost";
+      return "http://localhost:8000";
     }
     return `https://api.${BASE_DOMAIN.replace(":3000", "")}`;
   }

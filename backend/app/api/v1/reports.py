@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import datetime
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
@@ -12,13 +12,13 @@ from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-@router.get("/brief", response_class=HTMLResponse)
-async def get_master_brief_html(
+@router.get("/brief-data")
+async def get_master_brief_data(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Genera dinámicamente y retorna el HTML Master Brief del informe IA.
+    Retorna los datos estructurados del Master Brief en formato JSON.
     """
     # 1. Obtener organización
     org = await db.get(Organization, current_user.organization_id)
@@ -44,7 +44,6 @@ async def get_master_brief_html(
     # 4. Obtener la narrativa guardada (o generar una de prueba rápida si no existe)
     narrative = acc.cached_narrative
     if not narrative:
-        # Generamos una rápida
         llm_client = OpenRouterClient()
         insights_summary = "Simulación inicial de Master Brief"
         narrative = await llm_client.analyze_campaigns(org, acc, insights_summary, raw_data)
@@ -54,8 +53,12 @@ async def get_master_brief_html(
         db.add(acc)
         await db.commit()
 
-    # 5. Generar HTML completo
-    llm_client = OpenRouterClient()
-    html_content = await llm_client.generate_html_brief(org, acc, narrative, raw_data)
-    
-    return html_content
+    return {
+        "organization_name": org.name,
+        "ad_account_name": acc.name,
+        "external_account_id": acc.external_account_id,
+        "generated_at": datetime.datetime.now().isoformat(),
+        "narrative": narrative,
+        "campaigns_data": raw_data
+    }
+

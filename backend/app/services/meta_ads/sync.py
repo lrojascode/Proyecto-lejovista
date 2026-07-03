@@ -221,7 +221,7 @@ class MetaAdsSyncService:
 
         # Obtener información de la cuenta
         acc_info = await limiter.call_api(
-            f"act_{ad_account.external_account_id}", 
+            ad_account.external_account_id, 
             {"fields": "amount_spent,spend_cap,account_status"}, 
             access_token=token
         )
@@ -237,13 +237,32 @@ class MetaAdsSyncService:
         ad_account.status = "ACTIVE" if status_code == 1 else "SUSPENDED"
         self.db.add(ad_account)
 
-        # Descarga de campañas e insights
-        # Endpoint: act_XXX/insights
-        # Usamos filtros de fechas de Meta (últimos 30 días para FULL, últimos 2 días para INCREMENTAL)
+        # 1. Obtener todas las campañas de la cuenta
+        campaigns_res = await limiter.call_api(
+            f"{ad_account.external_account_id}/campaigns",
+            {
+                "fields": "id,name,status,daily_budget,lifetime_budget",
+            },
+            access_token=token
+        )
+        
+        if "ERROR" in campaigns_res or "error" in campaigns_res:
+            raise Exception(f"Error al obtener campañas: {campaigns_res}")
+            
+        campaigns_map = {}
+        for c in campaigns_res.get("data", []):
+            budget = float(c.get("daily_budget") or c.get("lifetime_budget") or 0) / 100.0
+            campaigns_map[c["id"]] = {
+                "name": c.get("name", "Unknown"),
+                "status": c.get("status", "UNKNOWN"),
+                "budget": budget
+            }
+
+        # 2. Descargar insights diarios
         date_preset = "last_30d" if sync_type == "FULL" else "yesterday"
         
         campaigns_insights = await limiter.call_api(
-            f"act_{ad_account.external_account_id}/insights",
+            f"{ad_account.external_account_id}/insights",
             {
                 "level": "campaign",
                 "date_preset": date_preset,
@@ -259,11 +278,60 @@ class MetaAdsSyncService:
         records_synced = 0
         data_list = campaigns_insights.get("data", [])
         
+        from app.models.campaign_snapshot import CampaignSnapshot
+        from datetime import datetime
+        
         for item in data_list:
-            # Procesar datos e insertar en CampaignSnapshot
-            # ...
-            # Por simplicidad de la prueba piloto, si estamos corriendo en prod, mapeamos el resultado.
-            # (El código completo parsea el breakdown de acciones para sacar el lead count y guardarlo).
+            camp_id = item.get("campaign_id")
+            if not camp_id:
+                continue
+                
+            camp_info = campaigns_map.get(camp_id, {"name": item.get("campaign_name", "Unknown"), "status": "ACTIVE", "budget": 0})
+            
+            # Extraer métricas básicas
+            spend = float(item.get("spend", 0))
+            impressions = int(item.get("impressions", 0))
+            clicks = int(item.get("clicks", 0))
+            frequency = float(item.get("frequency", 0))
+            
+            # Contar conversiones desde actions
+            conversions = 0
+            actions = item.get("actions", [])
+            for action in actions:
+                if action.get("action_type") in ["lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"]:
+                    conversions += int(action.get("value", 0))
+            
+            if conversions == 0:
+                for action in actions:
+                    if "conversion" in action.get("action_type", "") or "lead" in action.get("action_type", ""):
+                        conversions += int(action.get("value", 0))
+                        
+            cpl = (spend / conversions) if conversions > 0 else spend
+            ctr = (clicks / impressions * 100) if impressions > 0 else 0
+            
+            try:
+                date_start_str = item.get("date_start")
+                sync_date = datetime.strptime(date_start_str, "%Y-%m-%d").date()
+            except:
+                continue
+
+            snapshot = CampaignSnapshot(
+                ad_account_id=ad_account.id,
+                organization_id=ad_account.organization_id,
+                campaign_id=camp_id,
+                campaign_name=camp_info["name"],
+                status=camp_info["status"],
+                budget=camp_info["budget"],
+                spend=spend,
+                impressions=impressions,
+                clicks=clicks,
+                conversions=conversions,
+                cpl=cpl,
+                ctr=ctr,
+                frequency=frequency,
+                date=sync_date
+            )
+            self.db.add(snapshot)
             records_synced += 1
 
         return records_synced

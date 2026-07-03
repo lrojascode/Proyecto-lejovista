@@ -55,19 +55,15 @@ class MetaAPIRateLimiter:
             await asyncio.sleep(delay)
             return
 
-        # ---- PRODUCCIÓN: Delays anti-detección reales ----
-        # Cada 3 llamadas: pausa larga de 45 a 75 segundos
-        if self.call_count % 3 == 0:
-            delay = random.randint(45, 75)
-            logger.info(f"Pausa larga anti-detección (llamada #{self.call_count}): {delay} segundos...")
-            await asyncio.sleep(delay)
+        # ---- PRODUCCIÓN: Delays anti-detección dinámicos y naturales ----
+        # Evitamos pausas fijas masivas de 45-75s que bloquean workers. Usamos pausas cortas.
+        if es_post:
+            delay = random.uniform(3.0, 6.0)  # Pausa corta natural entre escrituras
         else:
-            if es_post:
-                delay = random.randint(30, 50)  # Entre escrituras POST: 30-50s
-            else:
-                delay = random.randint(12, 22)  # Entre lecturas GET: 12-22s
-            logger.info(f"Pausa anti-detección: {delay} segundos...")
-            await asyncio.sleep(delay)
+            delay = random.uniform(1.0, 2.5)  # Pausa corta natural entre lecturas
+            
+        logger.info(f"Pausa preventiva anti-detección: {delay:.2f} segundos...")
+        await asyncio.sleep(delay)
 
     async def call_api(
         self, 
@@ -117,6 +113,33 @@ class MetaAPIRateLimiter:
                     
                     # Registrar log
                     await self._log_api_call(method, endpoint, all_params, status, response.text)
+                    
+                    # Procesar cabeceras de rate limit de Meta (x-business-use-case-usage)
+                    x_usage = response.headers.get("x-business-use-case-usage")
+                    if x_usage:
+                        try:
+                            import json
+                            usage_data = json.loads(x_usage)
+                            for biz_id, usage_list in usage_data.items():
+                                for usage in usage_list:
+                                    call_count = usage.get("call_count", 0)
+                                    total_time = usage.get("total_time", 0)
+                                    total_cpu = usage.get("total_cputime", 0)
+                                    regain_access = usage.get("estimated_time_to_regain_access", 0)
+                                    
+                                    max_usage = max(call_count, total_time, total_cpu)
+                                    if regain_access > 0:
+                                        wait_time = regain_access * 60 + 5
+                                        logger.warning(f"Meta Rate Limit alcanzado ({max_usage}%). Esperando {wait_time}s...")
+                                        await asyncio.sleep(wait_time)
+                                    elif max_usage > 85:
+                                        logger.warning(f"Meta Rate Limit alto ({max_usage}%). Pausa preventiva de 15s...")
+                                        await asyncio.sleep(15)
+                                    elif max_usage > 50:
+                                        logger.info(f"Meta Rate Limit moderado ({max_usage}%). Pausa preventiva de 3s...")
+                                        await asyncio.sleep(3)
+                        except Exception as e:
+                            logger.error(f"Error al analizar x-business-use-case-usage: {e}")
                     
                     # Si es error de rate limit u otros errores temporales, esperar
                     if status in [408, 429, 500, 502, 503, 504]:

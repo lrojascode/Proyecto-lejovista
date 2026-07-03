@@ -1,6 +1,7 @@
 from datetime import datetime
 import uuid
 from sqlalchemy import String, Integer, DateTime, ForeignKey
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -17,6 +18,8 @@ class SyncJob(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str] = mapped_column(String, nullable=True)
     records_synced: Mapped[int] = mapped_column(Integer, default=0)
+    payload_json: Mapped[dict] = mapped_column(JSONB, nullable=True) # Master Brief JSON
+
 
     # Relaciones
     organization = relationship("Organization", back_populates="sync_jobs")

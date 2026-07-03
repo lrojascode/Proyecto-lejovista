@@ -4,12 +4,19 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
+import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pathname = usePathname();
+
+  useEffect(() => {
+    // Cerrar barra lateral al cambiar de ruta
+    setIsSidebarOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     // Verificar autenticación local
@@ -70,20 +77,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   ];
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div className="dashboard-wrapper">
+      {/* Botón de Menú Móvil */}
+      <button 
+        className="menu-toggle-btn"
+        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+        aria-label="Toggle Menu"
+      >
+        {isSidebarOpen ? "✕" : "☰"}
+      </button>
+
       {/* Sidebar */}
-      <aside style={{
-        width: "260px",
-        background: "rgba(13, 14, 20, 0.95)",
-        borderRight: "1px solid var(--border-color)",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        padding: "2rem 1.5rem",
-        position: "fixed",
-        height: "100vh",
-        zIndex: 10
-      }}>
+      <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
         <div>
           <div style={{ marginBottom: "2.5rem" }}>
             <h1 style={{ fontSize: "1.8rem", fontWeight: "800", background: "linear-gradient(135deg, #a78bfa 0%, #60a5fa 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
@@ -144,13 +149,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       </aside>
 
       {/* Main Content Container */}
-      <main style={{
-        marginLeft: "260px",
-        flexGrow: 1,
-        padding: "2.5rem 3rem",
-        minHeight: "100vh"
-      }}>
-        {children}
+      <main className="main-content">
+        <WebSocketProvider tenantId={orgSlug}>
+          {children}
+        </WebSocketProvider>
       </main>
     </div>
   );

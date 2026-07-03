@@ -11,7 +11,7 @@
   
   --text-primary: #f3f4f6;
   --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
+  --text-muted: #858d99;
   
   /* Accent colors */
   --accent-purple: #8b5cf6;
@@ -207,4 +207,82 @@ a {
   background: rgba(239, 68, 68, 0.1);
   color: var(--danger);
   border-color: rgba(239, 68, 68, 0.2);
+}
+
+/* Accessibility Focus States */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-purple);
+  outline-offset: 2px;
+}
+
+/* Layout Responsivo para el Dashboard */
+.dashboard-wrapper {
+  display: flex;
+  min-height: 100vh;
+  position: relative;
+}
+
+.sidebar {
+  width: 260px;
+  background: rgba(13, 14, 20, 0.98);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 2rem 1.5rem;
+  position: fixed;
+  height: 100vh;
+  z-index: 50;
+  transition: transform var(--transition-normal);
+}
+
+.main-content {
+  margin-left: 260px;
+  flex-grow: 1;
+  padding: 2.5rem 3rem;
+  min-height: 100vh;
+  transition: padding var(--transition-normal), margin var(--transition-normal);
+}
+
+.menu-toggle-btn {
+  display: none;
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 100;
+  background: var(--accent-purple);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.25rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Responsivo */
+@media (max-width: 768px) {
+  .sidebar {
+    transform: translateX(-100%);
+  }
+  
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  
+  .main-content {
+    margin-left: 0;
+    padding: 5rem 1.5rem 2.5rem 1.5rem;
+  }
+  
+  .menu-toggle-btn {
+    display: flex;
+  }
 }

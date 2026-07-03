@@ -11,9 +11,13 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String)
     full_name: Mapped[str] = mapped_column(String)
-    role: Mapped[str] = mapped_column(String, default="MEMBER")  # ADMIN, MEMBER
-    organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones
-    organization = relationship("Organization", back_populates="users")
+    organizations = relationship("OrganizationUser", back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def organization_id(self) -> str | None:
+        if self.organizations:
+            return self.organizations[0].organization_id
+        return None

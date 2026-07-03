@@ -64,7 +64,7 @@ async function apiRequest<T = any>(
     }
 
     // Si es una petición de descarga de reporte HTML
-    if (headers["Accept"] === "text/html" || endpoint.includes("/reports/brief")) {
+    if (headers["Accept"] === "text/html" || endpoint.endsWith("/reports/html")) {
       return (await response.text()) as any;
     }
 
@@ -105,10 +105,5 @@ export const api = {
   getActionStatus: (actionId: string) => apiRequest(`/api/v1/actions/${actionId}/status`, "GET"),
 
   // --- REPORTS ---
-  getBriefHtml: () => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
-    const baseUrl = getApiUrl();
-    // Inyectamos token en la URL de reportes para que el backend autorice en GET
-    return `${baseUrl}/api/v1/reports/brief?token=${token}`;
-  }
+  getBriefData: () => apiRequest("/api/v1/reports/brief-data", "GET")
 };

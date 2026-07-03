@@ -228,7 +228,7 @@ async def test_narrative_brief_generation(async_client: AsyncClient, mock_celery
     headers = {"Authorization": f"Bearer {token}"}
     
     # Attempt report generation before connecting account - should fail
-    report_fail_res = await async_client.get("/api/v1/reports/brief", headers=headers)
+    report_fail_res = await async_client.get("/api/v1/reports/brief-data", headers=headers)
     assert report_fail_res.status_code == 400
     
     # Connect account
@@ -241,6 +241,63 @@ async def test_narrative_brief_generation(async_client: AsyncClient, mock_celery
     await async_client.post("/api/v1/organizations/my/ad-accounts", json=ad_acc_payload, headers=headers)
     
     # Try again. It should fail because there are no campaign snapshots synced
-    report_no_data_res = await async_client.get("/api/v1/reports/brief", headers=headers)
+    report_no_data_res = await async_client.get("/api/v1/reports/brief-data", headers=headers)
     assert report_no_data_res.status_code == 400
     assert "No hay suficientes datos" in report_no_data_res.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_brief_data_endpoint(async_client: AsyncClient):
+    # Crear usuario y obtener JWT
+    signup_payload = {
+        "email": "briefdata_test@example.com",
+        "password": "securepassword123",
+        "full_name": "Brief Data User",
+        "organization_slug": "briefdata-test",
+        "organization_name": "Brief Data Corp"
+    }
+    signup_res = await async_client.post("/api/v1/auth/signup", json=signup_payload)
+    token = signup_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    
+    # 1. Intentar acceder sin token (debe fallar 401)
+    res_no_auth = await async_client.get("/api/v1/reports/brief-data")
+    assert res_no_auth.status_code == 401
+    
+    # 2. Intentar acceder con token, pero sin cuenta (debe fallar 400)
+    res_auth_no_acc = await async_client.get("/api/v1/reports/brief-data", headers=headers)
+    assert res_auth_no_acc.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_tenant_isolation_cross_leakage(async_client: AsyncClient):
+    # Registrar Tenant A
+    signup_a = {
+        "email": "user_a@example.com",
+        "password": "securepassword123",
+        "full_name": "User A",
+        "organization_slug": "tenant-a",
+        "organization_name": "Tenant A Corp"
+    }
+    res_a = await async_client.post("/api/v1/auth/signup", json=signup_a)
+    token_a = res_a.json()["access_token"]
+    
+    # Registrar Tenant B
+    signup_b = {
+        "email": "user_b@example.com",
+        "password": "securepassword123",
+        "full_name": "User B",
+        "organization_slug": "tenant-b",
+        "organization_name": "Tenant B Corp"
+    }
+    await async_client.post("/api/v1/auth/signup", json=signup_b)
+    
+    # User A intenta llamar a endpoints protegidos pasando X-Tenant-Slug: tenant-b
+    headers_cross = {
+        "Authorization": f"Bearer {token_a}",
+        "X-Tenant-Slug": "tenant-b"
+    }
+    response_cross = await async_client.get("/api/v1/auth/me", headers=headers_cross)
+    # Debe ser denegado con 403 Forbidden
+    assert response_cross.status_code == 403
+    assert "No tienes permisos para acceder a esta organización" in response_cross.json()["detail"]

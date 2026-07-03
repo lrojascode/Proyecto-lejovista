@@ -9,7 +9,7 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   
   // Settings Form States
-  const [aiModel, setAiModel] = useState("google/gemini-2.5-flash");
+  const [aiModel, setAiModel] = useState("google/gemini-3.5-flash");
   const [maxBudget, setMaxBudget] = useState(1000);
   
   // Connection Form States
@@ -112,6 +112,7 @@ export default function Settings() {
                 onChange={(e) => setAiModel(e.target.value)}
                 style={{ background: "#171821" }}
               >
+                <option value="google/gemini-3.5-flash">Gemini 3.5 Flash (Más rápido y avanzado)</option>
                 <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Estándar)</option>
                 <option value="google/gemini-2.5-pro">Gemini 2.5 Pro (Avanzado)</option>
                 <option value="anthropic/claude-3-5-sonnet">Claude 3.5 Sonnet (Premium)</option>
