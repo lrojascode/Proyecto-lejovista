@@ -70,27 +70,27 @@ export default function Login() {
       justifyContent: "center",
       padding: "1.5rem"
     }}>
-      <div className="glass-card glow-purple" style={{ maxWidth: "420px", width: "100%" }}>
+      <div className="glass-card" style={{ maxWidth: "420px", width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
-          <h2 style={{ fontSize: "2rem", fontWeight: "800", marginBottom: "0.25rem" }}>
+          <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em", marginBottom: "0.25rem" }}>
             LejoVista
           </h2>
-          <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-            Acceso para <strong style={{ color: "#fff" }}>{tenantSlug || "Inquilino"}</strong>
+          <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>
+            Acceso para <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{tenantSlug || "Inquilino"}</strong>
           </p>
         </div>
 
         {error && (
           <div style={{
-            background: "rgba(239, 68, 68, 0.1)",
-            border: "1px solid rgba(239, 68, 68, 0.2)",
-            color: "var(--danger)",
-            borderRadius: "8px",
+            background: "rgba(235, 87, 87, 0.1)",
+            border: "1px solid rgba(235, 87, 87, 0.2)",
+            color: "var(--color-coral-red)",
+            borderRadius: "6px",
             padding: "0.75rem 1rem",
-            fontSize: "0.9rem",
+            fontSize: "14px",
             marginBottom: "1.5rem"
           }}>
-            ⚠️ {error}
+            {error}
           </div>
         )}
 
@@ -164,12 +164,15 @@ export default function Login() {
           <button 
             type="button" 
             onClick={() => setIsLogin(!isLogin)} 
-            style={{ 
-              background: "none", 
-              border: "none", 
-              color: "var(--accent-purple)", 
-              cursor: "pointer", 
-              fontFamily: "inherit" 
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--color-fog)",
+              cursor: "pointer",
+              fontFamily: "inherit",
+              fontSize: "13px",
+              textDecoration: "underline",
+              textUnderlineOffset: "3px"
             }}
           >
             {isLogin ? "¿No tienes cuenta? Regístrate aquí" : "¿Ya tienes cuenta? Inicia sesión"}
