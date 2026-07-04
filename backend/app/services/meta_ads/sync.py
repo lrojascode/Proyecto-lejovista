@@ -369,16 +369,16 @@ class MetaAdsSyncService:
                 "budget": budget
             }
 
-        # 2. Descargar insights diarios
+        # 2. Insights diarios a nivel campaña (ahora con reach)
         date_preset = "last_30d" if sync_type == "FULL" else "yesterday"
-        
+
         campaigns_insights = await limiter.call_api(
             f"{ad_account.external_account_id}/insights",
             {
                 "level": "campaign",
                 "date_preset": date_preset,
-                "fields": "campaign_id,campaign_name,spend,impressions,clicks,actions,frequency",
-                "time_increment": 1  # datos diarios
+                "fields": "campaign_id,campaign_name,spend,impressions,reach,clicks,actions,frequency",
+                "time_increment": 1,  # datos diarios
             },
             access_token=token
         )
@@ -387,74 +387,240 @@ class MetaAdsSyncService:
             raise Exception(f"Error al obtener insights de campañas: {campaigns_insights}")
 
         records_synced = 0
-        data_list = campaigns_insights.get("data", [])
-        
-        from app.models.campaign_snapshot import CampaignSnapshot
-        from datetime import datetime
-        
-        for item in data_list:
+        for item in campaigns_insights.get("data", []):
             camp_id = item.get("campaign_id")
-            if not camp_id:
+            sync_date = self._parse_date(item.get("date_start"))
+            if not camp_id or not sync_date:
                 continue
-                
+
             camp_info = campaigns_map.get(camp_id, {"name": item.get("campaign_name", "Unknown"), "status": "ACTIVE", "budget": 0})
-            
-            # Extraer métricas básicas
             spend = float(item.get("spend", 0))
-            impressions = int(item.get("impressions", 0))
-            clicks = int(item.get("clicks", 0))
+            impressions = int(float(item.get("impressions", 0)))
+            reach = int(float(item.get("reach", 0)))
+            clicks = int(float(item.get("clicks", 0)))
             frequency = float(item.get("frequency", 0))
-            
-            # Contar conversiones desde actions
-            conversions = 0
-            actions = item.get("actions", [])
-            for action in actions:
-                if action.get("action_type") in ["lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"]:
-                    conversions += int(action.get("value", 0))
-            
-            if conversions == 0:
-                for action in actions:
-                    if "conversion" in action.get("action_type", "") or "lead" in action.get("action_type", ""):
-                        conversions += int(action.get("value", 0))
-                        
+            conversions, conversations = self._extract_conversions_conversations(item.get("actions"))
             cpl = (spend / conversions) if conversions > 0 else spend
             ctr = (clicks / impressions * 100) if impressions > 0 else 0
-            
-            try:
-                date_start_str = item.get("date_start")
-                sync_date = datetime.strptime(date_start_str, "%Y-%m-%d").date()
-            except:
-                continue
 
-            # Idempotencia: si ya existe el snapshot de esa campaña y fecha, se actualiza
-            # en lugar de insertar un duplicado (protegido además por uq_snapshot_acc_campaign_date).
-            q_existing = select(CampaignSnapshot).where(
+            # Upsert idempotente (protegido por uq_snapshot_acc_campaign_date).
+            snapshot = (await self.db.execute(select(CampaignSnapshot).where(
                 CampaignSnapshot.ad_account_id == ad_account.id,
                 CampaignSnapshot.campaign_id == camp_id,
-                CampaignSnapshot.date == sync_date
-            )
-            res_existing = await self.db.execute(q_existing)
-            snapshot = res_existing.scalar_one_or_none()
-
+                CampaignSnapshot.date == sync_date,
+            ))).scalar_one_or_none()
             if snapshot is None:
                 snapshot = CampaignSnapshot(
-                    ad_account_id=ad_account.id,
-                    organization_id=ad_account.organization_id,
-                    campaign_id=camp_id,
-                    date=sync_date
+                    ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                    campaign_id=camp_id, date=sync_date,
                 )
                 self.db.add(snapshot)
-
             snapshot.campaign_name = camp_info["name"]
             snapshot.status = camp_info["status"]
             snapshot.budget = camp_info["budget"]
             snapshot.spend = spend
             snapshot.impressions = impressions
+            snapshot.reach = reach
             snapshot.clicks = clicks
             snapshot.conversions = conversions
+            snapshot.conversations = conversations
             snapshot.cpl = cpl
             snapshot.ctr = ctr
             snapshot.frequency = frequency
             records_synced += 1
 
+        # 3. Adsets, anuncios e inventario (P-2.2)
+        await self._sync_real_adsets(ad_account, token, limiter, date_preset)
+        await self._sync_real_ads(ad_account, token, limiter, date_preset)
+        await self._sync_real_inventory(ad_account, token, limiter)
+
         return records_synced
+
+    # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _parse_date(date_str):
+        try:
+            return datetime.datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _extract_conversions_conversations(actions):
+        """Cuenta leads (conversions) y conversaciones de mensajería iniciadas."""
+        actions = actions or []
+        conversions, conversations = 0, 0
+        for a in actions:
+            at = a.get("action_type", "")
+            val = int(float(a.get("value", 0) or 0))
+            if at in ("lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"):
+                conversions += val
+            if "messaging_conversation_started" in at:
+                conversations += val
+        if conversions == 0:
+            for a in actions:
+                at = a.get("action_type", "")
+                if "conversion" in at or "lead" in at:
+                    conversions += int(float(a.get("value", 0) or 0))
+        if conversations == 0:
+            conversations = conversions  # sin evento de mensajería: usar leads como proxy
+        return conversions, conversations
+
+    @staticmethod
+    def _summarize_targeting(t):
+        t = t or {}
+        geo = t.get("geo_locations", {})
+        regions = [r.get("name") for r in geo.get("regions", []) if r.get("name")]
+        return {
+            "geo": regions or geo.get("countries", []),
+            "age_min": t.get("age_min"),
+            "age_max": t.get("age_max"),
+            "publisher_platforms": t.get("publisher_platforms", []),
+            "advantage_audience": (t.get("targeting_automation", {}) or {}).get("advantage_audience"),
+        }
+
+    @staticmethod
+    def _has_error(res) -> bool:
+        return not isinstance(res, dict) or "error" in res or "ERROR" in res
+
+    async def _sync_real_adsets(self, ad_account, token, limiter, date_preset):
+        # Estructura (para el resumen de targeting)
+        targeting_map = {}
+        structure = await limiter.call_api(
+            f"{ad_account.external_account_id}/adsets",
+            {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status"},
+            access_token=token,
+        )
+        if not self._has_error(structure):
+            for a in structure.get("data", []):
+                targeting_map[a.get("id")] = self._summarize_targeting(a.get("targeting", {}))
+
+        insights = await limiter.call_api(
+            f"{ad_account.external_account_id}/insights",
+            {"level": "adset", "date_preset": date_preset,
+             "fields": "adset_id,adset_name,campaign_id,spend,impressions,reach,clicks,actions,frequency",
+             "time_increment": 1},
+            access_token=token,
+        )
+        if self._has_error(insights):
+            logger.warning("No se pudieron obtener insights de adsets: %s", insights)
+            return
+
+        for item in insights.get("data", []):
+            adset_id = item.get("adset_id")
+            sync_date = self._parse_date(item.get("date_start"))
+            if not adset_id or not sync_date:
+                continue
+            spend = float(item.get("spend", 0)); impressions = int(float(item.get("impressions", 0)))
+            reach = int(float(item.get("reach", 0))); clicks = int(float(item.get("clicks", 0)))
+            conversions, conversations = self._extract_conversions_conversations(item.get("actions"))
+            cpl = spend / conversions if conversions > 0 else spend
+            ctr = (clicks / impressions * 100) if impressions > 0 else 0
+
+            row = (await self.db.execute(select(AdsetSnapshot).where(
+                AdsetSnapshot.ad_account_id == ad_account.id,
+                AdsetSnapshot.adset_id == adset_id,
+                AdsetSnapshot.date == sync_date,
+            ))).scalar_one_or_none()
+            if row is None:
+                row = AdsetSnapshot(ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                                    adset_id=adset_id, date=sync_date)
+                self.db.add(row)
+            row.campaign_id = item.get("campaign_id", "")
+            row.name = item.get("adset_name", "")
+            row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
+            row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
+            row.targeting_summary = targeting_map.get(adset_id, {})
+
+    async def _sync_real_ads(self, ad_account, token, limiter, date_preset):
+        # Mapa ad_id -> creative_id
+        creative_map = {}
+        ads_struct = await limiter.call_api(
+            f"{ad_account.external_account_id}/ads", {"fields": "id,creative"}, access_token=token,
+        )
+        if not self._has_error(ads_struct):
+            for a in ads_struct.get("data", []):
+                creative_map[a.get("id")] = (a.get("creative", {}) or {}).get("id")
+
+        insights = await limiter.call_api(
+            f"{ad_account.external_account_id}/insights",
+            {"level": "ad", "date_preset": date_preset,
+             "fields": "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,clicks,actions",
+             "time_increment": 1},
+            access_token=token,
+        )
+        if self._has_error(insights):
+            logger.warning("No se pudieron obtener insights de anuncios: %s", insights)
+            return
+
+        for item in insights.get("data", []):
+            ad_id = item.get("ad_id")
+            sync_date = self._parse_date(item.get("date_start"))
+            if not ad_id or not sync_date:
+                continue
+            spend = float(item.get("spend", 0)); impressions = int(float(item.get("impressions", 0)))
+            reach = int(float(item.get("reach", 0))); clicks = int(float(item.get("clicks", 0)))
+            conversions, conversations = self._extract_conversions_conversations(item.get("actions"))
+            cpl = spend / conversions if conversions > 0 else spend
+            ctr = (clicks / impressions * 100) if impressions > 0 else 0
+
+            row = (await self.db.execute(select(AdSnapshot).where(
+                AdSnapshot.ad_account_id == ad_account.id,
+                AdSnapshot.ad_id == ad_id,
+                AdSnapshot.date == sync_date,
+            ))).scalar_one_or_none()
+            if row is None:
+                row = AdSnapshot(ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                                 ad_id=ad_id, date=sync_date)
+                self.db.add(row)
+            row.campaign_id = item.get("campaign_id", "")
+            row.adset_id = item.get("adset_id", "")
+            row.creative_id = creative_map.get(ad_id)
+            row.name = item.get("ad_name", "")
+            row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
+            row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
+
+    async def _sync_real_inventory(self, ad_account, token, limiter):
+        # Imágenes / creativos
+        imgs = await limiter.call_api(
+            f"{ad_account.external_account_id}/adimages",
+            {"fields": "hash,name,url,width,height,created_time", "limit": "50"},
+            access_token=token,
+        )
+        if not self._has_error(imgs):
+            for im in imgs.get("data", []):
+                h = im.get("hash")
+                if not h:
+                    continue
+                row = (await self.db.execute(select(MetaCreative).where(
+                    MetaCreative.ad_account_id == ad_account.id, MetaCreative.image_hash == h,
+                ))).scalar_one_or_none()
+                if row is None:
+                    row = MetaCreative(ad_account_id=ad_account.id, organization_id=ad_account.organization_id, image_hash=h)
+                    self.db.add(row)
+                row.name = im.get("name")
+                row.url = im.get("url")
+                row.width = im.get("width")
+                row.height = im.get("height")
+
+        # Audiencias personalizadas
+        auds = await limiter.call_api(
+            f"{ad_account.external_account_id}/customaudiences",
+            {"fields": "id,name,subtype,approximate_count,time_created,description"},
+            access_token=token,
+        )
+        if not self._has_error(auds):
+            for au in auds.get("data", []):
+                ext = au.get("id")
+                if not ext:
+                    continue
+                row = (await self.db.execute(select(CustomAudience).where(
+                    CustomAudience.ad_account_id == ad_account.id, CustomAudience.external_id == ext,
+                ))).scalar_one_or_none()
+                if row is None:
+                    row = CustomAudience(ad_account_id=ad_account.id, organization_id=ad_account.organization_id, external_id=ext)
+                    self.db.add(row)
+                row.name = au.get("name", "")
+                row.subtype = au.get("subtype")
+                row.description = au.get("description")
+                row.approximate_count = au.get("approximate_count")

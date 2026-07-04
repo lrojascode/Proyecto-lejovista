@@ -303,3 +303,72 @@ async def test_mock_sync_creates_reporting_entities(db_session: AsyncSession):
     )).scalar_one()
     assert snap.reach > 0
     assert snap.conversations == snap.conversions
+
+
+# --- P-2.2: el sync real parsea adsets/ads/creativos/audiencias desde Meta ---
+class _FakeLimiter:
+    """Simula MetaAPIRateLimiter.call_api con respuestas canned de la Graph API."""
+    def __init__(self):
+        self.ad_account_id = None
+
+    async def call_api(self, endpoint, params, method="GET", access_token=""):
+        d = "2026-07-02"
+        if endpoint.endswith("/insights"):
+            level = params.get("level")
+            if level == "campaign":
+                return {"data": [{"campaign_id": "c1", "campaign_name": "Camp 1", "date_start": d,
+                                  "spend": "50.0", "impressions": "5000", "reach": "4000", "clicks": "90",
+                                  "frequency": "1.25",
+                                  "actions": [{"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "20"}]}]}
+            if level == "adset":
+                return {"data": [{"adset_id": "as1", "adset_name": "Adset 1", "campaign_id": "c1", "date_start": d,
+                                  "spend": "30.0", "impressions": "3000", "reach": "2500", "clicks": "55",
+                                  "actions": [{"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "12"}]}]}
+            if level == "ad":
+                return {"data": [{"ad_id": "ad1", "ad_name": "Ad 1", "adset_id": "as1", "campaign_id": "c1", "date_start": d,
+                                  "spend": "30.0", "impressions": "3000", "reach": "2500", "clicks": "55",
+                                  "actions": [{"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "12"}]}]}
+        if endpoint.endswith("/campaigns"):
+            return {"data": [{"id": "c1", "name": "Camp 1", "status": "ACTIVE", "daily_budget": "7000"}]}
+        if endpoint.endswith("/adsets"):
+            return {"data": [{"id": "as1", "name": "Adset 1", "campaign_id": "c1",
+                              "targeting": {"geo_locations": {"regions": [{"name": "Lima"}]},
+                                            "age_min": 25, "age_max": 54,
+                                            "publisher_platforms": ["facebook"],
+                                            "targeting_automation": {"advantage_audience": 1}}}]}
+        if endpoint.endswith("/ads"):
+            return {"data": [{"id": "ad1", "creative": {"id": "cr1"}}]}
+        if endpoint.endswith("/adimages"):
+            return {"data": [{"hash": "h1", "name": "Imagen 1", "url": "http://x/1.jpg", "width": 1080, "height": 1080}]}
+        if endpoint.endswith("/customaudiences"):
+            return {"data": [{"id": "aud1", "name": "Audiencia 1", "subtype": "CUSTOM", "approximate_count": 1000}]}
+        # info de cuenta
+        return {"amount_spent": "10000", "spend_cap": "500000", "account_status": 1}
+
+
+@pytest.mark.asyncio
+async def test_real_sync_parses_meta_entities(db_session: AsyncSession):
+    from sqlalchemy import select, func
+    from app.services.meta_ads.sync import MetaAdsSyncService
+    from app.models.adset_snapshot import AdsetSnapshot
+    from app.models.ad_snapshot import AdSnapshot
+    from app.models.meta_creative import MetaCreative
+    from app.models.custom_audience import CustomAudience
+
+    org, acc = await _make_org_and_account(db_session, slug="p22-org")
+    acc.set_access_token("valid-token")
+    await db_session.commit()
+
+    n = await MetaAdsSyncService(db_session)._sync_real_data(acc, "INCREMENTAL", _FakeLimiter())
+    assert n == 1  # 1 snapshot de campaña
+
+    camp = (await db_session.execute(select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id))).scalar_one()
+    assert camp.reach == 4000
+    assert camp.conversations == 20   # desde el evento de mensajería
+    adset = (await db_session.execute(select(AdsetSnapshot).where(AdsetSnapshot.ad_account_id == acc.id))).scalar_one()
+    assert adset.conversations == 12
+    assert adset.targeting_summary["geo"] == ["Lima"]
+    ad = (await db_session.execute(select(AdSnapshot).where(AdSnapshot.ad_account_id == acc.id))).scalar_one()
+    assert ad.creative_id == "cr1"
+    assert (await db_session.execute(select(func.count()).select_from(MetaCreative).where(MetaCreative.ad_account_id == acc.id))).scalar() == 1
+    assert (await db_session.execute(select(func.count()).select_from(CustomAudience).where(CustomAudience.ad_account_id == acc.id))).scalar() == 1

@@ -62,7 +62,7 @@ Export PDF (otro prompt), consolidación de stacks A-3 (paralelo), particionado 
 ## Progreso
 - [x] P-2.1 — modelo de datos (reach/conversations + adset_snapshot, ad_snapshot, meta_creative, custom_audience)
 - [x] P-2.3 — paridad mock (adsets/ads/creativos/audiencias)
-- [ ] P-2.2 — sync real
+- [x] P-2.2 — sync real (campaña con reach/conversations + adsets/ads/breakdowns/adimages/customaudiences)
 - [ ] P-2.4 — agregador del brief
 - [ ] P-2.5 — API
 - [ ] P-2.6 — frontend
