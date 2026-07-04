@@ -79,83 +79,97 @@ export default function NewCampaignPage() {
     }
   };
 
+  const labelStyle: React.CSSProperties = {
+    display: "block", fontSize: "13px", color: "var(--color-fog)", marginBottom: "4px"
+  };
+
   return (
-    <div className="max-w-3xl mx-auto p-6 bg-white dark:bg-gray-800 rounded-lg shadow mt-8">
-      <h1 className="text-2xl font-bold mb-6">Crear Nueva Campaña (Flujo Asíncrono)</h1>
-      
+    <div className="glass-card" style={{ maxWidth: "720px", margin: "32px auto 0 auto" }}>
+      <h1 style={{ fontSize: "20px", fontWeight: 590, letterSpacing: "-0.012em", marginBottom: "24px" }}>Crear Nueva Campaña (Flujo Asíncrono)</h1>
+
       {status === "error" && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
+        <div style={{
+          background: "rgba(235, 87, 87, 0.1)", border: "1px solid rgba(235, 87, 87, 0.2)",
+          color: "var(--color-coral-red)", padding: "12px 16px", borderRadius: "6px",
+          marginBottom: "16px", fontSize: "14px"
+        }}>
           Error: {errorMessage}
         </div>
       )}
-      
+
       {(status === "polling" || status === "success") ? (
-        <div className="flex flex-col items-center justify-center py-12">
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 0" }}>
           {status === "polling" ? (
-            <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+            <div style={{
+              width: "48px", height: "48px", borderRadius: "9999px", marginBottom: "16px",
+              border: "2px solid var(--color-graphite)", borderTopColor: "var(--color-mist)",
+              animation: "spin 1s linear infinite"
+            }}></div>
           ) : (
-            <div className="h-16 w-16 text-green-500 mb-4 text-6xl">✓</div>
+            <div style={{ fontSize: "40px", color: "var(--color-pulse-green)", marginBottom: "16px" }}>✓</div>
           )}
-          <h2 className="text-xl font-semibold">
+          <h2 style={{ fontSize: "18px", fontWeight: 510 }}>
             {status === "polling" ? "Procesando en Celery Chain..." : "¡Creada (Pausada en Meta)!"}
           </h2>
-          <p className="text-gray-500 mt-2">Draft ID: {jobId}</p>
-          
+          <p className="mono" style={{ color: "var(--color-fog)", marginTop: "8px" }}>Draft ID: {jobId}</p>
+
           {status === "success" && (
-            <button 
+            <button
               onClick={() => router.push("/campaigns")}
-              className="mt-6 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+              className="btn-secondary"
+              style={{ marginTop: "24px" }}
             >
               Volver a Campañas
             </button>
           )}
         </div>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
             <div>
-              <label className="block text-sm font-medium mb-1">Ad Account ID</label>
-              <input type="text" name="ad_account_id" required value={formData.ad_account_id} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" />
+              <label style={labelStyle}>Ad Account ID</label>
+              <input type="text" name="ad_account_id" required value={formData.ad_account_id} onChange={handleChange} className="form-input" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Page ID</label>
-              <input type="text" name="page_id" required value={formData.page_id} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" />
+              <label style={labelStyle}>Page ID</label>
+              <input type="text" name="page_id" required value={formData.page_id} onChange={handleChange} className="form-input" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Producto</label>
-              <input type="text" name="product_name" required value={formData.product_name} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" placeholder="Cable GPT" />
+              <label style={labelStyle}>Producto</label>
+              <input type="text" name="product_name" required value={formData.product_name} onChange={handleChange} className="form-input" placeholder="Cable GPT" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Zona</label>
-              <input type="text" name="zone" required value={formData.zone} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" placeholder="Surquillo" />
+              <label style={labelStyle}>Zona</label>
+              <input type="text" name="zone" required value={formData.zone} onChange={handleChange} className="form-input" placeholder="Surquillo" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Presupuesto</label>
-              <input type="number" name="budget" required value={formData.budget} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" />
+              <label style={labelStyle}>Presupuesto</label>
+              <input type="number" name="budget" required value={formData.budget} onChange={handleChange} className="form-input" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Días</label>
-              <input type="number" name="days" required value={formData.days} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" />
+              <label style={labelStyle}>Días</label>
+              <input type="number" name="days" required value={formData.days} onChange={handleChange} className="form-input" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Número WhatsApp</label>
-              <input type="text" name="whatsapp_number" required value={formData.whatsapp_number} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" placeholder="51999888777" />
+              <label style={labelStyle}>Número WhatsApp</label>
+              <input type="text" name="whatsapp_number" required value={formData.whatsapp_number} onChange={handleChange} className="form-input" placeholder="51999888777" />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">Image Hash (opcional)</label>
-              <input type="text" name="image_hash" value={formData.image_hash} onChange={handleChange} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" />
+              <label style={labelStyle}>Image Hash (opcional)</label>
+              <input type="text" name="image_hash" value={formData.image_hash} onChange={handleChange} className="form-input" />
             </div>
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium mb-1">Copy Text</label>
-            <textarea name="copy_text" required value={formData.copy_text} onChange={handleChange} rows={5} className="w-full p-2 border rounded dark:bg-gray-700 dark:border-gray-600" placeholder="¡Hook, beneficios y llamada a la acción!"></textarea>
+            <label style={labelStyle}>Copy Text</label>
+            <textarea name="copy_text" required value={formData.copy_text} onChange={handleChange} rows={5} className="form-input" placeholder="¡Hook, beneficios y llamada a la acción!"></textarea>
           </div>
-          
-          <button 
-            type="submit" 
+
+          <button
+            type="submit"
             disabled={status === "submitting"}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded disabled:opacity-50"
+            className="btn-primary"
+            style={{ width: "100%" }}
           >
             {status === "submitting" ? "Validando en API..." : "Aprobar y Crear Campaña"}
           </button>

@@ -28,12 +28,12 @@ export default function CampaignsList() {
 
   return (
     <div>
-      <div style={{ marginBottom: "2rem" }}>
-        <h2 style={{ fontSize: "2rem", fontWeight: "700" }}>Todas las Campañas</h2>
-        <p style={{ color: "var(--text-secondary)" }}>Consulta el rendimiento y estado de optimización de todas las campañas de anuncios.</p>
+      <div style={{ marginBottom: "24px" }}>
+        <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Todas las Campañas</h2>
+        <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Consulta el rendimiento y estado de optimización de todas las campañas de anuncios.</p>
       </div>
 
-      <div className="glass-card" style={{ padding: "2rem" }}>
+      <div className="glass-card">
         {campaigns.length === 0 ? (
           <p style={{ color: "var(--text-secondary)", textAlign: "center" }}>
             No hay campañas sincronizadas. Conecta una cuenta de Meta Ads en Configuración.
@@ -69,21 +69,21 @@ export default function CampaignsList() {
 
                   return (
                     <tr key={c.id} style={{ borderBottom: "1px solid var(--border-color)" }}>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>
-                        <Link href={`/campaigns/${c.campaign_id}`} style={{ fontWeight: "700", color: "#fff", hover: { color: "var(--accent-purple)" } } as any}>
+                      <td style={{ padding: "12px 8px" }}>
+                        <Link href={`/campaigns/${c.campaign_id}`} className="campaign-link">
                           {c.campaign_name}
                         </Link>
                       </td>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>S/.{c.budget.toFixed(2)}</td>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>S/.{c.spend.toFixed(2)}</td>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>{c.conversions}</td>
-                      <td style={{ padding: "1.25rem 0.5rem", fontWeight: "700" }}>S/.{cpl.toFixed(2)}</td>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>{c.frequency.toFixed(2)}</td>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>
+                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>S/.{c.budget.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>S/.{c.spend.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.conversions}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.frequency.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px" }}>
                         <span className={`badge ${badgeClass}`}>{badgeLabel}</span>
                       </td>
-                      <td style={{ padding: "1.25rem 0.5rem" }}>
-                        <Link href={`/campaigns/${c.campaign_id}`} className="btn-secondary" style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>
+                      <td style={{ padding: "12px 8px" }}>
+                        <Link href={`/campaigns/${c.campaign_id}`} className="btn-secondary btn-sm">
                           Ver Historial
                         </Link>
                       </td>

@@ -370,6 +370,18 @@ a {
   color: var(--color-paper);
 }
 
+/* Enlaces a entidades (nombres de campaña, etc.) */
+.campaign-link {
+  font-weight: 510;
+  font-size: 14px;
+  color: var(--color-paper);
+}
+
+.campaign-link:hover {
+  color: var(--color-mist);
+  text-decoration: underline;
+}
+
 /* Focus accesible */
 a:focus-visible,
 button:focus-visible,
