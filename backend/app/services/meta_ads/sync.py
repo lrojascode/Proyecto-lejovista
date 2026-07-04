@@ -7,6 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.models.adset_snapshot import AdsetSnapshot
+from app.models.ad_snapshot import AdSnapshot
+from app.models.meta_creative import MetaCreative
+from app.models.custom_audience import CustomAudience
 from app.models.sync_job import SyncJob
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
@@ -173,6 +177,8 @@ class MetaAdsSyncService:
                     frequency = 1.2
 
                 conversions = max(0, conversions)
+                conversations = conversions  # en campañas de mensajes, cada lead es una conversación
+                reach = int(impressions / max(frequency, 1.0))
                 cpl = spend / conversions if conversions > 0 else spend
                 ctr = (clicks / impressions) * 100.0 if impressions > 0 else 0.0
 
@@ -224,8 +230,10 @@ class MetaAdsSyncService:
                     budget=c["budget"],
                     spend=spend,
                     impressions=impressions,
+                    reach=reach,
                     clicks=clicks,
                     conversions=conversions,
+                    conversations=conversations,
                     cpl=cpl,
                     ctr=ctr,
                     frequency=frequency,
@@ -237,8 +245,79 @@ class MetaAdsSyncService:
                 self.db.add(snapshot)
                 records_created += 1
 
+                # --- Adsets y anuncios del día (P-2.3) ---
+                adset_defs = [
+                    {"suffix": "AV", "label": "Advantage+", "share": 0.6,
+                     "targeting": {"audience_type": "ADVANTAGE_PLUS", "geo": "Lima", "age": "25-54",
+                                   "placements": ["facebook_feed", "facebook_reels"]}},
+                    {"suffix": "IN", "label": "Intereses", "share": 0.4,
+                     "targeting": {"audience_type": "INTERESTS", "geo": "Lima", "age": "25-54",
+                                   "placements": ["facebook_feed", "instagram_feed"]}},
+                ]
+                for a in adset_defs:
+                    a_spend = spend * a["share"]
+                    a_conv = int(conversions * a["share"])
+                    a_impr = int(impressions * a["share"])
+                    a_clicks = int(clicks * a["share"])
+                    a_reach = int(reach * a["share"])
+                    a_cpl = a_spend / a_conv if a_conv > 0 else a_spend
+                    a_ctr = (a_clicks / a_impr) * 100.0 if a_impr > 0 else 0.0
+                    adset_id = f"adset_{c['id']}_{a['suffix']}"
+                    self.db.add(AdsetSnapshot(
+                        ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                        campaign_id=c["id"], adset_id=adset_id, name=f"{c['name']}_{a['label']}",
+                        spend=a_spend, reach=a_reach, impressions=a_impr, clicks=a_clicks,
+                        conversions=a_conv, conversations=a_conv, cpl=a_cpl, ctr=a_ctr,
+                        targeting_summary=a["targeting"], date=sync_date,
+                    ))
+                    self.db.add(AdSnapshot(
+                        ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                        campaign_id=c["id"], adset_id=adset_id, ad_id=f"ad_{adset_id}",
+                        creative_id=f"creative_{c['id']}", name=f"{c['name']}_{a['label']}_Cuadrado",
+                        spend=a_spend, reach=a_reach, impressions=a_impr, clicks=a_clicks,
+                        conversions=a_conv, conversations=a_conv, cpl=a_cpl, ctr=a_ctr, date=sync_date,
+                    ))
+
+        # --- Inventario de creativos y audiencias (una vez por cuenta) ---
+        await self._ensure_mock_inventory(ad_account)
+
         await self.db.flush()
         return records_created
+
+    async def _ensure_mock_inventory(self, ad_account: AdAccount) -> None:
+        """Crea creativos y audiencias mock (idempotente) para el inventario del brief."""
+        mock_creatives = [
+            {"hash": "h_cable_cuadrado", "name": "MTV Cable — Cuadrado", "url": "https://cdn.example/cable_1x1.jpg", "w": 1080, "h": 1080},
+            {"hash": "h_gpt_story", "name": "Cable GPT — Story", "url": "https://cdn.example/gpt_story.jpg", "w": 1080, "h": 1920},
+            {"hash": "h_vulcano_cuadrado", "name": "Vulcanizado — Cuadrado", "url": "https://cdn.example/vulcano_1x1.jpg", "w": 1080, "h": 1080},
+        ]
+        for cr in mock_creatives:
+            exists = (await self.db.execute(select(MetaCreative).where(
+                MetaCreative.ad_account_id == ad_account.id,
+                MetaCreative.image_hash == cr["hash"]))).scalar_one_or_none()
+            if not exists:
+                self.db.add(MetaCreative(
+                    ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                    image_hash=cr["hash"], name=cr["name"], url=cr["url"],
+                    width=cr["w"], height=cr["h"], meta_created_time=datetime.datetime.utcnow(),
+                ))
+
+        mock_audiences = [
+            {"ext": "aud_lookalike_1", "name": "Lookalike Compradores 1%", "subtype": "LOOKALIKE", "count": 250000, "desc": "Similar a clientes que compraron"},
+            {"ext": "aud_web_30d", "name": "Visitantes Web 30d", "subtype": "WEBSITE", "count": 12400, "desc": "Visitaron el sitio en los últimos 30 días"},
+            {"ext": "aud_wa_engagers", "name": "Interacciones WhatsApp", "subtype": "ENGAGEMENT", "count": 5300, "desc": "Iniciaron chat de WhatsApp"},
+        ]
+        for au in mock_audiences:
+            exists = (await self.db.execute(select(CustomAudience).where(
+                CustomAudience.ad_account_id == ad_account.id,
+                CustomAudience.external_id == au["ext"]))).scalar_one_or_none()
+            if not exists:
+                self.db.add(CustomAudience(
+                    ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                    external_id=au["ext"], name=au["name"], subtype=au["subtype"],
+                    description=au["desc"], approximate_count=au["count"],
+                    meta_time_created=datetime.datetime.utcnow(),
+                ))
 
     async def _sync_real_data(self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter) -> int:
         """

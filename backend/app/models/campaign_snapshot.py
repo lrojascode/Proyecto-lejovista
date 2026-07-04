@@ -17,8 +17,10 @@ class CampaignSnapshot(Base):
     budget: Mapped[float] = mapped_column(Float, default=0.0)
     spend: Mapped[float] = mapped_column(Float, default=0.0)
     impressions: Mapped[int] = mapped_column(Integer, default=0)
+    reach: Mapped[int] = mapped_column(Integer, default=0)  # personas únicas alcanzadas
     clicks: Mapped[int] = mapped_column(Integer, default=0)
     conversions: Mapped[int] = mapped_column(Integer, default=0)  # Leads
+    conversations: Mapped[int] = mapped_column(Integer, default=0)  # mensajes iniciados (WhatsApp)
     cpl: Mapped[float] = mapped_column(Float, default=0.0)
     ctr: Mapped[float] = mapped_column(Float, default=0.0)
     frequency: Mapped[float] = mapped_column(Float, default=0.0)

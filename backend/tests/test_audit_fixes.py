@@ -270,3 +270,36 @@ async def test_snapshot_response_tolerates_null_breakdowns():
     assert r.extra_breakdowns == {}
     assert r.placements_breakdown == {}
     assert r.demographics_breakdown == {}
+
+
+# --- P-2.1/P-2.3: el mock crea adsets, ads, creativos y audiencias ---
+@pytest.mark.asyncio
+async def test_mock_sync_creates_reporting_entities(db_session: AsyncSession):
+    from sqlalchemy import select, func
+    from app.services.meta_ads.sync import MetaAdsSyncService
+    from app.models.adset_snapshot import AdsetSnapshot
+    from app.models.ad_snapshot import AdSnapshot
+    from app.models.meta_creative import MetaCreative
+    from app.models.custom_audience import CustomAudience
+
+    org, acc = await _make_org_and_account(db_session, slug="p21-org")
+    await db_session.commit()
+
+    job = await MetaAdsSyncService(db_session).run_sync(acc, "FULL")
+    assert job.status == "COMPLETED"
+
+    async def _count(model):
+        return (await db_session.execute(
+            select(func.count()).select_from(model).where(model.ad_account_id == acc.id)
+        )).scalar()
+
+    assert await _count(AdsetSnapshot) > 0
+    assert await _count(AdSnapshot) > 0
+    assert await _count(MetaCreative) == 3
+    assert await _count(CustomAudience) == 3
+
+    snap = (await db_session.execute(
+        select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id).limit(1)
+    )).scalar_one()
+    assert snap.reach > 0
+    assert snap.conversations == snap.conversions
