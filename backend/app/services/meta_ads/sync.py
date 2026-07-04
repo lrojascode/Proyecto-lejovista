@@ -1,6 +1,7 @@
 import datetime
 import random
 import logging
+from collections import defaultdict
 from typing import List, Dict, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -435,6 +436,9 @@ class MetaAdsSyncService:
         await self._sync_real_ads(ad_account, token, limiter, date_preset)
         await self._sync_real_inventory(ad_account, token, limiter)
 
+        # 4. Desgloses por placement/edad/género/dispositivo/geografía (P-2.7).
+        await self._sync_real_breakdowns(ad_account, token, limiter, date_preset)
+
         return records_synced
 
     # ------------------------------------------------------------------ helpers
@@ -639,3 +643,65 @@ class MetaAdsSyncService:
                 row.subtype = au.get("subtype")
                 row.description = au.get("description")
                 row.approximate_count = au.get("approximate_count")
+
+    # Cada dimensión de breakdown es una llamada aparte: la Graph API no permite
+    # combinar publisher_platform+platform_position con age/gender/region en una
+    # sola query de insights. bucket = destino lógico; key_of = clave de la fila.
+    _BREAKDOWN_SPECS = [
+        ("publisher_platform,platform_position", "placements",
+         lambda r: "_".join(p for p in (r.get("publisher_platform"), r.get("platform_position")) if p)),
+        ("age", "age", lambda r: r.get("age") or ""),
+        ("gender", "gender", lambda r: r.get("gender") or ""),
+        ("impression_device", "device", lambda r: r.get("impression_device") or ""),
+        ("region", "region", lambda r: r.get("region") or ""),
+    ]
+
+    async def _sync_real_breakdowns(self, ad_account, token, limiter, date_preset):
+        """Trae los desgloses (placement, edad, género, dispositivo, geografía) desde
+        Meta y los fusiona en los snapshots de campaña ya creados en este sync. Cada
+        dimensión es un request independiente; si Meta rechaza uno (permiso o combinación
+        no permitida) se registra y se continúa, sin abortar el sync completo."""
+        # (campaign_id, date) -> {placements:{}, age:{}, gender:{}, device:{}, region:{}}
+        acc_map: Dict[Any, Dict[str, dict]] = defaultdict(
+            lambda: {"placements": {}, "age": {}, "gender": {}, "device": {}, "region": {}}
+        )
+
+        for bd_param, bucket, key_of in self._BREAKDOWN_SPECS:
+            res = await limiter.call_api(
+                f"{ad_account.external_account_id}/insights",
+                {"level": "campaign", "date_preset": date_preset, "time_increment": 1,
+                 "fields": "campaign_id,spend,actions", "breakdowns": bd_param},
+                access_token=token,
+            )
+            if self._has_error(res):
+                logger.warning("Breakdown '%s' no disponible para cuenta %s: %s",
+                               bd_param, ad_account.id, res)
+                continue
+            for row in res.get("data", []):
+                camp_id = row.get("campaign_id")
+                sync_date = self._parse_date(row.get("date_start"))
+                key = key_of(row)
+                if not camp_id or not sync_date or not key:
+                    continue
+                # En cuentas de mensajería, cada conversación es la conversión relevante.
+                _, conv = self._extract_conversions_conversations(row.get("actions"))
+                entry = acc_map[(camp_id, sync_date)][bucket].setdefault(key, {"spend": 0.0, "conversions": 0})
+                entry["spend"] += float(row.get("spend", 0) or 0)
+                entry["conversions"] += conv
+
+        for (camp_id, sync_date), buckets in acc_map.items():
+            snap = (await self.db.execute(select(CampaignSnapshot).where(
+                CampaignSnapshot.ad_account_id == ad_account.id,
+                CampaignSnapshot.campaign_id == camp_id,
+                CampaignSnapshot.date == sync_date,
+            ))).scalar_one_or_none()
+            if snap is None:
+                continue
+            for grp in buckets.values():
+                for e in grp.values():
+                    e["spend"] = round(e["spend"], 2)
+            snap.placements_breakdown = buckets["placements"]
+            snap.demographics_breakdown = buckets["age"]
+            snap.extra_breakdowns = {
+                "gender": buckets["gender"], "device": buckets["device"], "region": buckets["region"],
+            }

@@ -255,7 +255,7 @@ async def test_sync_captures_extra_breakdowns(db_session: AsyncSession):
     assert "Lima" in snap.extra_breakdowns["region"]
 
 
-# --- Regresión: el sync real deja breakdowns NULL; la respuesta no debe romperse ---
+# --- Regresión: snapshots antiguos (pre-P-2.7) con breakdowns NULL no rompen la respuesta ---
 @pytest.mark.asyncio
 async def test_snapshot_response_tolerates_null_breakdowns():
     from app.schemas.schemas import CampaignSnapshotResponse
@@ -315,11 +315,23 @@ class _FakeLimiter:
         d = "2026-07-02"
         if endpoint.endswith("/insights"):
             level = params.get("level")
+            bd = params.get("breakdowns")
+            msg = [{"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "20"}]
+            if bd:
+                # Desgloses: una fila por dimensión con la clave correspondiente.
+                keys = {
+                    "publisher_platform,platform_position": {"publisher_platform": "facebook", "platform_position": "feed"},
+                    "age": {"age": "25-34"},
+                    "gender": {"gender": "male"},
+                    "impression_device": {"impression_device": "android_smartphone"},
+                    "region": {"region": "Lima"},
+                }.get(bd, {})
+                return {"data": [{"campaign_id": "c1", "date_start": d, "spend": "50.0", "actions": msg, **keys}]}
             if level == "campaign":
                 return {"data": [{"campaign_id": "c1", "campaign_name": "Camp 1", "date_start": d,
                                   "spend": "50.0", "impressions": "5000", "reach": "4000", "clicks": "90",
                                   "frequency": "1.25",
-                                  "actions": [{"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "20"}]}]}
+                                  "actions": msg}]}
             if level == "adset":
                 return {"data": [{"adset_id": "as1", "adset_name": "Adset 1", "campaign_id": "c1", "date_start": d,
                                   "spend": "30.0", "impressions": "3000", "reach": "2500", "clicks": "55",
@@ -365,6 +377,12 @@ async def test_real_sync_parses_meta_entities(db_session: AsyncSession):
     camp = (await db_session.execute(select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id))).scalar_one()
     assert camp.reach == 4000
     assert camp.conversations == 20   # desde el evento de mensajería
+    # P-2.7: los desgloses reales quedan poblados en el snapshot.
+    assert camp.placements_breakdown.get("facebook_feed", {}).get("conversions") == 20
+    assert "25-34" in camp.demographics_breakdown
+    assert "male" in camp.extra_breakdowns["gender"]
+    assert "android_smartphone" in camp.extra_breakdowns["device"]
+    assert "Lima" in camp.extra_breakdowns["region"]
     adset = (await db_session.execute(select(AdsetSnapshot).where(AdsetSnapshot.ad_account_id == acc.id))).scalar_one()
     assert adset.conversations == 12
     assert adset.targeting_summary["geo"] == ["Lima"]
