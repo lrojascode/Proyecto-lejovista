@@ -80,7 +80,7 @@ describe('Diagnostics Page', () => {
       expect(screen.getByText('High CPL alert')).toBeInTheDocument()
     })
 
-    const dismissBtn = screen.getByRole('button', { name: /✕ Descartar/i })
+    const dismissBtn = screen.getByRole('button', { name: /Descartar/i })
     fireEvent.click(dismissBtn)
 
     await waitFor(() => {
