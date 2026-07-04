@@ -45,9 +45,9 @@ export default function Settings() {
     setMsg("");
     try {
       await api.updateOrg({ ai_model: aiModel, max_budget: maxBudget });
-      setMsg("✓ Configuración de organización guardada con éxito.");
+      setMsg("Configuración de organización guardada con éxito.");
     } catch (err: any) {
-      setMsg(`❌ Error: ${err.message}`);
+      setMsg(`Error: ${err.message}`);
     }
   };
 
@@ -61,13 +61,13 @@ export default function Settings() {
         external_account_id: extId,
         access_token: accessToken,
       });
-      setConnMsg("✓ Cuenta conectada. Sincronización en curso en segundo plano.");
+      setConnMsg("Cuenta conectada. Sincronización en curso en segundo plano.");
       setAccName("");
       setExtId("");
       setAccessToken("");
       fetchData();
     } catch (err: any) {
-      setConnMsg(`❌ Error: ${err.message}`);
+      setConnMsg(`Error: ${err.message}`);
     }
   };
 
@@ -78,19 +78,19 @@ export default function Settings() {
   return (
     <div>
       <div style={{ marginBottom: "2rem" }}>
-        <h2 style={{ fontSize: "2rem", fontWeight: "700" }}>Configuración del Sistema</h2>
-        <p style={{ color: "var(--text-secondary)" }}>Configura tus credenciales, cuentas publicitarias de Meta y límites financieros.</p>
+        <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Configuración del Sistema</h2>
+        <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Configura tus credenciales, cuentas publicitarias de Meta y límites financieros.</p>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.8fr", gap: "2rem" }}>
         {/* Org Settings */}
         <div className="glass-card" style={{ height: "fit-content" }}>
-          <h3 style={{ fontSize: "1.25rem", marginBottom: "1.25rem" }}>🏢 Preferencias Generales</h3>
+          <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1.25rem" }}>Preferencias Generales</h3>
           
           {msg && (
             <div style={{
-              background: "rgba(16, 185, 129, 0.1)",
-              border: "1px solid rgba(16, 185, 129, 0.2)",
+              background: "rgba(39, 166, 68, 0.1)",
+              border: "1px solid rgba(39, 166, 68, 0.2)",
               color: "var(--success)",
               padding: "0.5rem 0.75rem",
               borderRadius: "6px",
@@ -110,7 +110,7 @@ export default function Settings() {
                 className="form-input" 
                 value={aiModel} 
                 onChange={(e) => setAiModel(e.target.value)}
-                style={{ background: "#171821" }}
+                style={{ background: "var(--color-obsidian)" }}
               >
                 <option value="google/gemini-3.5-flash">Gemini 3.5 Flash (Más rápido y avanzado)</option>
                 <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Estándar)</option>
@@ -135,7 +135,7 @@ export default function Settings() {
               </span>
             </div>
 
-            <button type="submit" className="btn-primary" style={{ alignSelf: "flex-start" }}>
+            <button type="submit" className="btn-secondary" style={{ alignSelf: "flex-start" }}>
               Guardar Cambios
             </button>
           </form>
@@ -146,7 +146,7 @@ export default function Settings() {
           
           {/* List connected */}
           <div className="glass-card">
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "1rem" }}>🔗 Cuentas Publicitarias Conectadas</h3>
+            <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem" }}>Cuentas Publicitarias Conectadas</h3>
             {accounts.length === 0 ? (
               <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No tienes ninguna cuenta conectada.</p>
             ) : (
@@ -154,24 +154,21 @@ export default function Settings() {
                 {accounts.map((acc) => (
                   <div 
                     key={acc.id}
+                    className="card-subtle"
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "1rem",
-                      borderRadius: "10px",
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid var(--border-color)"
+                      alignItems: "center"
                     }}
                   >
                     <div>
-                      <strong style={{ color: "#fff" }}>{acc.name}</strong>
+                      <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{acc.name}</strong>
                       <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                         Meta Ads ID: <code>{acc.external_account_id}</code>
                       </p>
                       {acc.status === "EXPIRED" && (
-                        <p style={{ fontSize: "0.78rem", color: "var(--danger)", marginTop: "0.35rem" }}>
-                          ⚠️ El token expiró. Reconecta la cuenta abajo con un token nuevo.
+                        <p style={{ fontSize: "12px", color: "var(--color-coral-red)", marginTop: "0.35rem" }}>
+                          El token expiró. Reconecta la cuenta abajo con un token nuevo.
                         </p>
                       )}
                     </div>
@@ -190,12 +187,12 @@ export default function Settings() {
 
           {/* Connect new */}
           <div className="glass-card">
-            <h3 style={{ fontSize: "1.25rem", marginBottom: "1.25rem" }}>➕ Conectar Cuenta de Meta Ads</h3>
+            <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1.25rem" }}>Conectar Cuenta de Meta Ads</h3>
             
             {connMsg && (
               <div style={{
-                background: connMsg.includes("Error") ? "rgba(239, 68, 68, 0.1)" : "rgba(16, 185, 129, 0.1)",
-                border: `1px solid ${connMsg.includes("Error") ? "rgba(239, 68, 68, 0.2)" : "rgba(16, 185, 129, 0.2)"}`,
+                background: connMsg.includes("Error") ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 166, 68, 0.1)",
+                border: `1px solid ${connMsg.includes("Error") ? "rgba(235, 87, 87, 0.2)" : "rgba(39, 166, 68, 0.2)"}`,
                 color: connMsg.includes("Error") ? "var(--danger)" : "var(--success)",
                 padding: "0.5rem 0.75rem",
                 borderRadius: "6px",

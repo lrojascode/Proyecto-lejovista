@@ -5,15 +5,14 @@ import Link from "next/link";
 import { api } from "@/lib/api";
 
 const card: React.CSSProperties = {
-  background: "var(--card-bg)",
-  border: "1px solid var(--border-color)",
-  borderRadius: "16px",
-  padding: "1.5rem",
-  boxShadow: "0 8px 32px 0 rgba(0,0,0,0.3)",
+  background: "var(--color-carbon)",
+  borderRadius: "12px",
+  padding: "24px",
+  boxShadow: "var(--shadow-subtle)",
 };
-const th: React.CSSProperties = { padding: "0.6rem 0.75rem", textAlign: "left", color: "var(--text-secondary)", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: "1px solid var(--border-color)" };
+const th: React.CSSProperties = { padding: "0.6rem 0.75rem", textAlign: "left", color: "var(--color-fog)", fontSize: "12px", fontWeight: 510, borderBottom: "1px solid var(--color-graphite)" };
 const td: React.CSSProperties = { padding: "0.6rem 0.75rem", borderBottom: "1px solid var(--border-color)", fontSize: "0.85rem" };
-const h2: React.CSSProperties = { fontSize: "1.15rem", fontWeight: 700, color: "#fff", marginBottom: "1rem" };
+const h2: React.CSSProperties = { fontSize: "16px", fontWeight: 510, color: "var(--color-paper)", marginBottom: "1rem" };
 
 const labelBadge = (label: string) =>
   label === "Ganadora" || label === "Buena" ? "badge-success" : label === "Regular" ? "badge-warning" : "badge-danger";
@@ -23,9 +22,9 @@ function num(n: number) { return (n ?? 0).toLocaleString(); }
 
 function Kpi({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "1rem", textAlign: "center" }}>
-      <div style={{ fontSize: "0.72rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-      <div style={{ fontSize: "1.6rem", fontWeight: 800, marginTop: "0.35rem", color: highlight ? "var(--success)" : "#fff" }}>{value}</div>
+    <div className="card-subtle" style={{ textAlign: "center" }}>
+      <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>{label}</div>
+      <div style={{ fontSize: "20px", fontWeight: 590, marginTop: "0.35rem", letterSpacing: "-0.012em", color: highlight ? "var(--color-pulse-green)" : "var(--color-paper)" }}>{value}</div>
     </div>
   );
 }
@@ -47,7 +46,7 @@ function BreakdownTable({ title, data }: { title: string; data: Record<string, a
                 <td style={td}>{k}</td>
                 <td style={td}>{money(v.spend)}</td>
                 <td style={td}>{conv}</td>
-                <td style={{ ...td, fontWeight: 700 }}>{money(cost)}</td>
+                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(cost)}</td>
               </tr>
             );
           })}
@@ -79,14 +78,13 @@ export default function Reporte() {
   if (error || !data?.report) {
     return (
       <div style={{ ...card, textAlign: "center", padding: "3rem" }}>
-        <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>📄</div>
-        <h3 style={{ color: "#fff", fontSize: "1.2rem", marginBottom: "0.5rem" }}>Aún no hay datos para el reporte</h3>
+<h3 style={{ color: "var(--color-paper)", fontSize: "18px", fontWeight: 590, marginBottom: "0.5rem" }}>Aún no hay datos para el reporte</h3>
         <p style={{ color: "var(--text-secondary)", maxWidth: 460, margin: "0 auto 1rem" }}>
           {error || "Sincroniza tu cuenta para generar el reporte de rendimiento."}
         </p>
         <div style={{ display: "flex", gap: "0.75rem", justifyContent: "center" }}>
-          <Link href="/" className="btn-primary" style={{ padding: "0.5rem 1.25rem" }}>Ir a sincronizar</Link>
-          <Link href="/settings" className="btn-secondary" style={{ padding: "0.5rem 1.25rem" }}>Configuración</Link>
+          <Link href="/" className="btn-primary">Ir a sincronizar</Link>
+          <Link href="/settings" className="btn-secondary">Configuración</Link>
         </div>
       </div>
     );
@@ -99,9 +97,9 @@ export default function Reporte() {
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
       {/* Header */}
       <div>
-        <h1 style={{ fontSize: "1.9rem", fontWeight: 800 }}>Reporte de Rendimiento</h1>
-        <p style={{ color: "var(--text-secondary)" }}>
-          {data.ad_account_name} · {r.account.external_account_id} · últimos {r.window_days} días
+        <h1 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Reporte de Rendimiento</h1>
+        <p style={{ color: "var(--color-fog)", fontSize: "14px", marginTop: "4px" }}>
+          {data.ad_account_name} · <span className="mono">{r.account.external_account_id}</span> · últimos {r.window_days} días
         </p>
       </div>
 
@@ -119,15 +117,15 @@ export default function Reporte() {
 
       {/* Alertas */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
-        <div style={{ ...card, borderLeft: "4px solid var(--danger)" }}>
-          <h2 style={{ ...h2, fontSize: "1rem" }}>⚠️ Revisar / pausar</h2>
+        <div style={{ ...card, borderLeft: "2px solid var(--color-coral-red)" }}>
+          <h2 style={{ ...h2, fontSize: "15px" }}>Revisar / pausar</h2>
           {r.alerts.red.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin campañas críticas.</p> :
             r.alerts.red.map((a: any, i: number) => (
               <p key={i} style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}><strong>{a.name}:</strong> {a.reason}</p>
             ))}
         </div>
-        <div style={{ ...card, borderLeft: "4px solid var(--success)" }}>
-          <h2 style={{ ...h2, fontSize: "1rem" }}>🏆 Ganadoras — replicar</h2>
+        <div style={{ ...card, borderLeft: "2px solid var(--color-pulse-green)" }}>
+          <h2 style={{ ...h2, fontSize: "15px" }}>Ganadoras — replicar</h2>
           {r.alerts.green.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin campañas destacadas aún.</p> :
             r.alerts.green.map((a: any, i: number) => (
               <p key={i} style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}><strong>{a.name}:</strong> {a.reason}</p>
@@ -146,13 +144,13 @@ export default function Reporte() {
           <tbody>
             {r.campaigns.map((c: any) => (
               <tr key={c.campaign_id}>
-                <td style={{ ...td, fontWeight: 600, color: "#fff" }}>{c.name}</td>
+                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{c.name}</td>
                 <td style={td}>{money(c.spend)}</td>
                 <td style={td}>{num(c.reach)}</td>
                 <td style={td}>{c.frequency}</td>
                 <td style={td}>{c.ctr}%</td>
                 <td style={td}>{c.conversations}</td>
-                <td style={{ ...td, fontWeight: 700 }}>{money(c.cost_per_conv)}</td>
+                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(c.cost_per_conv)}</td>
                 <td style={td}><span className={`badge ${labelBadge(c.label)}`}>{c.label}</span></td>
               </tr>
             ))}
@@ -172,7 +170,7 @@ export default function Reporte() {
             <tbody>
               {r.adsets.map((a: any) => (
                 <tr key={a.adset_id}>
-                  <td style={{ ...td, fontWeight: 600, color: "#fff" }}>{a.name}</td>
+                  <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{a.name}</td>
                   <td style={{ ...td, color: "var(--text-secondary)", fontSize: "0.78rem" }}>
                     {a.targeting?.advantage_audience ? "Advantage+" : "Intereses"} · {(a.targeting?.geo || []).join(", ")}
                   </td>
@@ -180,7 +178,7 @@ export default function Reporte() {
                   <td style={td}>{num(a.reach)}</td>
                   <td style={td}>{a.ctr}%</td>
                   <td style={td}>{a.conversations}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{money(a.cost_per_conv)}</td>
+                  <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(a.cost_per_conv)}</td>
                 </tr>
               ))}
             </tbody>
@@ -200,13 +198,13 @@ export default function Reporte() {
             <tbody>
               {r.ads.map((a: any) => (
                 <tr key={a.ad_id}>
-                  <td style={{ ...td, fontWeight: 600, color: "#fff" }}>{a.name}</td>
+                  <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{a.name}</td>
                   <td style={td}>{money(a.spend)}</td>
                   <td style={td}>{num(a.reach)}</td>
                   <td style={td}>{num(a.impressions)}</td>
                   <td style={td}>{a.ctr}%</td>
                   <td style={td}>{a.conversations}</td>
-                  <td style={{ ...td, fontWeight: 700 }}>{money(a.cost_per_conv)}</td>
+                  <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(a.cost_per_conv)}</td>
                 </tr>
               ))}
             </tbody>
@@ -229,22 +227,22 @@ export default function Reporte() {
       {/* Audiencias + creativos */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
         <div style={card}>
-          <h2 style={{ ...h2, fontSize: "1rem" }}>Audiencias personalizadas</h2>
+          <h2 style={{ ...h2, fontSize: "15px" }}>Audiencias personalizadas</h2>
           {r.audiences.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin audiencias.</p> :
             r.audiences.map((a: any, i: number) => (
               <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)" }}>
-                <strong style={{ color: "#fff", fontSize: "0.88rem" }}>{a.name}</strong>{" "}
-                <span className="badge badge-success" style={{ fontSize: "0.62rem" }}>{a.subtype}</span>
+                <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{a.name}</strong>{" "}
+                <span className="badge badge-success">{a.subtype}</span>
                 <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{a.description} · ~{num(a.approximate_count)}</p>
               </div>
             ))}
         </div>
         <div style={card}>
-          <h2 style={{ ...h2, fontSize: "1rem" }}>Inventario de creativos</h2>
+          <h2 style={{ ...h2, fontSize: "15px" }}>Inventario de creativos</h2>
           {r.creatives.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin creativos.</p> :
             r.creatives.map((c: any, i: number) => (
               <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)", fontSize: "0.85rem" }}>
-                <strong style={{ color: "#fff" }}>{c.name || c.image_hash}</strong>
+                <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{c.name || c.image_hash}</strong>
                 <span style={{ color: "var(--text-secondary)" }}> · {c.width}×{c.height}</span>
               </div>
             ))}
@@ -252,14 +250,14 @@ export default function Reporte() {
       </div>
 
       {/* Parámetros óptimos */}
-      <div style={{ ...card, borderLeft: "4px solid var(--success)" }}>
+      <div style={{ ...card, borderLeft: "2px solid var(--color-pulse-green)" }}>
         <h2 style={h2}>Parámetros Óptimos para Nuevas Campañas</h2>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr><th style={th}>Parámetro</th><th style={th}>Valor recomendado</th><th style={th}>Justificación</th></tr></thead>
           <tbody>
             {r.optimal_params.map((p: any, i: number) => (
               <tr key={i}>
-                <td style={{ ...td, fontWeight: 700, color: "#fff" }}>{p.param}</td>
+                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{p.param}</td>
                 <td style={td}>{p.value}</td>
                 <td style={{ ...td, color: "var(--text-secondary)", fontSize: "0.8rem" }}>{p.justification}</td>
               </tr>
@@ -271,7 +269,7 @@ export default function Reporte() {
       {/* Narrativa IA (si existe) */}
       {data.narrative && (
         <div style={card}>
-          <h2 style={h2}>🧠 Diagnóstico de la IA</h2>
+          <h2 style={h2}>Diagnóstico de la IA</h2>
           <div style={{ whiteSpace: "pre-line", color: "var(--text-primary)", lineHeight: 1.6, fontSize: "0.9rem" }}>{data.narrative}</div>
         </div>
       )}
