@@ -169,8 +169,19 @@ export default function Settings() {
                       <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                         Meta Ads ID: <code>{acc.external_account_id}</code>
                       </p>
+                      {acc.status === "EXPIRED" && (
+                        <p style={{ fontSize: "0.78rem", color: "var(--danger)", marginTop: "0.35rem" }}>
+                          ⚠️ El token expiró. Reconecta la cuenta abajo con un token nuevo.
+                        </p>
+                      )}
                     </div>
-                    <span className="badge badge-success">Activo</span>
+                    {acc.status === "EXPIRED" ? (
+                      <span className="badge badge-danger">Token expirado</span>
+                    ) : acc.status === "SUSPENDED" ? (
+                      <span className="badge badge-warning">Suspendida</span>
+                    ) : (
+                      <span className="badge badge-success">Activo</span>
+                    )}
                   </div>
                 ))}
               </div>

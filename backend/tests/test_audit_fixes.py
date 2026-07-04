@@ -372,3 +372,21 @@ async def test_real_sync_parses_meta_entities(db_session: AsyncSession):
     assert ad.creative_id == "cr1"
     assert (await db_session.execute(select(func.count()).select_from(MetaCreative).where(MetaCreative.ad_account_id == acc.id))).scalar() == 1
     assert (await db_session.execute(select(func.count()).select_from(CustomAudience).where(CustomAudience.ad_account_id == acc.id))).scalar() == 1
+
+
+@pytest.mark.asyncio
+async def test_real_sync_marks_account_expired_on_190(db_session: AsyncSession):
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    class ExpiredLimiter:
+        ad_account_id = None
+        async def call_api(self, endpoint, params, method="GET", access_token=""):
+            return {"error": {"message": "Session has expired", "code": 190, "type": "OAuthException"}}
+
+    org, acc = await _make_org_and_account(db_session, slug="exp-org")
+    acc.set_access_token("some-token")
+    await db_session.commit()
+
+    with pytest.raises(Exception):
+        await MetaAdsSyncService(db_session)._sync_real_data(acc, "INCREMENTAL", ExpiredLimiter())
+    assert acc.status == "EXPIRED"

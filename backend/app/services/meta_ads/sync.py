@@ -338,6 +338,7 @@ class MetaAdsSyncService:
         )
         
         if "ERROR" in acc_info or "error" in acc_info:
+            self._maybe_mark_expired(ad_account, acc_info)
             raise Exception(f"Error al verificar cuenta de anuncios: {acc_info}")
             
         # Actualizar ad_account
@@ -437,6 +438,20 @@ class MetaAdsSyncService:
         return records_synced
 
     # ------------------------------------------------------------------ helpers
+
+    def _maybe_mark_expired(self, ad_account, res):
+        """Si Meta responde OAuthException (code 190), marca la cuenta y su credencial
+        como EXPIRED para que el frontend pida reconectar (S-6)."""
+        try:
+            err = res.get("error", {}) if isinstance(res, dict) else {}
+            if err.get("code") == 190:
+                ad_account.status = "EXPIRED"
+                if ad_account.meta_credential:
+                    ad_account.meta_credential.status = "EXPIRED"
+                self.db.add(ad_account)
+                logger.warning("Token de Meta expirado/ inválido para cuenta %s → EXPIRED.", ad_account.id)
+        except Exception:
+            pass
 
     @staticmethod
     def _parse_date(date_str):
