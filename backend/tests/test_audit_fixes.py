@@ -232,3 +232,24 @@ async def test_refresh_rejects_access_token(async_client: AsyncClient):
     access = res.json()["access_token"]
     bad = await async_client.post("/api/v1/auth/refresh", json={"refresh_token": access})
     assert bad.status_code == 401
+
+
+# --- P-2: el sync captura breakdowns de género, dispositivo y geografía ---
+@pytest.mark.asyncio
+async def test_sync_captures_extra_breakdowns(db_session: AsyncSession):
+    from sqlalchemy import select
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    org, acc = await _make_org_and_account(db_session, slug="p2-org")
+    await db_session.commit()
+
+    job = await MetaAdsSyncService(db_session).run_sync(acc, "INCREMENTAL")
+    assert job.status == "COMPLETED"
+
+    snap = (await db_session.execute(
+        select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id).limit(1)
+    )).scalar_one()
+    assert set(snap.extra_breakdowns.keys()) == {"gender", "device", "region"}
+    assert "male" in snap.extra_breakdowns["gender"]
+    assert "mobile" in snap.extra_breakdowns["device"]
+    assert "Lima" in snap.extra_breakdowns["region"]

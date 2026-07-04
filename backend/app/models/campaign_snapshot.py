@@ -26,6 +26,8 @@ class CampaignSnapshot(Base):
     # Breakdowns en formato JSON
     placements_breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
     demographics_breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Breakdowns adicionales (género, dispositivo, geografía) — P-2.
+    extra_breakdowns: Mapped[dict] = mapped_column(JSON, default=dict)
     
     date: Mapped[date] = mapped_column(Date, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

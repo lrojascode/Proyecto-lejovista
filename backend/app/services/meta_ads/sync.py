@@ -199,6 +199,22 @@ class MetaAdsSyncService:
                     "55-64": {"spend": spend * 0.1, "conversions": int(conversions * 0.05)}
                 }
 
+                # P-2: breakdowns de género, dispositivo y geografía.
+                extra = {
+                    "gender": {
+                        "male": {"spend": spend * 0.55, "conversions": int(conversions * 0.55)},
+                        "female": {"spend": spend * 0.45, "conversions": int(conversions * 0.45)},
+                    },
+                    "device": {
+                        "mobile": {"spend": spend * 0.8, "conversions": int(conversions * 0.85)},
+                        "desktop": {"spend": spend * 0.2, "conversions": int(conversions * 0.15)},
+                    },
+                    "region": {
+                        "Lima": {"spend": spend * 0.7, "conversions": int(conversions * 0.75)},
+                        "Callao": {"spend": spend * 0.3, "conversions": int(conversions * 0.25)},
+                    },
+                }
+
                 snapshot = CampaignSnapshot(
                     ad_account_id=ad_account.id,
                     organization_id=ad_account.organization_id,
@@ -215,6 +231,7 @@ class MetaAdsSyncService:
                     frequency=frequency,
                     placements_breakdown=placements,
                     demographics_breakdown=demographics,
+                    extra_breakdowns=extra,
                     date=sync_date
                 )
                 self.db.add(snapshot)

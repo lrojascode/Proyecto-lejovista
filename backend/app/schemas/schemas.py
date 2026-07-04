@@ -86,6 +86,7 @@ class CampaignSnapshotResponse(BaseModel):
     frequency: float
     placements_breakdown: Dict[str, Any]
     demographics_breakdown: Dict[str, Any]
+    extra_breakdowns: Dict[str, Any] = {}
     date: date
 
     model_config = ConfigDict(from_attributes=True)
