@@ -89,20 +89,27 @@ async def setup_worker_data(init_db, db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_schedule_all_syncs(setup_worker_data, mocker):
     org_id, acc_id, action_id = setup_worker_data
-    mock_delay = mocker.patch("app.workers.tasks.sync_ad_account.delay")
-    
+    # El fan-out del Beat ahora usa apply_async con countdown (jitter) en vez de delay.
+    mock_apply = mocker.patch("app.workers.tasks.sync_ad_account.apply_async")
+
     run_in_thread(schedule_all_syncs, "INCREMENTAL")
-    
-    mock_delay.assert_called_once_with(acc_id, "INCREMENTAL")
+
+    mock_apply.assert_called_once()
+    _, kwargs = mock_apply.call_args
+    assert kwargs["args"] == (acc_id, "INCREMENTAL")
+    assert 0 <= kwargs["countdown"] <= 1800
 
 @pytest.mark.asyncio
 async def test_schedule_all_analyses(setup_worker_data, mocker):
     org_id, acc_id, action_id = setup_worker_data
-    mock_delay = mocker.patch("app.workers.tasks.run_ai_analysis.delay")
-    
+    mock_apply = mocker.patch("app.workers.tasks.run_ai_analysis.apply_async")
+
     run_in_thread(schedule_all_analyses)
-    
-    mock_delay.assert_called_once_with(org_id)
+
+    mock_apply.assert_called_once()
+    _, kwargs = mock_apply.call_args
+    assert kwargs["args"] == (org_id,)
+    assert 0 <= kwargs["countdown"] <= 1800
 
 @pytest.mark.asyncio
 async def test_sync_ad_account_task(setup_worker_data, mocker):

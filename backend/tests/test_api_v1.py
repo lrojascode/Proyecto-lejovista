@@ -126,9 +126,9 @@ async def test_organization_and_ad_accounts(async_client: AsyncClient, mock_cele
     # Assert Celery task was scheduled
     mock_celery["sync_ad_account"].delay.assert_called_once()
     
-    # Connect same account again should fail
+    # Reconectar la misma cuenta es idempotente: actualiza el token y NO crea duplicado.
     connect_dup_res = await async_client.post("/api/v1/organizations/my/ad-accounts", json=ad_acc_payload, headers=headers)
-    assert connect_dup_res.status_code == 400
+    assert connect_dup_res.status_code == 200
 
     # --- ACT: GET list ad accounts ---
     list_res = await async_client.get("/api/v1/organizations/my/ad-accounts", headers=headers)

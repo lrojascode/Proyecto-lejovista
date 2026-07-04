@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
@@ -74,8 +75,10 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
 
     # 4. Crear token JWT
     access_token = create_access_token(subject=user.id)
-    user.organizations = [org_user]
-    
+    # Asignar la relación SIN disparar una carga lazy (que en async lanzaría
+    # MissingGreenlet): fijamos el valor ya conocido como "committed".
+    set_committed_value(user, "organizations", [org_user])
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
