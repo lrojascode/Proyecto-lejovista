@@ -65,4 +65,4 @@ Export PDF (otro prompt), consolidación de stacks A-3 (paralelo), particionado 
 - [x] P-2.2 — sync real (campaña con reach/conversations + adsets/ads/breakdowns/adimages/customaudiences)
 - [x] P-2.4 — agregador del brief (ReportBuilder)
 - [x] P-2.5 — API (report en /reports/brief-data)
-- [ ] P-2.6 — frontend
+- [x] P-2.6 — frontend (página /reporte con todas las secciones)

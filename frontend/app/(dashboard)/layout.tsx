@@ -80,6 +80,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const menuItems = [
     { name: "📊 Resumen", path: "/" },
     { name: "🎯 Campañas", path: "/campaigns" },
+    { name: "📄 Reporte", path: "/reporte" },
     { name: "🧠 Diagnósticos IA", path: "/diagnostics" },
     { name: "🤖 Acciones Sugeridas", path: "/actions" },
     { name: "⚙️ Configuración", path: "/settings" },
