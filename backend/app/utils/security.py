@@ -25,13 +25,16 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
-def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(subject: Union[str, Any], org: Optional[str] = None, expires_delta: Optional[timedelta] = None) -> str:
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
-    to_encode = {"exp": expire, "sub": str(subject)}
+
+    to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
+    if org:
+        # Organización "activa" del usuario para esta sesión (multi-tenant, S-8).
+        to_encode["org"] = str(org)
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
     return encoded_jwt
 
@@ -87,19 +90,31 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
         
-    # Validar aislamiento de inquilino (tenant isolation)
+    # Determinar la organización ACTIVA de la sesión (S-8) y validar aislamiento.
+    user_org_ids = [ou.organization_id for ou in user.organizations] if user.organizations else []
+    active_org_id = None
+
     tenant_slug = request.headers.get("X-Tenant-Slug")
     if tenant_slug:
+        # El subdominio elige el tenant activo; debe pertenecer al usuario.
         from app.models.organization import Organization
         q_org = select(Organization).where(Organization.slug == tenant_slug)
         res_org = await db.execute(q_org)
         org = res_org.scalar_one_or_none()
-        
-        user_org_ids = [ou.organization_id for ou in user.organizations] if user.organizations else []
         if not org or org.id not in user_org_ids:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Acceso denegado: No tienes permisos para acceder a esta organización."
             )
-            
+        active_org_id = org.id
+    else:
+        # Sin subdominio: usar la organización del claim del token si es válida.
+        token_org = payload.get("org")
+        if token_org and token_org in user_org_ids:
+            active_org_id = token_org
+
+    if active_org_id:
+        # Atributo no mapeado leído por User.organization_id (multi-tenant real).
+        user._active_org_id = active_org_id
+
     return user

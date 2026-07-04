@@ -14,18 +14,22 @@ from app.utils.security import verify_password, get_password_hash, create_access
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 def enrich_user(user: User):
+    # organization_id respeta el tenant activo de la sesión (property, S-8).
+    active_org_id = user.organization_id
     org_role = "USER"
-    org_id = ""
     if hasattr(user, 'organizations') and user.organizations:
-        org_role = user.organizations[0].role
-        org_id = user.organizations[0].organization_id
-        
+        match = next(
+            (ou for ou in user.organizations if ou.organization_id == active_org_id),
+            user.organizations[0],
+        )
+        org_role = match.role
+
     return {
         "id": user.id,
         "email": user.email,
         "full_name": user.full_name,
         "role": org_role,
-        "organization_id": org_id,
+        "organization_id": active_org_id or "",
         "created_at": user.created_at
     }
 
@@ -73,8 +77,8 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     
     await db.commit()
 
-    # 4. Crear token JWT
-    access_token = create_access_token(subject=user.id)
+    # 4. Crear token JWT con la organización activa (S-8)
+    access_token = create_access_token(subject=user.id, org=org.id)
     # Asignar la relación SIN disparar una carga lazy (que en async lanzaría
     # MissingGreenlet): fijamos el valor ya conocido como "committed".
     set_committed_value(user, "organizations", [org_user])
@@ -96,8 +100,9 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Correo o contraseña incorrectos."
         )
-        
-    access_token = create_access_token(subject=user.id)
+
+    active_org = user.organizations[0].organization_id if user.organizations else None
+    access_token = create_access_token(subject=user.id, org=active_org)
     
     return {
         "access_token": access_token,

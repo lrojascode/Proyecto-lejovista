@@ -18,6 +18,11 @@ class User(Base):
 
     @property
     def organization_id(self) -> str | None:
+        # Organización ACTIVA de la sesión, fijada por get_current_user desde el
+        # claim del token o el header X-Tenant-Slug (S-8). Si no, la primera.
+        active = getattr(self, "_active_org_id", None)
+        if active:
+            return active
         if self.organizations:
             return self.organizations[0].organization_id
         return None

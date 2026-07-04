@@ -143,3 +143,55 @@ async def test_executor_marks_simulated_when_writeback_disabled(db_session: Asyn
     updated = await AIExecutor(db_session).execute_action(acc, action)
     assert updated.status == "COMPLETED"
     assert updated.execution_result.get("simulated") is True
+
+
+# --- S-8: organización activa seleccionable (multi-tenant) ---
+@pytest.mark.asyncio
+async def test_user_active_org_property():
+    from app.models.user import User
+    from app.models.organization_user import OrganizationUser
+    user = User(email="u@x.com", hashed_password="h", full_name="U")
+    # Con dos membresías, por defecto usa la primera.
+    ou1 = OrganizationUser(user_id="u", organization_id="org-1", role="ADMIN")
+    ou2 = OrganizationUser(user_id="u", organization_id="org-2", role="VIEWER")
+    from sqlalchemy.orm.attributes import set_committed_value
+    set_committed_value(user, "organizations", [ou1, ou2])
+    assert user.organization_id == "org-1"
+    # Con tenant activo fijado, usa ese.
+    user._active_org_id = "org-2"
+    assert user.organization_id == "org-2"
+
+
+@pytest.mark.asyncio
+async def test_active_tenant_switch_via_header(async_client: AsyncClient, db_session: AsyncSession):
+    from sqlalchemy import select
+    from app.models.user import User
+    from app.models.organization import Organization
+    from app.models.organization_user import OrganizationUser
+
+    signup = {
+        "email": "switch@example.com", "password": "securepassword123",
+        "full_name": "Switch User", "organization_slug": "sw-a", "organization_name": "Org A",
+    }
+    res = await async_client.post("/api/v1/auth/signup", json=signup)
+    token = res.json()["access_token"]
+    org_a_id = res.json()["user"]["organization_id"]
+
+    # Añadir al usuario a una segunda organización.
+    u = (await db_session.execute(select(User).where(User.email == signup["email"]))).scalar_one()
+    org_b = Organization(slug="sw-b", name="Org B", status="ACTIVE")
+    db_session.add(org_b)
+    await db_session.flush()
+    db_session.add(OrganizationUser(user_id=u.id, organization_id=org_b.id, role="ADMIN"))
+    await db_session.commit()
+
+    # Sin header: organización del token (A).
+    me_a = await async_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert me_a.json()["organization_id"] == org_a_id
+
+    # Con X-Tenant-Slug de la org B: cambia el tenant activo.
+    me_b = await async_client.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {token}", "X-Tenant-Slug": "sw-b"},
+    )
+    assert me_b.json()["organization_id"] == org_b.id
