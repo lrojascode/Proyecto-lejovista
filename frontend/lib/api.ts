@@ -1,11 +1,34 @@
 import { getApiUrl } from "./config";
 
+// Intenta renovar el access token usando el refresh token guardado (S-9).
+async function tryRefresh(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const refreshToken = localStorage.getItem("refresh_token");
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch(`${getApiUrl()}/api/v1/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    localStorage.setItem("token", data.access_token);
+    if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
+    if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Interfaz para solicitudes HTTP genéricas
 async function apiRequest<T = any>(
   endpoint: string,
   method: string = "GET",
   body?: any,
-  customHeaders: Record<string, string> = {}
+  customHeaders: Record<string, string> = {},
+  retry: boolean = true
 ): Promise<T> {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const baseUrl = getApiUrl();
@@ -43,10 +66,14 @@ async function apiRequest<T = any>(
   try {
     const response = await fetch(url, config);
     
-    if (response.status === 401 && typeof window !== "undefined") {
-      // Token expirado, limpiar y redirigir
+    if (response.status === 401 && typeof window !== "undefined" && !endpoint.includes("/auth/")) {
+      // Intentar renovar el token una vez antes de expulsar al usuario (S-9).
+      if (retry && (await tryRefresh())) {
+        return apiRequest<T>(endpoint, method, body, customHeaders, false);
+      }
       localStorage.removeItem("token");
       localStorage.removeItem("user");
+      localStorage.removeItem("refresh_token");
       // Evitar redirects infinitos si ya está en login
       if (!window.location.pathname.includes("/login")) {
         window.location.href = "/login";
@@ -80,6 +107,7 @@ export const api = {
   login: (data: any) => apiRequest("/api/v1/auth/login", "POST", data),
   signup: (data: any) => apiRequest("/api/v1/auth/signup", "POST", data),
   getMe: () => apiRequest("/api/v1/auth/me", "GET"),
+  logout: (refreshToken: string) => apiRequest("/api/v1/auth/logout", "POST", { refresh_token: refreshToken }),
 
   // --- ORGANIZATIONS & ACCOUNTS ---
   getOrg: () => apiRequest("/api/v1/organizations/my", "GET"),

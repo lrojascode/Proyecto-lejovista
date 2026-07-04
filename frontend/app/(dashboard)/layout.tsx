@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
+import { api } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -50,8 +51,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, []);
 
   const handleLogout = () => {
+    // Revocar el refresh token en el backend (S-9), sin bloquear el logout local.
+    const refreshToken = localStorage.getItem("refresh_token");
+    if (refreshToken) {
+      api.logout(refreshToken).catch(() => {});
+    }
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    localStorage.removeItem("refresh_token");
     safeRedirect("/login");
   };
 

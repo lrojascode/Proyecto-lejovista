@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ENCRYPTION_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440  # 24 hours
+    REFRESH_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
 
     # --- Observabilidad ---
     SENTRY_DSN: str = Field(default="")   # vacío => Sentry desactivado

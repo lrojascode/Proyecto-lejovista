@@ -8,8 +8,12 @@ from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
-from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse
-from app.utils.security import verify_password, get_password_hash, create_access_token, get_current_user
+from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse, RefreshRequest
+from app.utils.security import (
+    verify_password, get_password_hash, create_access_token, create_refresh_token,
+    decode_token, revoke_jti, is_revoked, get_current_user,
+)
+from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -77,14 +81,16 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     
     await db.commit()
 
-    # 4. Crear token JWT con la organización activa (S-8)
+    # 4. Crear tokens JWT con la organización activa (S-8) + refresh (S-9)
     access_token = create_access_token(subject=user.id, org=org.id)
+    refresh_token = create_refresh_token(subject=user.id, org=org.id)
     # Asignar la relación SIN disparar una carga lazy (que en async lanzaría
     # MissingGreenlet): fijamos el valor ya conocido como "committed".
     set_committed_value(user, "organizations", [org_user])
 
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": enrich_user(user)
     }
@@ -103,12 +109,50 @@ async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
 
     active_org = user.organizations[0].organization_id if user.organizations else None
     access_token = create_access_token(subject=user.id, org=active_org)
-    
+    refresh_token = create_refresh_token(subject=user.id, org=active_org)
+
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": enrich_user(user)
     }
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Emite un nuevo par de tokens a partir de un refresh token válido (S-9).
+    Rota el refresh (revoca el anterior) para mitigar reuso de tokens robados."""
+    data = decode_token(payload.refresh_token)
+    if not data or data.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token inválido.")
+    if await is_revoked(data.get("jti")):
+        raise HTTPException(status_code=401, detail="Refresh token revocado.")
+
+    user_id = data.get("sub")
+    q = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
+    user = (await db.execute(q)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado.")
+
+    org = data.get("org") or (user.organizations[0].organization_id if user.organizations else None)
+
+    # Rotación: revocar el refresh usado y emitir uno nuevo.
+    await revoke_jti(data.get("jti"), settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+
+    return {
+        "access_token": create_access_token(subject=user.id, org=org),
+        "refresh_token": create_refresh_token(subject=user.id, org=org),
+        "token_type": "bearer",
+        "user": enrich_user(user)
+    }
+
+@router.post("/logout")
+async def logout(payload: RefreshRequest):
+    """Revoca el refresh token (S-9). Los access tokens caducan por expiración."""
+    data = decode_token(payload.refresh_token)
+    if data and data.get("jti"):
+        await revoke_jti(data["jti"], settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+    return {"message": "Sesión cerrada."}
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):

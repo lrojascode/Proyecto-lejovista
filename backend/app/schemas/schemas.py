@@ -28,6 +28,10 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str
     user: UserResponse
+    refresh_token: Optional[str] = None
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 # --- ORGANIZATION SCHEMAS ---
 class OrganizationResponse(BaseModel):

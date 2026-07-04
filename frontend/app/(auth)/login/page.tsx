@@ -50,6 +50,7 @@ export default function Login() {
 
       // Guardar sesión
       localStorage.setItem("token", response.access_token);
+      if (response.refresh_token) localStorage.setItem("refresh_token", response.refresh_token);
       localStorage.setItem("user", JSON.stringify(response.user));
       
       // Redirigir al dashboard principal del tenant

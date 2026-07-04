@@ -3,6 +3,8 @@ from typing import Optional, Union, Any, Dict, Tuple
 import jwt
 import uuid
 import time
+import logging
+import redis.asyncio as aioredis
 from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request
@@ -11,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+
+logger = logging.getLogger("lejovista.security")
 
 # Usamos bcrypt para hashes de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -31,12 +35,60 @@ def create_access_token(subject: Union[str, Any], org: Optional[str] = None, exp
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode = {"exp": expire, "sub": str(subject), "type": "access"}
+    to_encode = {"exp": expire, "sub": str(subject), "type": "access", "jti": str(uuid.uuid4())}
     if org:
         # Organización "activa" del usuario para esta sesión (multi-tenant, S-8).
         to_encode["org"] = str(org)
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
     return encoded_jwt
+
+
+def create_refresh_token(subject: Union[str, Any], org: Optional[str] = None) -> str:
+    """Token de refresco de larga duración (S-9). Revocable vía blocklist por jti."""
+    expire = datetime.utcnow() + timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES)
+    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh", "jti": str(uuid.uuid4())}
+    if org:
+        to_encode["org"] = str(org)
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
+
+
+def decode_token(token: str) -> Optional[Dict[str, Any]]:
+    try:
+        return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+    except Exception:
+        return None
+
+
+async def revoke_jti(jti: str, ttl_seconds: int) -> None:
+    """Marca un jti como revocado en Redis (para logout / rotación de refresh)."""
+    if not jti:
+        return
+    client = aioredis.Redis.from_url(settings.REDIS_URL)
+    try:
+        await client.set(f"revoked:{jti}", "1", ex=max(ttl_seconds, 1))
+    except Exception as e:
+        logger.warning("No se pudo revocar jti %s (Redis no disponible): %s", jti, e)
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
+
+async def is_revoked(jti: str) -> bool:
+    """True si el jti fue revocado. Fail-open (si Redis no responde, no bloquea)."""
+    if not jti:
+        return False
+    client = aioredis.Redis.from_url(settings.REDIS_URL)
+    try:
+        return bool(await client.get(f"revoked:{jti}"))
+    except Exception:
+        return False
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
 
 def create_temp_token(user_id: str, expires_in: int = 30) -> str:
     token = str(uuid.uuid4())

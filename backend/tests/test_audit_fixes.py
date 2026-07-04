@@ -195,3 +195,40 @@ async def test_active_tenant_switch_via_header(async_client: AsyncClient, db_ses
         headers={"Authorization": f"Bearer {token}", "X-Tenant-Slug": "sw-b"},
     )
     assert me_b.json()["organization_id"] == org_b.id
+
+
+# --- S-9: refresh token emite un access token nuevo y usable ---
+@pytest.mark.asyncio
+async def test_refresh_token_flow(async_client: AsyncClient):
+    signup = {
+        "email": "refresh@example.com", "password": "securepassword123",
+        "full_name": "Refresh User", "organization_slug": "rf-org", "organization_name": "RF Org",
+    }
+    res = await async_client.post("/api/v1/auth/signup", json=signup)
+    body = res.json()
+    assert body.get("refresh_token")  # signup ya entrega refresh token
+
+    refresh_res = await async_client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": body["refresh_token"]}
+    )
+    assert refresh_res.status_code == 200
+    new_access = refresh_res.json()["access_token"]
+    assert new_access and new_access != body["access_token"]
+
+    # El nuevo access token funciona en un endpoint protegido.
+    me = await async_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {new_access}"})
+    assert me.status_code == 200
+    assert me.json()["email"] == signup["email"]
+
+
+@pytest.mark.asyncio
+async def test_refresh_rejects_access_token(async_client: AsyncClient):
+    # Un access token no debe servir como refresh token (type mismatch).
+    signup = {
+        "email": "rf2@example.com", "password": "securepassword123",
+        "full_name": "U", "organization_slug": "rf2-org", "organization_name": "RF2",
+    }
+    res = await async_client.post("/api/v1/auth/signup", json=signup)
+    access = res.json()["access_token"]
+    bad = await async_client.post("/api/v1/auth/refresh", json={"refresh_token": access})
+    assert bad.status_code == 401
