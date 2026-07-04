@@ -7,7 +7,6 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.services.ai.engine import AIEngine
-from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
 from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -41,20 +40,10 @@ async def get_master_brief_data(
     if not raw_data:
         raise HTTPException(status_code=400, detail="No hay suficientes datos registrados para compilar un Master Brief. Ejecuta una sincronización primero.")
 
-    # 4. Obtener la narrativa guardada (o generar una de prueba rápida si no existe)
+    # 4. A-4: este endpoint es de SOLO LECTURA. La narrativa se genera en background
+    #    (AIEngine vía Celery, disparado por /insights/analyze-trigger). Si aún no
+    #    existe, se devuelve None + narrative_pending para que el frontend la dispare.
     narrative = acc.cached_narrative
-    if not narrative:
-        llm_client = OpenRouterClient()
-        insights_summary = "Simulación inicial de Master Brief"
-        narrative = await llm_client.analyze_campaigns(org, acc, insights_summary, raw_data)
-
-        # Guardar en DB para siguientes llamadas, con metadatos de trazabilidad.
-        acc.cached_narrative = narrative
-        acc.narrative_generated_at = datetime.datetime.utcnow()
-        acc.narrative_model = org.ai_model or None
-        acc.narrative_prompt_version = PROMPT_VERSION
-        db.add(acc)
-        await db.commit()
 
     return {
         "organization_name": org.name,
@@ -62,6 +51,10 @@ async def get_master_brief_data(
         "external_account_id": acc.external_account_id,
         "generated_at": datetime.datetime.now().isoformat(),
         "narrative": narrative,
+        "narrative_pending": narrative is None,
+        "narrative_generated_at": acc.narrative_generated_at.isoformat() if acc.narrative_generated_at else None,
+        "narrative_model": acc.narrative_model,
+        "narrative_prompt_version": acc.narrative_prompt_version,
         "campaigns_data": raw_data
     }
 

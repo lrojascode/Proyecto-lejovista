@@ -233,7 +233,11 @@ export default function Diagnostics() {
                     🧠 Diagnóstico Narrativo de la IA
                   </h3>
                   <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.7", whiteSpace: "pre-line" }}>
-                    {briefData.narrative}
+                    {briefData.narrative ? briefData.narrative : (
+                      <span style={{ color: "var(--text-secondary)" }}>
+                        La narrativa todavía no se generó. Presiona “Ejecutar Diagnóstico IA” para generarla en segundo plano y recarga en unos minutos.
+                      </span>
+                    )}
                   </div>
                 </div>
 

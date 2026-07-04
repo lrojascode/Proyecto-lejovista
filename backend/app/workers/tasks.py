@@ -3,7 +3,7 @@ import logging
 import random
 from celery.utils.log import get_task_logger
 from app.workers.celery_app import celery_app
-from app.database import async_session
+from app.database import async_session, engine
 from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.ai_action import AIAction
@@ -20,13 +20,19 @@ logger = get_task_logger(__name__)
 BEAT_STAGGER_WINDOW_SECONDS = 1800  # 30 min
 
 def run_async(coro):
-    """Ejecuta una corrutina asíncrona dentro del hilo síncrono de Celery."""
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    """Ejecuta una corrutina en un event loop nuevo y limpio por tarea.
+
+    Usa asyncio.run (loop creado y cerrado limpiamente) en vez de reutilizar
+    get_event_loop, que causaba errores intermitentes ('Event loop is closed').
+    Al terminar se descarta el pool del engine para no reutilizar conexiones
+    asyncpg ligadas a un loop ya cerrado.
+    """
+    async def _runner():
+        try:
+            return await coro
+        finally:
+            await engine.dispose()
+    return asyncio.run(_runner())
 
 @celery_app.task(name="app.workers.tasks.schedule_all_syncs")
 def schedule_all_syncs(sync_type: str = "INCREMENTAL"):
