@@ -253,3 +253,20 @@ async def test_sync_captures_extra_breakdowns(db_session: AsyncSession):
     assert "male" in snap.extra_breakdowns["gender"]
     assert "mobile" in snap.extra_breakdowns["device"]
     assert "Lima" in snap.extra_breakdowns["region"]
+
+
+# --- Regresión: el sync real deja breakdowns NULL; la respuesta no debe romperse ---
+@pytest.mark.asyncio
+async def test_snapshot_response_tolerates_null_breakdowns():
+    from app.schemas.schemas import CampaignSnapshotResponse
+
+    class Row:
+        id = "1"; campaign_id = "c"; campaign_name = "n"; status = "ACTIVE"; budget = 0.0
+        spend = 0.0; impressions = 0; clicks = 0; conversions = 0; cpl = 0.0; ctr = 0.0; frequency = 0.0
+        placements_breakdown = None; demographics_breakdown = None; extra_breakdowns = None
+        date = datetime.date.today()
+
+    r = CampaignSnapshotResponse.model_validate(Row())
+    assert r.extra_breakdowns == {}
+    assert r.placements_breakdown == {}
+    assert r.demographics_breakdown == {}

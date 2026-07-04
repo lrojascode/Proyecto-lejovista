@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
 
@@ -84,12 +84,19 @@ class CampaignSnapshotResponse(BaseModel):
     cpl: float
     ctr: float
     frequency: float
-    placements_breakdown: Dict[str, Any]
-    demographics_breakdown: Dict[str, Any]
+    placements_breakdown: Dict[str, Any] = {}
+    demographics_breakdown: Dict[str, Any] = {}
     extra_breakdowns: Dict[str, Any] = {}
     date: date
 
     model_config = ConfigDict(from_attributes=True)
+
+    # Los snapshots del sync real de Meta no rellenan los breakdowns (quedan NULL en
+    # DB). Toleramos None y lo normalizamos a {} para no romper la serialización.
+    @field_validator("placements_breakdown", "demographics_breakdown", "extra_breakdowns", mode="before")
+    @classmethod
+    def _none_to_empty_dict(cls, v):
+        return v or {}
 
 # --- INSIGHT SCHEMAS ---
 class AIInsightResponse(BaseModel):
