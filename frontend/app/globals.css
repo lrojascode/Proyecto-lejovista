@@ -1,35 +1,111 @@
-/* LejoVista — Design System (Vanilla CSS + CSS Variables) */
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap');
+/* LejoVista — Design System "Midnight Precision Instrument" (estilo Linear)
+   Tokens según DESIGN.md. Fuentes: Inter Variable + JetBrains Mono vía next/font (app/layout.tsx). */
 
 :root {
-  /* Colors */
-  --bg-color: #08090c;
-  --card-bg: rgba(17, 18, 25, 0.65);
-  --card-hover: rgba(26, 28, 38, 0.85);
-  --border-color: rgba(255, 255, 255, 0.08);
-  --border-active: rgba(139, 92, 246, 0.4);
-  
-  --text-primary: #f3f4f6;
-  --text-secondary: #9ca3af;
-  --text-muted: #858d99;
-  
-  /* Accent colors */
-  --accent-purple: #8b5cf6;
-  --accent-purple-glow: rgba(139, 92, 246, 0.15);
-  --accent-blue: #3b82f6;
-  --accent-blue-glow: rgba(59, 130, 246, 0.15);
-  
-  /* Statuses */
-  --success: #10b981;
-  --success-glow: rgba(16, 185, 129, 0.15);
-  --warning: #f59e0b;
-  --warning-glow: rgba(245, 158, 11, 0.15);
-  --danger: #ef4444;
-  --danger-glow: rgba(239, 68, 68, 0.15);
+  /* ===== Tokens — Colores (DESIGN.md) ===== */
+  --color-void: #08090a;
+  --color-carbon: #0f1011;
+  --color-obsidian: #161718;
+  --color-graphite: #23252a;
+  --color-smoke: #383b3f;
+  --color-ash: #62666d;
+  --color-fog: #8a8f98;
+  --color-mist: #d0d6e0;
+  --color-bone: #e5e5e6;
+  --color-paper: #ffffff;
+  --color-acid-lime: #e4f222;
+  --color-pulse-green: #27a644;
+  --color-coral-red: #eb5757;
+  --color-signal-teal: #02b8cc;
+  --color-iris-violet: #6366f1;
+  --color-lavender: #8b5cf6;
+  /* Extensión de la guía: tercer estado semántico (alerta). Solo badges/estado, nunca acción. */
+  --color-amber: #f2994a;
 
-  /* Transitions */
-  --transition-fast: 0.2s ease;
-  --transition-normal: 0.3s ease;
+  /* ===== Tokens — Tipografía ===== */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono-stack: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --text-caption: 13px;
+  --leading-caption: 1.2;
+  --text-body-sm: 15px;
+  --leading-body-sm: 1.6;
+  --text-body-lg: 20px;
+  --leading-body-lg: 1.33;
+  --text-subheading: 24px;
+  --leading-subheading: 1.33;
+  --text-heading-sm: 32px;
+  --leading-heading-sm: 1.13;
+  --text-heading: 48px;
+  --leading-heading: 1;
+  --text-heading-lg: 64px;
+  --leading-heading-lg: 1;
+  --text-display: 72px;
+  --leading-display: 1;
+
+  --font-weight-light: 300;
+  --font-weight-regular: 400;
+  --font-weight-w510: 510;
+  --font-weight-w590: 590;
+
+  /* ===== Tokens — Espaciado y formas ===== */
+  --spacing-4: 4px;
+  --spacing-8: 8px;
+  --spacing-12: 12px;
+  --spacing-16: 16px;
+  --spacing-20: 20px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-48: 48px;
+  --spacing-64: 64px;
+  --spacing-96: 96px;
+
+  --page-max-width: 1200px;
+  --section-gap: 96px;
+  --card-padding: 24px;
+  --element-gap: 8px;
+
+  --radius-cards: 12px;
+  --radius-pills: 9999px;
+  --radius-small: 2px;
+  --radius-badges: 4px;
+  --radius-inputs: 6px;
+  --radius-buttons: 6px;
+
+  /* ===== Tokens — Sombras (elevación por bordes hairline e inset) ===== */
+  --shadow-sm: rgba(0, 0, 0, 0.4) 0px 2px 4px 0px;
+  --shadow-subtle: rgb(35, 37, 42) 0px 0px 0px 1px inset;
+  --shadow-xl: rgba(8, 9, 10, 0.6) 0px 4px 32px 0px;
+
+  /* ===== Superficies ===== */
+  --surface-void: #08090a;
+  --surface-carbon: #0f1011;
+  --surface-obsidian: #161718;
+  --surface-slate: #23252a;
+
+  /* ===== Capa de compatibilidad (variables legacy → tokens nuevos) =====
+     Las páginas consumen estas variables en estilos inline; se redefinen aquí. */
+  --bg-color: var(--color-void);
+  --card-bg: var(--color-carbon);
+  --card-hover: var(--color-obsidian);
+  --border-color: var(--color-graphite);
+  --border-active: var(--color-smoke);
+
+  --text-primary: var(--color-mist);
+  --text-secondary: var(--color-fog);
+  --text-muted: var(--color-ash);
+
+  --accent-purple: var(--color-iris-violet);
+  --accent-blue: var(--color-signal-teal);
+
+  --success: var(--color-pulse-green);
+  --warning: var(--color-amber);
+  --danger: var(--color-coral-red);
+
+  /* Transiciones */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s ease;
 }
 
 * {
@@ -39,41 +115,56 @@
 }
 
 html, body {
-  background-color: var(--bg-color);
+  background-color: var(--color-void);
   color: var(--text-primary);
-  font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv01" on, "ss03" on, "zero" on;
+  font-size: 16px;
+  line-height: 1.5;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
-  background-image: 
-    radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.06) 0%, transparent 40%),
-    radial-gradient(circle at 90% 80%, rgba(59, 130, 246, 0.06) 0%, transparent 40%);
-  background-attachment: fixed;
 }
 
-/* Custom Scrollbar */
+/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--bg-color);
+  background: var(--color-void);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-graphite);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--accent-purple);
+  background: var(--color-smoke);
 }
 
-/* Typography headers */
+/* Tipografía — headings en Inter, pesos ≤590 (nunca bold 700+) */
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Outfit', sans-serif;
-  font-weight: 600;
-  color: #ffffff;
-  letter-spacing: -0.02em;
+  font-family: var(--font-sans);
+  font-weight: var(--font-weight-w590);
+  color: var(--color-paper);
+  letter-spacing: -0.01em;
+}
+
+/* Display type ≥48px: tracking apretado obligatorio */
+.display {
+  font-size: var(--text-heading-lg);
+  line-height: var(--leading-heading-lg);
+  font-weight: var(--font-weight-w510);
+  letter-spacing: -0.022em;
+  color: var(--color-paper);
+}
+
+/* Monospace: solo IDs, shortcuts y metadata técnica */
+.mono, code {
+  font-family: var(--font-mono-stack);
+  font-size: 12px;
+  letter-spacing: -0.013em;
 }
 
 a {
@@ -82,144 +173,225 @@ a {
   transition: color var(--transition-fast);
 }
 
-/* Utility Cards with Glassmorphism */
+/* Card principal (carbon) — elevación por borde hairline inset, sin blur ni glow */
 .glass-card {
-  background: var(--card-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  padding: 1.5rem;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-  transition: border-color var(--transition-fast), transform var(--transition-fast), background var(--transition-fast);
+  background: var(--color-carbon);
+  border: none;
+  border-radius: var(--radius-cards);
+  padding: var(--card-padding);
+  box-shadow: var(--shadow-subtle);
+  transition: box-shadow var(--transition-fast);
 }
 
 .glass-card:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: var(--card-hover);
+  box-shadow: var(--color-smoke) 0px 0px 0px 1px inset;
 }
 
-/* Premium Glow effects */
-.glow-purple {
-  box-shadow: 0 0 25px 0 var(--accent-purple-glow);
+/* Card sutil — casi invisible, para KPIs y paneles anidados */
+.card-subtle {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--color-graphite);
+  border-radius: var(--radius-inputs);
+  padding: var(--spacing-16);
 }
 
-.glow-blue {
-  box-shadow: 0 0 25px 0 var(--accent-blue-glow);
+/* Pill */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-mist);
+  border-radius: var(--radius-pills);
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: var(--font-weight-regular);
 }
 
-/* Input Styles */
+/* Inputs */
 .form-input {
   width: 100%;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  color: #ffffff;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-inputs);
+  padding: 8px 12px;
+  color: var(--color-mist);
   font-family: inherit;
-  font-size: 0.95rem;
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  font-size: 14px;
+  transition: border-color var(--transition-fast);
   outline: none;
 }
 
-.form-input:focus {
-  border-color: var(--accent-purple);
-  box-shadow: 0 0 0 3px var(--accent-purple-glow);
+.form-input::placeholder {
+  color: var(--color-ash);
 }
 
-/* Button Styles */
+.form-input:focus {
+  border-color: var(--color-mist);
+}
+
+/* Botón primario — acid-lime: LA única pieza cromática de acción (máx. 1 por vista) */
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent-purple) 0%, #7c3aed 100%);
-  color: #ffffff;
+  background: var(--color-acid-lime);
+  color: var(--color-void);
   border: none;
-  border-radius: 8px;
-  padding: 0.75rem 1.5rem;
-  font-family: 'Outfit', sans-serif;
-  font-weight: 600;
-  font-size: 0.95rem;
+  border-radius: var(--radius-buttons);
+  padding: 10px 16px;
+  font-family: inherit;
+  font-weight: var(--font-weight-w510);
+  font-size: 14px;
+  letter-spacing: -0.011em;
   cursor: pointer;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+  transition: filter var(--transition-fast);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--element-gap);
 }
 
 .btn-primary:hover {
-  transform: translateY(-1px);
-  filter: brightness(1.1);
-  box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+  filter: brightness(1.06);
 }
 
-.btn-primary:active {
-  transform: translateY(0);
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
+/* Botón secundario — ghost/outline */
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 0.75rem 1.5rem;
-  font-family: 'Outfit', sans-serif;
-  font-weight: 600;
-  font-size: 0.95rem;
+  background: transparent;
+  color: var(--color-mist);
+  border: 1px solid var(--color-graphite);
+  border-radius: var(--radius-buttons);
+  padding: 10px 16px;
+  font-family: inherit;
+  font-weight: var(--font-weight-w510);
+  font-size: 14px;
+  letter-spacing: -0.011em;
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
+  gap: var(--element-gap);
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--color-smoke);
 }
 
-/* Badges */
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Botón destructivo — confirmaciones de rechazo/eliminación */
+.btn-danger {
+  background: var(--color-coral-red);
+  color: var(--color-paper);
+  border: none;
+  border-radius: var(--radius-buttons);
+  padding: 10px 16px;
+  font-family: inherit;
+  font-weight: var(--font-weight-w510);
+  font-size: 14px;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--element-gap);
+}
+
+.btn-danger:hover {
+  filter: brightness(1.08);
+}
+
+/* Variante compacta para acciones por fila/tarjeta */
+.btn-sm {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* Badges — radius 4px, sin uppercase, peso 510 */
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-badges);
+  font-size: 12px;
+  font-weight: var(--font-weight-w510);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-fog);
   border: 1px solid transparent;
 }
 
 .badge-success {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--success);
-  border-color: rgba(16, 185, 129, 0.2);
+  background: rgba(39, 166, 68, 0.1);
+  color: var(--color-pulse-green);
+  border-color: rgba(39, 166, 68, 0.2);
 }
 
 .badge-warning {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--warning);
-  border-color: rgba(245, 158, 11, 0.2);
+  background: rgba(242, 153, 74, 0.1);
+  color: var(--color-amber);
+  border-color: rgba(242, 153, 74, 0.2);
 }
 
 .badge-danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--danger);
-  border-color: rgba(239, 68, 68, 0.2);
+  background: rgba(235, 87, 87, 0.1);
+  color: var(--color-coral-red);
+  border-color: rgba(235, 87, 87, 0.2);
 }
 
-/* Accessibility Focus States */
+/* Navegación del sidebar */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-buttons);
+  color: var(--color-fog);
+  font-size: 13px;
+  font-weight: var(--font-weight-regular);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.nav-item:hover {
+  color: var(--color-mist);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.nav-item.active {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-paper);
+}
+
+/* Focus accesible */
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent-purple);
+  outline: 2px solid var(--color-mist);
   outline-offset: 2px;
 }
 
-/* Layout Responsivo para el Dashboard */
+/* Animaciones utilitarias (referenciadas en diagnostics/actions) */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Layout responsivo del dashboard */
 .dashboard-wrapper {
   display: flex;
   min-height: 100vh;
@@ -228,12 +400,12 @@ select:focus-visible {
 
 .sidebar {
   width: 260px;
-  background: rgba(13, 14, 20, 0.98);
-  border-right: 1px solid var(--border-color);
+  background: var(--color-void);
+  border-right: 1px solid var(--color-graphite);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 2rem 1.5rem;
+  padding: 20px 12px;
   position: fixed;
   height: 100vh;
   z-index: 50;
@@ -243,45 +415,44 @@ select:focus-visible {
 .main-content {
   margin-left: 260px;
   flex-grow: 1;
-  padding: 2.5rem 3rem;
+  padding: 32px 40px;
   min-height: 100vh;
+  max-width: calc(var(--page-max-width) + 80px);
   transition: padding var(--transition-normal), margin var(--transition-normal);
 }
 
 .menu-toggle-btn {
   display: none;
   position: fixed;
-  top: 1rem;
-  right: 1rem;
+  top: 12px;
+  right: 12px;
   z-index: 100;
-  background: var(--accent-purple);
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  width: 40px;
-  height: 40px;
+  background: var(--color-carbon);
+  color: var(--color-mist);
+  border: 1px solid var(--color-graphite);
+  border-radius: var(--radius-buttons);
+  width: 36px;
+  height: 36px;
   cursor: pointer;
   align-items: center;
   justify-content: center;
-  font-size: 1.25rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  font-size: 16px;
 }
 
-/* Responsivo */
 @media (max-width: 768px) {
   .sidebar {
     transform: translateX(-100%);
   }
-  
+
   .sidebar.open {
     transform: translateX(0);
   }
-  
+
   .main-content {
     margin-left: 0;
-    padding: 5rem 1.5rem 2.5rem 1.5rem;
+    padding: 72px 16px 32px 16px;
   }
-  
+
   .menu-toggle-btn {
     display: flex;
   }
