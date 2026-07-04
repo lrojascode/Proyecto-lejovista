@@ -62,10 +62,11 @@ export default function DashboardPage() {
     setSyncMessage("Iniciando sincronización...");
     try {
       await api.triggerSync();
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
       setSyncing(false);
-      setSyncMessage("Error al iniciar sincronización.");
+      // Mostrar el motivo real (p. ej. cooldown "espera 60s" o "no hay cuentas activas").
+      setSyncMessage(e?.message || "Error al iniciar sincronización.");
     }
   };
 
