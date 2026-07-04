@@ -6,6 +6,9 @@ import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
 import { api } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
+import {
+  GridIcon, TargetIcon, DocIcon, SparkleIcon, BoltIcon, GearIcon, MenuIcon, CloseIcon,
+} from "@/components/icons";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -78,12 +81,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   const menuItems = [
-    { name: "📊 Resumen", path: "/" },
-    { name: "🎯 Campañas", path: "/campaigns" },
-    { name: "📄 Reporte", path: "/reporte" },
-    { name: "🧠 Diagnósticos IA", path: "/diagnostics" },
-    { name: "🤖 Acciones Sugeridas", path: "/actions" },
-    { name: "⚙️ Configuración", path: "/settings" },
+    { name: "Resumen", path: "/", icon: GridIcon },
+    { name: "Campañas", path: "/campaigns", icon: TargetIcon },
+    { name: "Reporte", path: "/reporte", icon: DocIcon },
+    { name: "Diagnósticos IA", path: "/diagnostics", icon: SparkleIcon },
+    { name: "Acciones Sugeridas", path: "/actions", icon: BoltIcon },
+    { name: "Configuración", path: "/settings", icon: GearIcon },
   ];
 
   return (
@@ -94,41 +97,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
         aria-label="Toggle Menu"
       >
-        {isSidebarOpen ? "✕" : "☰"}
+        {isSidebarOpen ? <CloseIcon /> : <MenuIcon />}
       </button>
 
       {/* Sidebar */}
       <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
         <div>
-          <div style={{ marginBottom: "2.5rem" }}>
-            <h1 style={{ fontSize: "1.8rem", fontWeight: "800", background: "linear-gradient(135deg, #a78bfa 0%, #60a5fa 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+          <div style={{ marginBottom: "32px", padding: "0 10px" }}>
+            <h1 style={{ fontSize: "18px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.011em" }}>
               LejoVista
             </h1>
-            <span style={{ fontSize: "0.8rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Tenant: {orgSlug}
+            <span className="mono" style={{ color: "var(--color-ash)" }}>
+              tenant: {orgSlug}
             </span>
           </div>
 
-          <nav style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+          <nav style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
             {menuItems.map((item) => {
               const isActive = pathname === item.path;
+              const Icon = item.icon;
               return (
                 <Link
                   key={item.path}
                   href={item.path}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    padding: "0.85rem 1rem",
-                    borderRadius: "10px",
-                    fontSize: "0.95rem",
-                    fontWeight: isActive ? "600" : "400",
-                    color: isActive ? "#ffffff" : "var(--text-secondary)",
-                    background: isActive ? "rgba(139, 92, 246, 0.15)" : "transparent",
-                    border: isActive ? "1px solid rgba(139, 92, 246, 0.25)" : "1px solid transparent",
-                    transition: "all var(--transition-fast)"
-                  }}
+                  className={`nav-item ${isActive ? "active" : ""}`}
                 >
+                  <Icon />
                   {item.name}
                 </Link>
               );
@@ -138,20 +132,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* User Info & Logout */}
         <div style={{
-          borderTop: "1px solid var(--border-color)",
-          paddingTop: "1.5rem",
+          borderTop: "1px solid var(--color-graphite)",
+          paddingTop: "16px",
           display: "flex",
           flexDirection: "column",
-          gap: "1rem"
+          gap: "12px",
+          padding: "16px 10px 0 10px"
         }}>
           <div>
-            <p style={{ fontSize: "0.9rem", fontWeight: "600", color: "#fff" }}>{userName}</p>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Administrador</p>
+            <p style={{ fontSize: "13px", fontWeight: 510, color: "var(--color-paper)" }}>{userName}</p>
+            <p style={{ fontSize: "12px", color: "var(--color-ash)" }}>Administrador</p>
           </div>
           <button
             onClick={handleLogout}
-            className="btn-secondary"
-            style={{ width: "100%", padding: "0.6rem 1rem", fontSize: "0.85rem" }}
+            className="btn-secondary btn-sm"
+            style={{ width: "100%" }}
           >
             Cerrar Sesión
           </button>
