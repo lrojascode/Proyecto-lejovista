@@ -228,7 +228,7 @@ export default function Reporte() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
         <div style={card}>
           <h2 style={{ ...h2, fontSize: "15px" }}>Audiencias personalizadas</h2>
-          {r.audiences.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin audiencias.</p> :
+          {r.audiences.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Esta cuenta no tiene audiencias personalizadas guardadas en Meta (usa Advantage+ o segmentación por intereses).</p> :
             r.audiences.map((a: any, i: number) => (
               <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)" }}>
                 <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{a.name}</strong>{" "}

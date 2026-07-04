@@ -606,7 +606,10 @@ class MetaAdsSyncService:
             {"fields": "hash,name,url,width,height,created_time", "limit": "50"},
             access_token=token,
         )
-        if not self._has_error(imgs):
+        if self._has_error(imgs):
+            logger.warning("No se pudo leer el inventario de creativos (cuenta %s): %s",
+                           ad_account.id, imgs)
+        else:
             for im in imgs.get("data", []):
                 h = im.get("hash")
                 if not h:
@@ -622,14 +625,24 @@ class MetaAdsSyncService:
                 row.width = im.get("width")
                 row.height = im.get("height")
 
-        # Audiencias personalizadas
+        # Audiencias personalizadas. Nota: muchas cuentas que solo usan Advantage+ o
+        # segmentación por intereses no tienen audiencias guardadas — en ese caso Meta
+        # responde una lista vacía (no un error). Un error aquí suele ser permiso del
+        # token (falta ads_read / customaudience:read), por eso se distingue en el log.
         auds = await limiter.call_api(
             f"{ad_account.external_account_id}/customaudiences",
             {"fields": "id,name,subtype,approximate_count,time_created,description"},
             access_token=token,
         )
-        if not self._has_error(auds):
-            for au in auds.get("data", []):
+        if self._has_error(auds):
+            logger.warning("No se pudieron leer audiencias personalizadas (cuenta %s): "
+                           "posible falta de permiso del token. Respuesta: %s", ad_account.id, auds)
+        else:
+            data = auds.get("data", [])
+            if not data:
+                logger.info("La cuenta %s no tiene audiencias personalizadas guardadas en Meta.",
+                            ad_account.id)
+            for au in data:
                 ext = au.get("id")
                 if not ext:
                     continue
