@@ -45,10 +45,10 @@ export default function Actions() {
     setStatusMsg("");
     try {
       await api.approveAction(id, true);
-      setStatusMsg("✓ Acción aprobada y encolada para ejecución.");
+      setStatusMsg("Acción aprobada y encolada para ejecución.");
       await fetchData();
     } catch (err: any) {
-      setStatusMsg(`❌ Error: ${err.message}`);
+      setStatusMsg(`Error: ${err.message}`);
     } finally {
       setProcessingId("");
     }
@@ -62,12 +62,12 @@ export default function Actions() {
     setStatusMsg("");
     try {
       await api.approveAction(rejectId, false, rejectReason);
-      setStatusMsg("✓ Acción rechazada.");
+      setStatusMsg("Acción rechazada.");
       setRejectId("");
       setRejectReason("");
       await fetchData();
     } catch (err: any) {
-      setStatusMsg(`❌ Error: ${err.message}`);
+      setStatusMsg(`Error: ${err.message}`);
     } finally {
       setProcessingId("");
     }
@@ -81,33 +81,27 @@ export default function Actions() {
     <div>
       {/* Header */}
       <div style={{ marginBottom: "2rem" }}>
-        <h2 style={{ fontSize: "2rem", fontWeight: "700" }}>Cola de Acciones Sugeridas</h2>
+        <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Cola de Acciones Sugeridas</h2>
         <p style={{ color: "var(--text-secondary)" }}>
           Aprueba o rechaza los cambios que el motor de IA ha planificado según sus análisis de seguridad.
         </p>
-        <div role="note" style={{
+        <div role="note" className="card-subtle" style={{
           marginTop: "0.75rem",
-          fontSize: "0.8rem",
-          color: "var(--text-muted)",
-          background: "rgba(245, 158, 11, 0.08)",
-          border: "1px solid rgba(245, 158, 11, 0.2)",
-          borderRadius: "8px",
-          padding: "0.5rem 0.75rem"
+          fontSize: "13px",
+          color: "var(--color-fog)",
+          padding: "8px 12px"
         }}>
-          ℹ️ Al aprobar, la acción se ejecuta solo si el <strong>write-back a Meta</strong> está habilitado.
+          Al aprobar, la acción se ejecuta solo si el <strong>write-back a Meta</strong> está habilitado.
           Si está desactivado, la ejecución es una simulación y se indica como tal en el historial.
         </div>
       </div>
 
       {statusMsg && (
-        <div role="status" aria-live="polite" style={{
-          background: "rgba(139, 92, 246, 0.1)",
-          border: "1px solid rgba(139, 92, 246, 0.2)",
-          color: "#fff",
+        <div role="status" aria-live="polite" className="card-subtle" style={{
+          color: "var(--color-mist)",
           padding: "0.75rem 1rem",
-          borderRadius: "8px",
           marginBottom: "1.5rem",
-          fontSize: "0.9rem"
+          fontSize: "14px"
         }}>
           {statusMsg}
         </div>
@@ -121,7 +115,7 @@ export default function Actions() {
           left: 0,
           right: 0,
           bottom: 0,
-          background: "rgba(0,0,0,0.7)",
+          background: "rgba(8, 9, 10, 0.8)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -143,7 +137,7 @@ export default function Actions() {
             />
             <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
               <button type="button" className="btn-secondary" onClick={() => setRejectId("")}>Cancelar</button>
-              <button type="submit" className="btn-primary" style={{ background: "var(--danger)" }}>Rechazar</button>
+              <button type="submit" className="btn-danger">Rechazar</button>
             </div>
           </form>
         </div>
@@ -154,7 +148,7 @@ export default function Actions() {
         
         {/* Pending Actions */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <h3 style={{ fontSize: "1.25rem", color: "#fff" }}>🤖 Pendientes de Aprobación ({pending.length})</h3>
+          <h3 style={{ fontSize: "16px", fontWeight: 510, color: "var(--color-paper)" }}>Pendientes de Aprobación ({pending.length})</h3>
           
           {pending.length === 0 ? (
             <div className="glass-card" style={{ textAlign: "center", padding: "3rem 1.5rem" }}>
@@ -167,7 +161,7 @@ export default function Actions() {
               else if (act.risk_level === "MEDIUM") riskBadge = "badge-warning";
 
               return (
-                <div key={act.id} className="glass-card" style={{ padding: "1.75rem" }}>
+                <div key={act.id} className="glass-card">
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.75rem", alignItems: "center" }}>
                     <span className={`badge ${riskBadge}`}>Riesgo {act.risk_level}</span>
                     <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
@@ -175,37 +169,31 @@ export default function Actions() {
                     </span>
                   </div>
 
-                  <h4 style={{ fontSize: "1.2rem", fontWeight: "600", marginBottom: "0.5rem", color: "#fff" }}>{act.title}</h4>
+                  <h4 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem", color: "var(--color-paper)" }}>{act.title}</h4>
                   <p style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "1.25rem", lineHeight: "1.5" }}>
                     {act.description}
                   </p>
 
-                  <div style={{
-                    background: "rgba(255,255,255,0.02)",
-                    border: "1px solid var(--border-color)",
-                    borderRadius: "10px",
-                    padding: "1rem",
-                    marginBottom: "1.5rem"
-                  }}>
-                    <div style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>IMPACTO ESTIMADO</div>
-                    <div style={{ fontSize: "0.95rem", color: "var(--success)", fontWeight: "600" }}>{act.estimated_impact}</div>
+                  <div className="card-subtle" style={{ marginBottom: "1.5rem" }}>
+                    <div style={{ fontSize: "12px", color: "var(--color-ash)", marginBottom: "0.25rem" }}>Impacto estimado</div>
+                    <div style={{ fontSize: "14px", color: "var(--color-pulse-green)", fontWeight: 510 }}>{act.estimated_impact}</div>
                   </div>
 
                   <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
                     <button
-                      className="btn-secondary"
+                      className="btn-secondary btn-sm"
                       onClick={() => setRejectId(act.id)}
                       disabled={processingId === act.id}
-                      style={{ border: "1px solid rgba(239, 68, 68, 0.2)", color: "var(--danger)" }}
+                      style={{ borderColor: "rgba(235, 87, 87, 0.25)", color: "var(--color-coral-red)" }}
                     >
                       Rechazar
                     </button>
                     <button
-                      className="btn-primary"
+                      className="btn-primary btn-sm"
                       onClick={() => handleApprove(act.id)}
                       disabled={processingId === act.id}
                     >
-                      {processingId === act.id ? "Encolando..." : "✅ Aprobar y Ejecutar"}
+                      {processingId === act.id ? "Encolando..." : "Aprobar y Ejecutar"}
                     </button>
                   </div>
                 </div>
@@ -216,7 +204,7 @@ export default function Actions() {
 
         {/* History of Actions */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
-          <h3 style={{ fontSize: "1.25rem", color: "#fff" }}>📜 Historial de Cambios</h3>
+          <h3 style={{ fontSize: "16px", fontWeight: 510, color: "var(--color-paper)" }}>Historial de Cambios</h3>
           
           <div className="glass-card" style={{ display: "flex", flexDirection: "column", gap: "1.25rem", maxHeight: "600px", overflowY: "auto" }}>
             {history.length === 0 ? (
@@ -231,15 +219,14 @@ export default function Actions() {
                 return (
                   <div 
                     key={act.id} 
-                    style={{ 
-                      paddingBottom: "1rem", 
-                      borderBottom: "1px solid var(--border-color)",
-                      lastChild: { borderBottom: "none" }
-                    } as any}
+                    style={{
+                      paddingBottom: "1rem",
+                      borderBottom: "1px solid var(--border-color)"
+                    }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem", alignItems: "center" }}>
-                      <strong style={{ fontSize: "0.9rem", color: "#fff" }}>{act.title}</strong>
-                      <span className={`badge ${statusBadge}`} style={{ fontSize: "0.6rem" }}>
+                      <strong style={{ fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>{act.title}</strong>
+                      <span className={`badge ${statusBadge}`}>
                         {act.status}
                       </span>
                     </div>
@@ -248,8 +235,8 @@ export default function Actions() {
                     </p>
                     
                     {act.status === "EXECUTING" && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--warning)", fontWeight: "600", animation: "pulse 1.5s infinite" }}>
-                        ⌛ Ejecutando llamadas API con pausas anti-detección...
+                      <div style={{ fontSize: "12px", color: "var(--color-amber)", fontWeight: 510, animation: "pulse 1.5s infinite" }}>
+                        Ejecutando llamadas API con pausas anti-detección...
                       </div>
                     )}
                     
@@ -262,8 +249,8 @@ export default function Actions() {
                     {act.status === "COMPLETED" && act.execution_result && (
                       <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                         {act.execution_result.simulated ? (
-                          <span style={{ color: "var(--warning)" }}>
-                            ⚠️ Simulación — no se aplicó en Meta (write-back desactivado).
+                          <span style={{ color: "var(--color-amber)" }}>
+                            Simulación — no se aplicó en Meta (write-back desactivado).
                           </span>
                         ) : (
                           <>Aplicado en Meta · ID: <code>{act.execution_result.campaign_id || act.execution_result.id || "OK"}</code></>

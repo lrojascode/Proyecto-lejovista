@@ -73,30 +73,26 @@ export default function Diagnostics() {
       {/* Title & Action */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         <div>
-          <h2 style={{ fontSize: "2rem", fontWeight: "700" }}>Análisis y Diagnósticos de la IA</h2>
-          <p style={{ color: "var(--text-secondary)" }}>Master Brief Ejecutivo de optimización y clasificación de campañas.</p>
+          <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Análisis y Diagnósticos de la IA</h2>
+          <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Master Brief Ejecutivo de optimización y clasificación de campañas.</p>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.5rem" }}>
-          <button 
+          <button
             onClick={handleTriggerAnalysis}
             disabled={isTriggering}
-            className="btn-primary"
-            style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+            className={briefData ? "btn-primary" : "btn-secondary"}
           >
             {isTriggering ? (
               <>
-                <div style={{ width: "16px", height: "16px", border: "2px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                <div style={{ width: "14px", height: "14px", border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
                 <span>Iniciando...</span>
               </>
             ) : (
-              <>
-                <span>✨</span>
-                <span>Ejecutar Diagnóstico IA</span>
-              </>
+              <span>Ejecutar Diagnóstico IA</span>
             )}
           </button>
           {triggerMessage && (
-            <span role="status" aria-live="polite" style={{ fontSize: "0.85rem", color: "var(--accent-purple)", maxWidth: "250px", textAlign: "right" }}>
+            <span role="status" aria-live="polite" style={{ fontSize: "13px", color: "var(--color-fog)", maxWidth: "250px", textAlign: "right" }}>
               {triggerMessage}
             </span>
           )}
@@ -105,18 +101,19 @@ export default function Diagnostics() {
 
       {error && (
         <div role="alert" style={{
-          background: "rgba(239, 68, 68, 0.1)",
-          border: "1px solid rgba(239, 68, 68, 0.25)",
-          color: "var(--danger)",
-          borderRadius: "10px",
+          background: "rgba(235, 87, 87, 0.1)",
+          border: "1px solid rgba(235, 87, 87, 0.2)",
+          color: "var(--color-coral-red)",
+          borderRadius: "6px",
           padding: "0.75rem 1rem",
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
-          gap: "1rem"
+          gap: "1rem",
+          fontSize: "14px"
         }}>
-          <span>⚠️ {error}</span>
-          <button className="btn-secondary" onClick={() => { setLoading(true); fetchData().finally(() => setLoading(false)); }} style={{ padding: "0.35rem 0.9rem", fontSize: "0.85rem" }}>
+          <span>{error}</span>
+          <button className="btn-secondary btn-sm" onClick={() => { setLoading(true); fetchData().finally(() => setLoading(false)); }}>
             Reintentar
           </button>
         </div>
@@ -125,7 +122,7 @@ export default function Diagnostics() {
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 2.8fr", gap: "2rem", flexGrow: 1, minHeight: 0 }}>
         {/* Sidebar Insights */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem", overflowY: "auto", paddingRight: "0.5rem" }}>
-          <h3 style={{ fontSize: "1.1rem", borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem", color: "#fff" }}>
+          <h3 style={{ fontSize: "16px", fontWeight: 510, borderBottom: "1px solid var(--color-graphite)", paddingBottom: "0.5rem", color: "var(--color-paper)" }}>
             Alertas Activas ({insights.length})
           </h3>
           {insights.length === 0 ? (
@@ -137,13 +134,13 @@ export default function Diagnostics() {
                 style={{
                   padding: "1rem",
                   borderRadius: "12px",
-                  background: "var(--card-bg)",
-                  border: `1px solid ${ins.level === "CRITICAL" ? "rgba(239, 68, 68, 0.2)" : "var(--border-color)"}`,
+                  background: "var(--color-carbon)",
+                  boxShadow: ins.level === "CRITICAL" ? "rgba(235, 87, 87, 0.25) 0px 0px 0px 1px inset" : "var(--shadow-subtle)",
                   position: "relative"
                 }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", alignItems: "center" }}>
-                  <span className={`badge ${ins.level === "CRITICAL" ? "badge-danger" : "badge-warning"}`} style={{ fontSize: "0.6rem" }}>
+                  <span className={`badge ${ins.level === "CRITICAL" ? "badge-danger" : "badge-warning"}`}>
                     {ins.level}
                   </span>
                   <button
@@ -152,18 +149,18 @@ export default function Diagnostics() {
                     style={{
                       background: "none",
                       border: "none",
-                      color: "var(--text-muted)",
+                      color: "var(--color-ash)",
                       cursor: "pointer",
-                      fontSize: "0.8rem"
+                      fontSize: "12px"
                     }}
                   >
-                    {dismissingId === ins.id ? "Descartando..." : "✕ Descartar"}
+                    {dismissingId === ins.id ? "Descartando..." : "Descartar"}
                   </button>
                 </div>
-                <h4 style={{ fontSize: "0.95rem", fontWeight: "600", marginBottom: "0.25rem", color: "#fff" }}>{ins.title}</h4>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: "1.4" }}>{ins.description}</p>
+                <h4 style={{ fontSize: "14px", fontWeight: 510, marginBottom: "0.25rem", color: "var(--color-paper)" }}>{ins.title}</h4>
+                <p style={{ fontSize: "13px", color: "var(--color-fog)", lineHeight: "1.5" }}>{ins.description}</p>
                 {ins.suggested_action_type && (
-                  <div style={{ fontSize: "0.75rem", color: "var(--accent-purple)", marginTop: "0.5rem", fontWeight: "600" }}>
+                  <div className="mono" style={{ color: "var(--color-iris-violet)", marginTop: "0.5rem" }}>
                     ↳ Acción sugerida: {ins.suggested_action_type}
                   </div>
                 )}
@@ -177,38 +174,32 @@ export default function Diagnostics() {
           {briefData ? (
             <>
               {/* KPI Grid */}
-              <div style={{
-                background: "var(--card-bg)",
-                border: "1px solid var(--border-color)",
-                borderRadius: "18px",
-                padding: "1.5rem",
-                boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.3)"
-              }}>
-                <h3 style={{ fontSize: "1.2rem", fontWeight: "600", marginBottom: "1rem", color: "#fff" }}>
-                  📊 Resumen General (Últimos 7 Días)
+              <div className="glass-card">
+                <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem", color: "var(--color-paper)" }}>
+                  Resumen General (Últimos 7 Días)
                 </h3>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem" }}>
-                  <div style={{ background: "rgba(255, 255, 255, 0.02)", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "1rem", textAlign: "center" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase" }}>Presupuesto Diario Total</div>
-                    <div style={{ fontSize: "1.5rem", fontWeight: "700", color: "#fff", marginTop: "0.25rem" }}>
+                  <div className="card-subtle" style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Presupuesto Diario Total</div>
+                    <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
                       S/.{Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.budget || 0), 0).toFixed(2)}
                     </div>
                   </div>
-                  <div style={{ background: "rgba(255, 255, 255, 0.02)", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "1rem", textAlign: "center" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase" }}>Inversión Total</div>
-                    <div style={{ fontSize: "1.5rem", fontWeight: "700", color: "#fff", marginTop: "0.25rem" }}>
+                  <div className="card-subtle" style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Inversión Total</div>
+                    <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
                       S/.{Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.spend || 0), 0).toFixed(2)}
                     </div>
                   </div>
-                  <div style={{ background: "rgba(255, 255, 255, 0.02)", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "1rem", textAlign: "center" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase" }}>Leads Totales</div>
-                    <div style={{ fontSize: "1.5rem", fontWeight: "700", color: "#fff", marginTop: "0.25rem" }}>
+                  <div className="card-subtle" style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Leads Totales</div>
+                    <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
                       {Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversions || 0), 0)}
                     </div>
                   </div>
-                  <div style={{ background: "rgba(255, 255, 255, 0.02)", border: "1px solid var(--border-color)", borderRadius: "12px", padding: "1rem", textAlign: "center" }}>
-                    <div style={{ fontSize: "0.75rem", color: "var(--text-secondary)", textTransform: "uppercase" }}>CPL Promedio</div>
-                    <div style={{ fontSize: "1.5rem", fontWeight: "700", color: "#fff", marginTop: "0.25rem" }}>
+                  <div className="card-subtle" style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>CPL Promedio</div>
+                    <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
                       S/.{(() => {
                         const totalSpend = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.spend || 0), 0);
                         const totalConvs = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversions || 0), 0);
@@ -222,15 +213,9 @@ export default function Diagnostics() {
               {/* Two columns: Narrative and Campaign Performance Table */}
               <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: "1.5rem" }}>
                 {/* Column 1: Narrative */}
-                <div style={{
-                  background: "var(--card-bg)",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: "18px",
-                  padding: "1.5rem",
-                  boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.3)"
-                }}>
-                  <h3 style={{ fontSize: "1.2rem", fontWeight: "600", marginBottom: "1rem", color: "#fff", borderBottom: "1px solid rgba(255, 255, 255, 0.05)", paddingBottom: "0.5rem" }}>
-                    🧠 Diagnóstico Narrativo de la IA
+                <div className="glass-card">
+                  <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem", color: "var(--color-paper)", borderBottom: "1px solid var(--color-graphite)", paddingBottom: "0.5rem" }}>
+                    Diagnóstico Narrativo de la IA
                   </h3>
                   <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.7", whiteSpace: "pre-line" }}>
                     {briefData.narrative ? briefData.narrative : (
@@ -242,16 +227,9 @@ export default function Diagnostics() {
                 </div>
 
                 {/* Column 2: Table */}
-                <div style={{
-                  background: "var(--card-bg)",
-                  border: "1px solid var(--border-color)",
-                  borderRadius: "18px",
-                  padding: "1.5rem",
-                  boxShadow: "0 8px 32px 0 rgba(0, 0, 0, 0.3)",
-                  overflowX: "auto"
-                }}>
-                  <h3 style={{ fontSize: "1.2rem", fontWeight: "600", marginBottom: "1rem", color: "#fff", borderBottom: "1px solid rgba(255, 255, 255, 0.05)", paddingBottom: "0.5rem" }}>
-                    🎯 Desempeño de Campañas
+                <div className="glass-card" style={{ overflowX: "auto" }}>
+                  <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem", color: "var(--color-paper)", borderBottom: "1px solid var(--color-graphite)", paddingBottom: "0.5rem" }}>
+                    Desempeño de Campañas
                   </h3>
                   <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
                     <thead>
@@ -268,10 +246,10 @@ export default function Diagnostics() {
                         const cpl = c.conversions > 0 ? c.spend / c.conversions : c.spend;
                         return (
                           <tr key={c.name} style={{ borderBottom: "1px solid var(--border-color)", color: "var(--text-primary)" }}>
-                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: "600" }}>{c.name}</td>
+                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510 }}>{c.name}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>S/.{c.spend.toFixed(2)}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>{c.conversions}</td>
-                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: "700" }}>S/.{cpl.toFixed(2)}</td>
+                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>{c.ctr.toFixed(2)}%</td>
                           </tr>
                         );
@@ -282,11 +260,10 @@ export default function Diagnostics() {
               </div>
             </>
           ) : (
-            <div style={{ color: "var(--text-secondary)", textAlign: "center", padding: "4rem 2rem", background: "var(--card-bg)", borderRadius: "18px", border: "1px dashed var(--border-color)", display: "flex", flexDirection: "column", gap: "1rem", alignItems: "center" }}>
-              <div style={{ fontSize: "3rem" }}>🤖</div>
-              <h3 style={{ color: "#fff", fontSize: "1.2rem", fontWeight: "600" }}>Aún no hay diagnósticos generados</h3>
+            <div style={{ color: "var(--color-fog)", textAlign: "center", padding: "4rem 2rem", background: "var(--color-carbon)", borderRadius: "12px", border: "1px dashed var(--color-graphite)", display: "flex", flexDirection: "column", gap: "1rem", alignItems: "center" }}>
+              <h3 style={{ color: "var(--color-paper)", fontSize: "18px", fontWeight: 590 }}>Aún no hay diagnósticos generados</h3>
               <p style={{ maxWidth: "400px", lineHeight: "1.5" }}>El Master Brief Ejecutivo se genera analizando el rendimiento de tus campañas mediante Inteligencia Artificial.</p>
-              <button onClick={handleTriggerAnalysis} disabled={isTriggering} className="btn-primary" style={{ marginTop: "1rem", padding: "0.5rem 1.5rem" }}>
+              <button onClick={handleTriggerAnalysis} disabled={isTriggering} className="btn-primary" style={{ marginTop: "1rem" }}>
                 {isTriggering ? "Iniciando análisis..." : "Generar primer diagnóstico"}
               </button>
             </div>
