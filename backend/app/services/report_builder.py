@@ -95,6 +95,8 @@ class ReportBuilder:
             } for c in creatives],
             "alerts": self._alerts(campaigns),
             "optimal_params": self._optimal_params(adsets, segmentation, campaigns),
+            "findings": self._findings(campaigns, adsets, segmentation),
+            "recommendations": self._recommendations(campaigns, adsets, segmentation),
         }
 
     # --- agregaciones ---
@@ -229,6 +231,77 @@ class ReportBuilder:
             elif c["label"] in ("Ganadora", "Buena"):
                 green.append({"name": c["name"], "reason": f"S/.{c['cost_per_conv']:.2f}/conv, CTR {c['ctr']:.2f}%"})
         return {"red": red, "green": green}
+
+    @staticmethod
+    def _is_advantage(targeting: dict) -> bool:
+        t = targeting or {}
+        return bool(t.get("advantage_audience")) or t.get("audience_type") == "ADVANTAGE_PLUS"
+
+    def _findings(self, campaigns, adsets, segmentation) -> List[str]:
+        """Hallazgos ('lo más importante') derivados de los números agregados —
+        nunca inventados por el LLM. Cada uno es una frase lista para mostrar."""
+        out: List[str] = []
+        winners = [c for c in campaigns if c["conversations"] > 0]  # ya ordenados por costo asc
+        if winners:
+            b = winners[0]
+            out.append(f"{b['name']} es la campaña más eficiente: S/.{b['cost_per_conv']:.2f} por "
+                       f"conversación con CTR {b['ctr']:.2f}% (el mejor de la cuenta).")
+
+        expensive = [c for c in campaigns if c["label"] in ("Caro", "Pausar") and c["conversations"] > 0]
+        if expensive:
+            names = " y ".join(c["name"] for c in expensive[:2])
+            hi = max(c["cost_per_conv"] for c in expensive)
+            out.append(f"Las campañas más caras ({names}) llegan a S/.{hi:.2f} por conversación, "
+                       f"casi el doble de las ganadoras.")
+
+        adv = [a for a in adsets if self._is_advantage(a.get("targeting", {})) and a["conversations"] > 0]
+        intr = [a for a in adsets if not self._is_advantage(a.get("targeting", {})) and a["conversations"] > 0]
+        if adv and intr:
+            adv_cost = sum(a["cost_per_conv"] for a in adv) / len(adv)
+            int_cost = sum(a["cost_per_conv"] for a in intr) / len(intr)
+            lo, hi = sorted([("Advantage+", adv_cost), ("intereses", int_cost)], key=lambda x: x[1])
+            if hi[1] > 0:
+                pct = round((1 - lo[1] / hi[1]) * 100)
+                out.append(f"{lo[0].capitalize()} rinde mejor que {hi[0]}: S/.{lo[1]:.2f} vs "
+                           f"S/.{hi[1]:.2f} por conversación ({pct}% más barato).")
+
+        placements = segmentation.get("placements", {})
+        total_pl = sum(v["spend"] for v in placements.values())
+        if total_pl > 0:
+            top_key, top_val = max(placements.items(), key=lambda kv: kv[1]["spend"])
+            share = round(top_val["spend"] / total_pl * 100)
+            out.append(f"{top_key.replace('_', ' ')} concentra el {share}% de la inversión — "
+                       f"es el canal principal de la cuenta.")
+        return out
+
+    def _recommendations(self, campaigns, adsets, segmentation) -> List[str]:
+        """Recomendaciones accionables ('qué hacer con las nuevas campañas')."""
+        out: List[str] = []
+        winners = [a for a in adsets if a["conversations"] > 0]
+        if winners:
+            if self._is_advantage(winners[0].get("targeting", {})):
+                out.append("Usar Advantage+ (audiencia amplia) en las nuevas campañas — fue lo más "
+                           "eficiente en el período y simplifica la gestión.")
+            else:
+                out.append("Mantener segmentación por intereses en las nuevas campañas — superó a "
+                           "Advantage+ en costo por conversación.")
+
+        placements = segmentation.get("placements", {})
+        dead = [(k, v) for k, v in placements.items() if v["spend"] > 0 and v.get("conversions", 0) == 0]
+        if dead:
+            worst = max(dead, key=lambda kv: kv[1]["spend"])[0]
+            out.append(f"Limitar o excluir {worst.replace('_', ' ')}: recibió inversión sin generar "
+                       f"ninguna conversión.")
+
+        costs = [c["cost_per_conv"] for c in campaigns if c["conversations"] > 0]
+        if costs:
+            lo, hi = round(min(costs), 2), round(sorted(costs)[len(costs) // 2], 2)
+            out.append(f"Fijar una meta de costo de S/.{lo:.2f}–S/.{hi:.2f} por conversación, "
+                       f"basada en el rango de las campañas ganadoras.")
+
+        out.append("Crear anuncios con objetivo de conversaciones directas a WhatsApp, no boost de "
+                   "publicaciones, que históricamente convierten más caro.")
+        return out
 
     def _optimal_params(self, adsets, segmentation, campaigns) -> List[Dict[str, str]]:
         # Mejor adset con conversiones

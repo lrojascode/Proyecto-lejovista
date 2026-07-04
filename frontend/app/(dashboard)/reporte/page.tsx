@@ -56,6 +56,34 @@ function BreakdownTable({ title, data }: { title: string; data: Record<string, a
   );
 }
 
+const BAR_COLORS = ["#6366f1", "#02b8cc", "#27a644", "#8b5cf6", "#f2994a", "#eb5757"];
+
+function DistributionBars({ title, data }: { title: string; data: Record<string, any> }) {
+  const rows = Object.entries(data || {});
+  const total = rows.reduce((acc, [, v]: [string, any]) => acc + (v.spend || 0), 0);
+  if (total <= 0) return null;
+  const sorted = rows.sort((a, b) => (b[1].spend || 0) - (a[1].spend || 0));
+  return (
+    <div>
+      <h4 style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "0.75rem" }}>{title}</h4>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {sorted.map(([k, v]: [string, any], i: number) => {
+          const pct = Math.round((v.spend / total) * 100);
+          return (
+            <div key={k} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+              <span style={{ fontSize: "12px", color: "var(--text-secondary)", width: "150px", flexShrink: 0 }}>{k.replace(/_/g, " ")}</span>
+              <div style={{ flex: 1, background: "var(--color-graphite)", borderRadius: "4px", height: "8px", overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "8px", background: BAR_COLORS[i % BAR_COLORS.length], borderRadius: "4px" }} />
+              </div>
+              <span style={{ fontSize: "12px", fontWeight: 510, color: "var(--color-paper)", width: "44px", textAlign: "right" }}>{pct}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function Reporte() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -114,6 +142,36 @@ export default function Reporte() {
           <Kpi label="CTR promedio" value={`${(k.avg_ctr ?? 0).toFixed(2)}%`} />
         </div>
       </div>
+
+      {/* Hallazgos y recomendaciones (P-2.7) */}
+      {(r.findings?.length > 0 || r.recommendations?.length > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
+          {r.findings?.length > 0 && (
+            <div style={{ ...card, borderLeft: "2px solid var(--color-amber)" }}>
+              <h2 style={{ ...h2, fontSize: "15px" }}>Lo más importante que encontramos</h2>
+              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {r.findings.map((f: string, i: number) => (
+                  <li key={i} style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5, paddingLeft: "14px", position: "relative" }}>
+                    <span style={{ position: "absolute", left: 0, color: "var(--color-amber)" }}>→</span>{f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {r.recommendations?.length > 0 && (
+            <div style={{ ...card, borderLeft: "2px solid var(--color-pulse-green)" }}>
+              <h2 style={{ ...h2, fontSize: "15px" }}>Qué hacer con las nuevas campañas</h2>
+              <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: "8px" }}>
+                {r.recommendations.map((rec: string, i: number) => (
+                  <li key={i} style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5, paddingLeft: "14px", position: "relative" }}>
+                    <span style={{ position: "absolute", left: 0, color: "var(--color-pulse-green)" }}>✓</span>{rec}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Alertas */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
@@ -214,7 +272,11 @@ export default function Reporte() {
 
       {/* Segmentación */}
       <div style={card}>
-        <h2 style={h2}>¿Dónde convierte mejor? — Segmentación</h2>
+        <h2 style={h2}>¿Dónde convierte mejor? — Plataforma y Dispositivo</h2>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "1.5rem", marginBottom: "1.5rem" }}>
+          <DistributionBars title="Distribución de gasto por placement" data={r.segmentation.placements} />
+          <DistributionBars title="Distribución de gasto por dispositivo" data={r.segmentation.device} />
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "1.5rem" }}>
           <BreakdownTable title="Plataforma / Placement" data={r.segmentation.placements} />
           <BreakdownTable title="Dispositivo" data={r.segmentation.device} />

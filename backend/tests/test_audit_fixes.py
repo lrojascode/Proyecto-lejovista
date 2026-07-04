@@ -432,6 +432,10 @@ async def test_report_builder_full_sections(db_session: AsyncSession):
     assert report["segmentation"]["gender"]
     assert len(report["optimal_params"]) > 0
     assert "red" in report["alerts"] and "green" in report["alerts"]
+    # P-2.7: hallazgos y recomendaciones estructurados, derivados de los datos.
+    assert len(report["findings"]) > 0
+    assert len(report["recommendations"]) > 0
+    assert all(isinstance(f, str) for f in report["findings"])
     # ranking ordenado por costo/conversación ascendente
     costs = [c["cost_per_conv"] for c in report["campaigns"]]
     assert costs == sorted(costs)
