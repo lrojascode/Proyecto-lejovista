@@ -7,6 +7,7 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.services.ai.engine import AIEngine
+from app.services.report_builder import ReportBuilder
 from app.utils.security import get_current_user
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -45,6 +46,10 @@ async def get_master_brief_data(
     #    existe, se devuelve None + narrative_pending para que el frontend la dispare.
     narrative = acc.cached_narrative
 
+    # P-2.4/2.5: reporte estructurado completo (KPIs, adsets, ads, segmentación,
+    # audiencias, creativos, alertas, parámetros óptimos) calculado desde la DB.
+    report = await ReportBuilder(db).build(acc)
+
     return {
         "organization_name": org.name,
         "ad_account_name": acc.name,
@@ -55,6 +60,7 @@ async def get_master_brief_data(
         "narrative_generated_at": acc.narrative_generated_at.isoformat() if acc.narrative_generated_at else None,
         "narrative_model": acc.narrative_model,
         "narrative_prompt_version": acc.narrative_prompt_version,
+        "report": report,
         "campaigns_data": raw_data
     }
 

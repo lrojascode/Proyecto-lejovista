@@ -390,3 +390,30 @@ async def test_real_sync_marks_account_expired_on_190(db_session: AsyncSession):
     with pytest.raises(Exception):
         await MetaAdsSyncService(db_session)._sync_real_data(acc, "INCREMENTAL", ExpiredLimiter())
     assert acc.status == "EXPIRED"
+
+
+# --- P-2.4: el ReportBuilder arma todas las secciones desde la DB ---
+@pytest.mark.asyncio
+async def test_report_builder_full_sections(db_session: AsyncSession):
+    from app.services.meta_ads.sync import MetaAdsSyncService
+    from app.services.report_builder import ReportBuilder
+
+    org, acc = await _make_org_and_account(db_session, slug="rb-org")
+    await db_session.commit()
+    await MetaAdsSyncService(db_session).run_sync(acc, "FULL")
+
+    report = await ReportBuilder(db_session).build(acc)
+    assert report["kpis"]["total_spend"] > 0
+    assert report["kpis"]["total_reach"] > 0
+    assert len(report["campaigns"]) >= 1
+    assert len(report["adsets"]) >= 1
+    assert len(report["ads"]) >= 1
+    assert len(report["creatives"]) == 3
+    assert len(report["audiences"]) == 3
+    assert report["segmentation"]["device"]  # dispositivos agregados
+    assert report["segmentation"]["gender"]
+    assert len(report["optimal_params"]) > 0
+    assert "red" in report["alerts"] and "green" in report["alerts"]
+    # ranking ordenado por costo/conversación ascendente
+    costs = [c["cost_per_conv"] for c in report["campaigns"]]
+    assert costs == sorted(costs)
