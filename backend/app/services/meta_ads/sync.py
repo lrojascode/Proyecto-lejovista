@@ -631,7 +631,10 @@ class MetaAdsSyncService:
         # token (falta ads_read / customaudience:read), por eso se distingue en el log.
         auds = await limiter.call_api(
             f"{ad_account.external_account_id}/customaudiences",
-            {"fields": "id,name,subtype,approximate_count,time_created,description"},
+            # `approximate_count` ya no existe en la Graph API (confirmado contra la
+            # API real: pedirlo devuelve OAuthException code 100 "Tried accessing
+            # nonexisting field") — Meta lo reemplazó por lower/upper bound.
+            {"fields": "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,time_created,description"},
             access_token=token,
         )
         if self._has_error(auds):
@@ -655,7 +658,7 @@ class MetaAdsSyncService:
                 row.name = au.get("name", "")
                 row.subtype = au.get("subtype")
                 row.description = au.get("description")
-                row.approximate_count = au.get("approximate_count")
+                row.approximate_count = au.get("approximate_count_lower_bound")
 
     # Cada dimensión de breakdown es una llamada aparte: la Graph API no permite
     # combinar publisher_platform+platform_position con age/gender/region en una

@@ -353,7 +353,8 @@ class _FakeLimiter:
         if endpoint.endswith("/adimages"):
             return {"data": [{"hash": "h1", "name": "Imagen 1", "url": "http://x/1.jpg", "width": 1080, "height": 1080}]}
         if endpoint.endswith("/customaudiences"):
-            return {"data": [{"id": "aud1", "name": "Audiencia 1", "subtype": "CUSTOM", "approximate_count": 1000}]}
+            return {"data": [{"id": "aud1", "name": "Audiencia 1", "subtype": "CUSTOM",
+                              "approximate_count_lower_bound": 1000, "approximate_count_upper_bound": 1200}]}
         # info de cuenta
         return {"amount_spent": "10000", "spend_cap": "500000", "account_status": 1}
 
