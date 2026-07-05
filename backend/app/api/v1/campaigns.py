@@ -87,18 +87,19 @@ async def trigger_manual_sync(
     """
     Dispara manualmente el worker de sincronización incremental para todas las cuentas del tenant.
     """
-    # Cooldown: el sync golpea Meta (rate limit / posible baneo). Evitar spam.
-    await enforce_cooldown("sync", current_user.organization_id, cooldown_seconds=60)
-
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
         AdAccount.status == "ACTIVE"
     )
     res = await db.execute(q)
     accounts = res.scalars().all()
-    
+
     if not accounts:
         raise HTTPException(status_code=400, detail="No hay cuentas de anuncios activas conectadas.")
+
+    # Cooldown: el sync golpea Meta (rate limit / posible baneo). Evitar spam.
+    # Se consume solo si de verdad hay algo que sincronizar (ver hallazgo 3.1 del HANDOFF).
+    await enforce_cooldown("sync", current_user.organization_id, cooldown_seconds=60)
 
     for acc in accounts:
         sync_ad_account.delay(acc.id, "INCREMENTAL")
