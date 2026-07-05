@@ -66,3 +66,14 @@ Export PDF (otro prompt), consolidación de stacks A-3 (paralelo), particionado 
 - [x] P-2.4 — agregador del brief (ReportBuilder)
 - [x] P-2.5 — API (report en /reports/brief-data)
 - [x] P-2.6 — frontend (página /reporte con todas las secciones)
+- [x] P-2.7 — extensión no planeada, hecha en sesión aparte (commits `b631c7b`, `7834b9f`, `efd57c2`):
+      sync real captura breakdowns reales de Meta (placement/edad/género/dispositivo/región)
+      via `_sync_real_breakdowns`; se distingue "sin audiencias" de "sin permiso" en logs/reporte;
+      `ReportBuilder` genera hallazgos y recomendaciones en texto (derivados de datos, no del LLM);
+      frontend con barras de distribución. **Sin tests** — pendiente cubrir en la próxima sesión.
+
+## Pendiente real (no una fase nueva, es la validación de lo ya construido)
+Todo P-2.1-2.7 está implementado y pasa tests con datos fake/mock, pero **nunca se
+corrió un sync real contra la Graph API de Meta con un token vigente** — el único
+intento real falló por token expirado antes de sincronizar. Hasta no confirmar esto
+contra Meta real, P-2 sigue siendo "código listo, sin validar en producción".
