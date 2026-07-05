@@ -59,6 +59,7 @@ async def get_master_brief_data(
         "narrative_pending": narrative is None,
         "narrative_generated_at": acc.narrative_generated_at.isoformat() if acc.narrative_generated_at else None,
         "narrative_model": acc.narrative_model,
+        "narrative_provider": acc.narrative_provider,
         "narrative_prompt_version": acc.narrative_prompt_version,
         "report": report,
         "campaigns_data": raw_data

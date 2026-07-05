@@ -134,6 +134,10 @@ async def test_ai_engine_analysis_and_planning(setup_test_data, db_session: Asyn
     actions = res_actions.scalars().all()
     assert len(actions) > 0
 
+    # AI-4: junto al modelo, se registra qué proveedor real sirvió la narrativa.
+    await db_session.refresh(ad_acc)
+    assert ad_acc.narrative_provider in ("openai", "gemini_direct", "openrouter")
+
 @pytest.mark.asyncio
 async def test_ai_executor_and_modifier(setup_test_data, db_session: AsyncSession):
     org_id, ad_acc_id = setup_test_data

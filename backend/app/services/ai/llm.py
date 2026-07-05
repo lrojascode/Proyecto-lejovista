@@ -20,14 +20,17 @@ class OpenRouterClient:
             self.api_key = settings.OPENAI_API_KEY
             self.base_url = "https://api.openai.com/v1/chat/completions"
             self.is_gemini_direct = False
+            self.provider = "openai"
         elif settings.GEMINI_API_KEY:
             self.api_key = settings.GEMINI_API_KEY
             self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
             self.is_gemini_direct = True
+            self.provider = "gemini_direct"
         else:
             self.api_key = api_key or settings.OPENROUTER_API_KEY
             self.base_url = "https://openrouter.ai/api/v1/chat/completions"
             self.is_gemini_direct = False
+            self.provider = "openrouter"
 
     async def analyze_campaigns(
         self, 

@@ -19,6 +19,10 @@ class AdAccount(Base):
     cached_narrative: Mapped[str] = mapped_column(Text, nullable=True)
     narrative_generated_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     narrative_model: Mapped[str] = mapped_column(String, nullable=True)
+    # Proveedor real que generó la narrativa (openai/gemini_direct/openrouter, ver
+    # OpenRouterClient.provider) — narrative_model por sí solo es ambiguo entre
+    # proveedores (AI-4, ver HANDOFF hallazgo 3.4/AI-4).
+    narrative_provider: Mapped[str] = mapped_column(String, nullable=True)
     narrative_prompt_version: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="ACTIVE")  # ACTIVE, EXPIRED, PAUSED
     spend_cap: Mapped[float] = mapped_column(Float, default=0.0)

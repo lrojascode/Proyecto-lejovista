@@ -88,6 +88,7 @@ class AIEngine:
             acc.cached_narrative = narrative
             acc.narrative_generated_at = datetime.datetime.utcnow()
             acc.narrative_model = org.ai_model or None
+            acc.narrative_provider = llm_client.provider
             acc.narrative_prompt_version = PROMPT_VERSION
             self.db.add(acc)
 
