@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 
 const card: React.CSSProperties = {
@@ -32,18 +34,25 @@ function Kpi({ label, value, highlight }: { label: string; value: string; highli
 function BreakdownTable({ title, data }: { title: string; data: Record<string, any> }) {
   const rows = Object.entries(data || {});
   if (rows.length === 0) return null;
+  // min-width: 0 es necesario porque los ítems de un grid no se encogen por
+  // debajo de su contenido mínimo por defecto — con nombres largos y sin
+  // espacios (ej. "facebook_facebook_reels_overlay") esto hacía que la tabla
+  // se saliera de su columna y se superpusiera con la siguiente.
+  // Columnas con ancho proporcional fijo: en table-layout:fixed sin esto, el
+  // ancho de cada columna se toma de la primera fila y queda impredecible.
+  const segCell: React.CSSProperties = { ...td, width: "40%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
   return (
-    <div>
+    <div style={{ minWidth: 0 }}>
       <h4 style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>{title}</h4>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead><tr><th style={th}>Segmento</th><th style={th}>Gasto</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th></tr></thead>
+      <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
+        <thead><tr><th style={{ ...th, width: "40%" }}>Segmento</th><th style={{ ...th, width: "20%" }}>Gasto</th><th style={{ ...th, width: "15%" }}>Conv.</th><th style={{ ...th, width: "25%" }}>Costo/Conv.</th></tr></thead>
         <tbody>
           {rows.map(([k, v]: [string, any]) => {
             const conv = v.conversions || 0;
             const cost = conv > 0 ? v.spend / conv : v.spend;
             return (
               <tr key={k}>
-                <td style={td}>{k}</td>
+                <td style={segCell} title={k.replace(/_/g, " ")}>{k.replace(/_/g, " ")}</td>
                 <td style={td}>{money(v.spend)}</td>
                 <td style={td}>{conv}</td>
                 <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(cost)}</td>
@@ -340,7 +349,9 @@ export default function Reporte() {
             <h2 style={{ ...h2, marginBottom: 0 }}>Diagnóstico de la IA</h2>
             <span className="badge badge-ai">Procesado por IA</span>
           </div>
-          <div style={{ whiteSpace: "pre-line", color: "var(--text-primary)", lineHeight: 1.6, fontSize: "0.9rem" }}>{data.narrative}</div>
+          <div className="narrative-content">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.narrative}</ReactMarkdown>
+          </div>
         </div>
       )}
     </div>

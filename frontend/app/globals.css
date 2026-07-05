@@ -478,6 +478,86 @@ select:focus-visible {
   }
 }
 
+/* Narrativa de la IA (Markdown renderizado con react-markdown en /reporte).
+   Antes se mostraba el texto crudo con los ** y ## literales — esto le da
+   tipografía real, coherente con el resto del design system y legible tanto
+   en pantalla como al exportar a PDF. */
+.narrative-content {
+  color: var(--text-primary);
+  line-height: 1.65;
+  font-size: 0.9rem;
+}
+
+.narrative-content > *:first-child { margin-top: 0; }
+.narrative-content > *:last-child { margin-bottom: 0; }
+
+.narrative-content h1,
+.narrative-content h2,
+.narrative-content h3 {
+  color: var(--color-paper);
+  font-weight: var(--font-weight-w590);
+  margin: 1.25rem 0 0.5rem;
+  line-height: 1.3;
+}
+
+.narrative-content h1 { font-size: 1.15rem; }
+.narrative-content h2 { font-size: 1.05rem; }
+.narrative-content h3 { font-size: 0.95rem; }
+
+.narrative-content p {
+  margin: 0 0 0.85rem;
+}
+
+.narrative-content strong {
+  color: var(--color-paper);
+  font-weight: var(--font-weight-w510);
+}
+
+.narrative-content ul,
+.narrative-content ol {
+  margin: 0 0 0.85rem;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.narrative-content li {
+  margin: 0;
+}
+
+.narrative-content hr {
+  border: none;
+  border-top: 1px solid var(--color-graphite);
+  margin: 1.25rem 0;
+}
+
+.narrative-content code {
+  background: var(--color-obsidian);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.85em;
+}
+
+.narrative-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.85rem;
+  font-size: 0.85rem;
+}
+
+.narrative-content th,
+.narrative-content td {
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+  border-bottom: 1px solid var(--color-graphite);
+}
+
+.narrative-content th {
+  color: var(--color-fog);
+  font-weight: var(--font-weight-w510);
+}
+
 /* Exportar a PDF vía "Imprimir" del navegador (ver botón en /reporte).
    Redefine los tokens de color base (no los acentos semánticos: verde/rojo/
    ámbar/violeta se mantienen igual, ya se leen bien sobre blanco) para que
