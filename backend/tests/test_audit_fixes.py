@@ -94,16 +94,21 @@ async def test_snapshot_unique_constraint(db_session: AsyncSession):
         await db_session.flush()
 
 
-# --- AI-2: el planner usa el presupuesto real del snapshot ---
+# --- AI-2: el planner usa el presupuesto real del snapshot y resuelve el adset real ---
 @pytest.mark.asyncio
 async def test_planner_uses_real_budget(db_session: AsyncSession):
     from app.services.ai.planner import AIPlanner
+    from app.models.adset_snapshot import AdsetSnapshot
     org, acc = await _make_org_and_account(db_session, slug="pl-org")
     today = datetime.date.today()
     db_session.add(CampaignSnapshot(
         ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
         campaign_name="Camp", status="ACTIVE", budget=80.0, spend=40.0,
         conversions=20, impressions=500, clicks=10, date=today,
+    ))
+    db_session.add(AdsetSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
+        adset_id="as1", name="Adset 1", date=today,
     ))
     insight = AIInsight(
         ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
@@ -120,6 +125,64 @@ async def test_planner_uses_real_budget(db_session: AsyncSession):
     assert len(budget_actions) == 1
     assert budget_actions[0].parameters["old_budget"] == 80.0   # real, no hardcodeado
     assert budget_actions[0].parameters["new_budget"] == 100.0  # +25%
+    # AI-2: la escritura real apunta al adset, no a la campaña.
+    assert budget_actions[0].target_adset_id == "as1"
+    assert budget_actions[0].planned_api_calls[0]["endpoint"] == "as1"
+
+
+# --- AI-2: sin un adset único y sin ambigüedad, no se propone la acción a ciegas ---
+@pytest.mark.asyncio
+async def test_planner_skips_modify_budget_without_unambiguous_adset(db_session: AsyncSession):
+    from app.services.ai.planner import AIPlanner
+    from app.models.adset_snapshot import AdsetSnapshot
+    org, acc = await _make_org_and_account(db_session, slug="pl-org-2")
+    today = datetime.date.today()
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
+        campaign_name="Camp", status="ACTIVE", budget=80.0, spend=40.0,
+        conversions=20, impressions=500, clicks=10, date=today,
+    ))
+    # Dos adsets vigentes para la misma campaña: ambiguo, no se debe resolver solo.
+    db_session.add(AdsetSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
+        adset_id="as1", name="Adset 1", date=today,
+    ))
+    db_session.add(AdsetSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
+        adset_id="as2", name="Adset 2", date=today,
+    ))
+    insight = AIInsight(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c1",
+        level="INFO", category="PERFORMANCE",
+        title="Excelente rendimiento: CPL a la baja",
+        description="El CPL bajó; se sugiere ampliar presupuesto.",
+        suggested_action_type="MODIFY_BUDGET",
+    )
+    db_session.add(insight)
+    await db_session.flush()
+
+    actions = await AIPlanner(db_session).plan_actions(acc, [insight])
+    assert [a for a in actions if a.action_type == "MODIFY_BUDGET"] == []
+
+
+# --- AI-2: el modifier escribe sobre el adset, no sobre la campaña, para MODIFY_BUDGET ---
+@pytest.mark.asyncio
+async def test_modifier_targets_adset_for_modify_budget(db_session: AsyncSession):
+    from app.services.meta_ads.modifier import MetaCampaignModifier
+    org, acc = await _make_org_and_account(db_session, slug="mod-org")
+    action = AIAction(
+        ad_account_id=acc.id, organization_id=org.id, action_type="MODIFY_BUDGET",
+        risk_level="MEDIUM", title="Subir presupuesto", description="desc",
+        target_campaign_id="camp_1", target_adset_id="as1", platform="META",
+        parameters={"old_budget": 80.0, "new_budget": 100.0},
+        status="APPROVED", confidence=0.8,
+    )
+    db_session.add(action)
+    await db_session.flush()
+
+    await MetaCampaignModifier(db_session).modify(acc, action)
+    # El backup (y por ende el target real de la escritura) usa el adset, no la campaña.
+    assert action.parameters["backup_state"]["id"] == "as1"
 
 
 # --- AI-6 / P-1: el executor marca la ejecución como simulada (write-back off) ---

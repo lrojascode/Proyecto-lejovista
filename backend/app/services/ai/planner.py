@@ -1,14 +1,20 @@
 import logging
 import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.ad_account import AdAccount
 from app.models.ai_insight import AIInsight
 from app.models.ai_action import AIAction
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.models.adset_snapshot import AdsetSnapshot
 
 logger = logging.getLogger("lejovista.planner")
+
+# Tipos de acción cuya escritura real en Meta ocurre a nivel de adset, no de
+# campaña (AI-2). PAUSE_CAMPAIGN/RESUME_CAMPAIGN sí son a nivel de campaña.
+ADSET_LEVEL_ACTIONS = {"MODIFY_BUDGET", "MODIFY_PLACEMENTS", "MODIFY_TARGETING"}
+
 
 class AIPlanner:
     def __init__(self, db: AsyncSession):
@@ -33,6 +39,20 @@ class AIPlanner:
             if s.campaign_id not in budget_map:
                 budget_map[s.campaign_id] = s.budget
 
+        # Mapa campaign_id -> adset_ids vigentes (según el snapshot más reciente de
+        # cada campaña). Se usa para resolver el target real de las escrituras a
+        # nivel de adset en vez de escribir sobre el nodo de campaña (AI-2).
+        adset_map: Dict[str, List[str]] = {}
+        latest_date_by_campaign: Dict[str, datetime.date] = {}
+        q_adsets = select(AdsetSnapshot).where(
+            AdsetSnapshot.ad_account_id == ad_account.id
+        ).order_by(AdsetSnapshot.date.desc())
+        res_adsets = await self.db.execute(q_adsets)
+        for a in res_adsets.scalars().all():
+            latest = latest_date_by_campaign.setdefault(a.campaign_id, a.date)
+            if a.date == latest:
+                adset_map.setdefault(a.campaign_id, []).append(a.adset_id)
+
         for ins in insights:
             if not ins.suggested_action_type:
                 continue
@@ -51,7 +71,9 @@ class AIPlanner:
                 continue # Ya hay un cambio de este tipo en cola
 
             # 2. Generar los detalles y parámetros según el tipo de acción
-            action = self._create_action_from_insight(ad_account, ins, budget_map.get(ins.campaign_id))
+            action = self._create_action_from_insight(
+                ad_account, ins, budget_map.get(ins.campaign_id), adset_map.get(ins.campaign_id, [])
+            )
             if action:
                 self.db.add(action)
                 actions.append(action)
@@ -62,12 +84,19 @@ class AIPlanner:
             
         return actions
 
-    def _create_action_from_insight(self, ad_account: AdAccount, insight: AIInsight, current_budget: Optional[float] = None) -> Optional[AIAction]:
+    def _create_action_from_insight(
+        self,
+        ad_account: AdAccount,
+        insight: AIInsight,
+        current_budget: Optional[float] = None,
+        adset_ids: Optional[List[str]] = None,
+    ) -> Optional[AIAction]:
         """
         Construye una instancia de AIAction en base al insight y sus métricas.
         """
         action_type = insight.suggested_action_type
         c_id = insight.campaign_id
+        adset_ids = adset_ids or []
 
         # Valores por defecto
         risk = "LOW"
@@ -77,6 +106,20 @@ class AIPlanner:
         planned_calls = []
         estimated_impact = ""
         confidence = 0.85
+        target_adset_id = None
+
+        # AI-2: las acciones a nivel de adset necesitan un adset_id real y sin
+        # ambigüedad para poder escribir con confianza. Si la campaña no tiene
+        # exactamente un adset vigente, no proponemos la acción a ciegas.
+        if action_type in ADSET_LEVEL_ACTIONS:
+            if len(adset_ids) != 1:
+                logger.warning(
+                    "%s omitido para campaña %s: se encontraron %d adsets vigentes "
+                    "(se requiere exactamente 1 para resolver el target sin ambigüedad).",
+                    action_type, c_id, len(adset_ids),
+                )
+                return None
+            target_adset_id = adset_ids[0]
 
         # Analizar el tipo de acción
         if action_type == "PAUSE_CAMPAIGN":
@@ -126,10 +169,10 @@ class AIPlanner:
                 "new_budget": new_budget
             }
 
-            # NOTA: el presupuesto en Meta suele vivir a nivel de adset. El adset ID
-            # real debe resolverse antes de habilitar el write-back (ver auditoría AI-2).
+            # AI-2: el presupuesto en Meta vive a nivel de adset, no de campaña —
+            # target_adset_id ya se resolvió arriba contra adset_snapshots reales.
             planned_calls = [
-                {"method": "POST", "endpoint": f"{c_id}", "body": {"daily_budget": int(new_budget * 100)}}
+                {"method": "POST", "endpoint": f"{target_adset_id}", "body": {"daily_budget": int(new_budget * 100)}}
             ]
 
         elif action_type == "MODIFY_PLACEMENTS":
@@ -141,7 +184,7 @@ class AIPlanner:
                 "new_placements": ["facebook_feed", "facebook_reels"]
             }
             planned_calls = [
-                {"method": "POST", "endpoint": f"{c_id}", "body": {"targeting": {"publisher_platforms": ["facebook", "facebook_reels"]}}}
+                {"method": "POST", "endpoint": f"{target_adset_id}", "body": {"targeting": {"publisher_platforms": ["facebook", "facebook_reels"]}}}
             ]
             estimated_impact = "El CPL promedio del adset podría bajar un 15-20% al remover placements caros."
             confidence = 0.90
@@ -197,6 +240,7 @@ class AIPlanner:
             title=title,
             description=description,
             target_campaign_id=c_id,
+            target_adset_id=target_adset_id,
             platform="META",
             parameters=parameters,
             planned_api_calls=planned_calls,

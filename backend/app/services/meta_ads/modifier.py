@@ -9,6 +9,19 @@ from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 
 logger = logging.getLogger("lejovista.modifier")
 
+# Acciones cuya escritura real en Meta ocurre a nivel de adset, no de campaña
+# (AI-2). Debe coincidir con ADSET_LEVEL_ACTIONS en app/services/ai/planner.py.
+ADSET_LEVEL_ACTIONS = {"MODIFY_BUDGET", "MODIFY_PLACEMENTS", "MODIFY_TARGETING"}
+
+
+def _resolve_target_id(action: AIAction) -> str | None:
+    """Elige el nodo de Meta correcto según el tipo de acción: adset para
+    presupuesto/targeting/placements, campaña para pausar/reanudar."""
+    if action.action_type in ADSET_LEVEL_ACTIONS:
+        return action.target_adset_id or action.target_campaign_id
+    return action.target_campaign_id or action.target_adset_id
+
+
 class MetaCampaignModifier:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -20,8 +33,8 @@ class MetaCampaignModifier:
         """
         limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
         token = ad_account.get_access_token()
-        
-        target_id = action.target_campaign_id or action.target_adset_id
+
+        target_id = _resolve_target_id(action)
         if not target_id:
             raise ValueError("Falta target_campaign_id o target_adset_id para la modificación.")
 
@@ -138,10 +151,10 @@ class MetaCampaignModifier:
 
         limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
         token = ad_account.get_access_token()
-        
-        target_id = action.target_campaign_id or action.target_adset_id
+
+        target_id = _resolve_target_id(action)
         endpoint = f"{target_id}"
-        
+
         # Construir post_data para restaurar el estado anterior
         post_data = {}
         
