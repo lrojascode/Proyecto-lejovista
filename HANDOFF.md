@@ -139,7 +139,7 @@ API y página `/reporte`). 33 tests backend + 7 frontend.
 | # | Hallazgo | Estado |
 |---|---|---|
 | P-1 | Aprobador honesto (simulado/real) | ✅ |
-| P-2 | Captura completa de reporting | ✅ **el núcleo completo** (P-2.1 a P-2.6, esta asistente) **+ P-2.7** (breakdowns reales, hallazgos/recomendaciones, sesión #2). Pendiente real: nunca se validó `_sync_real_data` contra la Graph API **real** — solo contra un fake limiter en tests, y contra la cuenta real el token expiró antes de poder confirmarlo. **Es la validación crítica pendiente**, no una feature nueva. |
+| P-2 | Captura completa de reporting | ✅ **Cerrado y validado contra la Graph API real** (2026-07-05). Se reconectó la cuenta `act_992953052009562` con un token nuevo y se corrió un sync FULL + INCREMENTAL reales: 48 adsets, 50 ads, 50 creativos, 25 audiencias y breakdowns (placement/edad/género/dispositivo/región) poblados con datos reales, confirmados vía `GET /reports/brief-data`. En el camino se encontró y arregló un bug real (ver hallazgo 3.8): `customaudiences` pedía un campo (`approximate_count`) que Meta ya no soporta, lo que devolvía 0 audiencias siempre, no por falta de permiso como decía el log. |
 
 ---
 
@@ -187,17 +187,33 @@ el rate limit *por cuenta* (200 calls/hora) hay que vigilarlo con cuentas reales
 
 **3.7 🟢 Archivos sueltos sin decisión tomada** (detalle en sección 5).
 
+**3.8 🔴 (RESUELTO 2026-07-05) `customaudiences` pedía un campo que ya no existe en la Graph API.**
+`_sync_real_inventory` (`backend/app/services/meta_ads/sync.py`) pedía el campo
+`approximate_count`, que Meta reemplazó hace tiempo por
+`approximate_count_lower_bound`/`approximate_count_upper_bound`. La API real devolvía
+`OAuthException code 100 "Tried accessing nonexisting field"`, que el código
+interpretaba como **falta de permiso del token** (log: "posible falta de permiso") —
+en realidad nunca se sincronizaron audiencias reales para ninguna cuenta, con o sin
+permiso. Confirmado y arreglado en esta sesión: tras el fix, la cuenta real pasó de
+0 a 25 audiencias sincronizadas. Este bug **solo se pudo encontrar validando contra
+la Graph API real** — el fake limiter de los tests nunca lo habría detectado porque
+el mock también usaba el nombre de campo viejo (ya corregido también en
+`test_audit_fixes.py`).
+
 ---
 
 ## 4. Qué falta — priorizado para la próxima sesión
 
-1. **Decidir sobre los cambios sin commitear** (routing LLM) — commitear con un test
-   mínimo, o completar, o descartar. (S)
-2. **Fix del bug de cooldown** (3.1). (S)
-3. **Validar P-2 contra Meta real**: conseguir un token vigente (idealmente
-   long-lived), reconectar la cuenta, correr un sync real, y confirmar que
-   adsets/ads/creativos/audiencias/breakdowns se pueblan de verdad — no solo en tests
-   con fake limiter. Esto es lo único que falta para dar por *realmente* cerrado P-2. (S, pero depende de tener el token)
+1. ✅ **Decidir sobre los cambios sin commitear** (routing LLM) — commiteado tal cual
+   el 2026-07-05, sin test (decisión del usuario). Pendiente menor: sigue sin test
+   (ver 3.3, ahora baja prioridad).
+2. ✅ **Fix del bug de cooldown** (3.1) — arreglado el 2026-07-05: el chequeo de
+   cuentas `ACTIVE` ahora corre antes de `enforce_cooldown`.
+3. ✅ **Validar P-2 contra Meta real** — hecho el 2026-07-05 con un token nuevo de
+   corta duración sobre `act_992953052009562`. Encontró y resolvió un bug real
+   (hallazgo 3.8, audiencias). **Nota:** el token usado no era long-lived; para
+   producción sigue haciendo falta el flujo de intercambio a token de larga duración
+   (60 días) — no se tocó ese flujo en esta sesión.
 4. **AI-2, cierre real**: resolver `target_adset_id` en el executor/modifier usando
    los `adset_snapshots` ya capturados, para poder considerar activar
    `ENABLE_META_WRITEBACK` con confianza. (M)
