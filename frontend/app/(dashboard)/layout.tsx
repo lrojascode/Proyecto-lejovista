@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
+import { getTenantSlugFromHostname } from "@/lib/config";
 import { api } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 import {
@@ -38,13 +39,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       setUserName(user.full_name);
       setOrgId(user.organization_id || "");
 
-      // Capturar subdominio
-      const hostParts = window.location.hostname.split(".");
-      if (hostParts.length > 1 && hostParts[0] !== "localhost" && hostParts[0] !== "www" && hostParts[0] !== "api") {
-        setOrgSlug(hostParts[0]);
-      } else {
-        setOrgSlug("cliente1");
-      }
+      // Capturar subdominio (solo si es un subdominio real de BASE_DOMAIN;
+      // en modo single-host o cualquier otro host esto da null y se usa
+      // el nombre de fallback, puramente cosmético).
+      setOrgSlug(getTenantSlugFromHostname(window.location.hostname) || "cliente1");
     } catch (e) {
       safeRedirect("/login");
       return;

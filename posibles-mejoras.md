@@ -44,3 +44,21 @@ redacte la frase final a partir de esos datos ya verificados — conserva AI-1
 - **Alertas proactivas por WebSocket/email cuando una campaña cruza un
   umbral crítico** (hoy las alertas solo se ven si el usuario entra al
   dashboard o corre el diagnóstico manualmente).
+
+---
+
+## Túnel para exponer la app (2026-07-05) — alternativa futura: Cloudflare Tunnel
+
+Para la prueba con el socio se implementó el modo túnel vía **ngrok** (dominio
+estático gratis, ver `TUNNEL.md`) en vez de Cloudflare Tunnel, porque el
+usuario tiene `lrojas.dev` registrado en name.com y **todavía no migrado a
+Cloudflare** (la migración de nameservers es gratis pero la propagación de
+DNS no es instantánea — no convenía para "probar hoy").
+
+Si en algún momento se migra `lrojas.dev` a Cloudflare, se puede reemplazar
+ngrok por Cloudflare Tunnel casi sin tocar código: el mismo
+`nginx/conf.d-tunnel/tunnel.conf` (ruteo por path, un solo hostname) sirve
+igual — solo cambia qué hostname apunta el túnel (`cloudflared tunnel run`
+en vez de `ngrok http`). Cloudflare Tunnel además permite subdominios
+comodín (`*.lrojas.dev`) si en el futuro se quiere volver al esquema
+multi-tenant por subdominio en vez del modo single-host.

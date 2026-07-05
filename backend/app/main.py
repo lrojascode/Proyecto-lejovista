@@ -56,10 +56,19 @@ app = FastAPI(
     title="LejoVista API",
     description="Backend de Análisis y Optimización Autónoma de Campañas con IA",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
 )
 
-# Configurar CORS para permitir requests de subdominios locales y producción
+# Configurar CORS para permitir requests de subdominios locales y producción.
+# TUNNEL_ORIGIN_REGEX permite sumar el hostname de un túnel (ngrok/Cloudflare)
+# sin hardcodear un dominio de terceros en el código versionado.
+_cors_origin_regex = r"^https?://(.*\.)?(localhost:3000|localhost|lrojas\.dev)$"
+if settings.TUNNEL_ORIGIN_REGEX:
+    _cors_origin_regex = f"({_cors_origin_regex})|({settings.TUNNEL_ORIGIN_REGEX})"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -67,7 +76,7 @@ app.add_middleware(
         "http://localhost",
         "https://lrojas.dev",
     ],
-    allow_origin_regex=r"^https?://(.*\.)?(localhost:3000|localhost|lrojas\.dev)$",
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

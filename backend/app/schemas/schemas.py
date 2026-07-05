@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
 
@@ -9,7 +9,7 @@ class UserLogin(BaseModel):
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8)
     full_name: str
     organization_slug: str # Crear org si no existe, o asignar
     organization_name: str

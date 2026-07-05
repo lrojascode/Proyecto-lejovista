@@ -1,4 +1,4 @@
-import { getApiUrl } from "./config";
+import { getApiUrl, getTenantSlugFromHostname } from "./config";
 
 // Intenta renovar el access token usando el refresh token guardado (S-9).
 async function tryRefresh(): Promise<boolean> {
@@ -43,15 +43,11 @@ async function apiRequest<T = any>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  // Si estamos en un subdominio, inyectamos el tenant slug para que el backend lo registre
+  // Si estamos en un subdominio real de BASE_DOMAIN, inyectamos el tenant
+  // slug para que el backend lo registre (cliente1.localhost, cliente1.lrojas.dev).
   if (typeof window !== "undefined") {
-    const hostname = window.location.hostname;
-    if (hostname.includes(".") && !hostname.startsWith("www.") && !hostname.startsWith("api.")) {
-      const parts = hostname.split(".");
-      // Para cliente1.localhost o cliente1.lrojas.dev
-      const slug = parts[0];
-      headers["X-Tenant-Slug"] = slug;
-    }
+    const slug = getTenantSlugFromHostname(window.location.hostname);
+    if (slug) headers["X-Tenant-Slug"] = slug;
   }
 
   const config: RequestInit = {

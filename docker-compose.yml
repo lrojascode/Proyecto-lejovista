@@ -137,6 +137,7 @@ services:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api.localhost}
         NEXT_PUBLIC_BASE_DOMAIN: ${NEXT_PUBLIC_BASE_DOMAIN:-localhost}
         NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
+        NEXT_PUBLIC_SINGLE_HOST_MODE: ${NEXT_PUBLIC_SINGLE_HOST_MODE:-false}
     restart: unless-stopped
     depends_on:
       - backend

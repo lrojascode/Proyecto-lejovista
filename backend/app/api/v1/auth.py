@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -13,9 +13,25 @@ from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
     decode_token, revoke_jti, is_revoked, get_current_user,
 )
+from app.utils.throttle import enforce_rate_limit
 from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Slugs que colisionan con server_name reservados en Nginx (ver nginx/conf.d/).
+RESERVED_ORG_SLUGS = {"api", "www", "admin", "localhost", "static"}
+
+
+def get_client_ip(request: Request) -> str:
+    """IP del cliente real detrás de un proxy (Nginx/túnel). No hay una lista
+    de proxies confiables configurada (deployment simple), así que se toma el
+    primer valor de X-Forwarded-For con fallback al socket directo — es una
+    señal suficiente para limitar fuerza bruta, no para autorización."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
 
 def enrich_user(user: User):
     # organization_id respeta el tenant activo de la sesión (property, S-8).
@@ -38,7 +54,17 @@ def enrich_user(user: User):
     }
 
 @router.post("/signup", response_model=TokenResponse)
-async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
+async def signup(user_in: UserCreate, request: Request, db: AsyncSession = Depends(get_db)):
+    # Sin esto, cualquiera con la URL puede spamear registros (más relevante
+    # una vez expuesta la app vía túnel/internet).
+    await enforce_rate_limit("signup", get_client_ip(request), max_attempts=5, window_seconds=3600)
+
+    if user_in.organization_slug.lower() in RESERVED_ORG_SLUGS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ese identificador de organización está reservado. Elige otro.",
+        )
+
     # 1. Comprobar si el email ya existe
     q_email = select(User).where(User.email == user_in.email)
     res_email = await db.execute(q_email)
@@ -96,7 +122,10 @@ async def signup(user_in: UserCreate, db: AsyncSession = Depends(get_db)):
     }
 
 @router.post("/login", response_model=TokenResponse)
-async def login(login_data: UserLogin, db: AsyncSession = Depends(get_db)):
+async def login(login_data: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
+    # Corta fuerza bruta de contraseña; permite ráfagas legítimas (typos).
+    await enforce_rate_limit("login", get_client_ip(request), max_attempts=10, window_seconds=300)
+
     q = select(User).options(selectinload(User.organizations)).where(User.email == login_data.email)
     res = await db.execute(q)
     user = res.scalar_one_or_none()

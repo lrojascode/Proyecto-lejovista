@@ -51,6 +51,16 @@ class Settings(BaseSettings):
     # archivarlos (ver app/services/snapshot_archiver.py).
     SNAPSHOT_RETENTION_DAYS: int = Field(default=180)
 
+    # /docs, /redoc y /openapi.json exponen el mapa completo de la API sin
+    # auth (default de FastAPI). Se apaga al exponer la app públicamente
+    # (ej. detrás de un túnel) — default True para no romper el uso local.
+    ENABLE_API_DOCS: bool = Field(default=True)
+
+    # Además de los orígenes fijos de abajo, se puede sumar un patrón extra
+    # (ej. el hostname de un túnel ngrok/Cloudflare) sin hardcodearlo en el
+    # código versionado.
+    TUNNEL_ORIGIN_REGEX: str = Field(default="")
+
     @property
     def SIMULATE_META_WRITES(self) -> bool:
         """True si NO se deben ejecutar escrituras reales en Meta."""
