@@ -582,3 +582,57 @@ async def test_report_builder_full_sections(db_session: AsyncSession):
     # ranking ordenado por costo/conversación ascendente
     costs = [c["cost_per_conv"] for c in report["campaigns"]]
     assert costs == sorted(costs)
+
+
+# --- D-3: archivado de snapshots viejos ---
+@pytest.mark.asyncio
+async def test_archive_old_snapshots_moves_old_rows(db_session: AsyncSession):
+    from app.services.snapshot_archiver import archive_old_snapshots
+    from app.models.adset_snapshot import AdsetSnapshot
+    from app.models.ad_snapshot import AdSnapshot
+    from app.models.snapshot_archive import (
+        CampaignSnapshotArchive, AdsetSnapshotArchive, AdSnapshotArchive,
+    )
+    from sqlalchemy import select, func
+
+    org, acc = await _make_org_and_account(db_session, slug="arch-org")
+    today = datetime.date.today()
+    old_date = today - datetime.timedelta(days=200)   # > retención por defecto (180)
+    recent_date = today - datetime.timedelta(days=5)   # dentro de la retención
+
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c-old",
+        campaign_name="Vieja", status="ACTIVE", date=old_date,
+    ))
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c-new",
+        campaign_name="Reciente", status="ACTIVE", date=recent_date,
+    ))
+    db_session.add(AdsetSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c-old",
+        adset_id="as-old", name="Adset viejo", date=old_date,
+    ))
+    db_session.add(AdSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c-old",
+        adset_id="as-old", ad_id="ad-old", name="Ad viejo", date=old_date,
+    ))
+    await db_session.commit()
+
+    counts = await archive_old_snapshots(db_session, retention_days=180)
+    assert counts["campaign_snapshots"] == 1
+    assert counts["adset_snapshots"] == 1
+    assert counts["ad_snapshots"] == 1
+
+    # La fila vieja se movió al archivo y desapareció de la tabla caliente.
+    hot = (await db_session.execute(select(CampaignSnapshot).where(
+        CampaignSnapshot.ad_account_id == acc.id))).scalars().all()
+    assert [c.campaign_id for c in hot] == ["c-new"]
+
+    archived = (await db_session.execute(select(CampaignSnapshotArchive).where(
+        CampaignSnapshotArchive.ad_account_id == acc.id))).scalars().all()
+    assert len(archived) == 1
+    assert archived[0].campaign_id == "c-old"
+    assert archived[0].organization_id == org.id
+
+    assert (await db_session.execute(select(func.count()).select_from(AdsetSnapshotArchive))).scalar() == 1
+    assert (await db_session.execute(select(func.count()).select_from(AdSnapshotArchive))).scalar() == 1

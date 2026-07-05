@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # hasta que esto sea true. Evita mutaciones accidentales con parámetros aún sin validar.
     ENABLE_META_WRITEBACK: bool = Field(default=False)
 
+    # D-3: días de retención de snapshots en las tablas calientes antes de
+    # archivarlos (ver app/services/snapshot_archiver.py).
+    SNAPSHOT_RETENTION_DAYS: int = Field(default=180)
+
     @property
     def SIMULATE_META_WRITES(self) -> bool:
         """True si NO se deben ejecutar escrituras reales en Meta."""

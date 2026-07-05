@@ -9,7 +9,8 @@ from app.workers.tasks import (
     schedule_all_analyses,
     sync_ad_account,
     run_ai_analysis,
-    execute_action_task
+    execute_action_task,
+    archive_old_snapshots_task,
 )
 
 def run_in_thread(func, *args, **kwargs):
@@ -160,7 +161,29 @@ async def test_execute_action_task(setup_worker_data, mocker):
         action_type = "PAUSE_CAMPAIGN"
         
     mock_execute_action.return_value = MockAction()
-    
+
     run_in_thread(execute_action_task, action_id)
-    
+
     mock_execute_action.assert_called_once()
+
+
+# --- I-2: colas dedicadas de Celery (sync/ai/creation) ---
+def test_celery_task_routes_assign_dedicated_queues():
+    from app.workers.celery_app import celery_app
+    routes = celery_app.conf.task_routes
+    assert routes["app.workers.tasks.sync_ad_account"]["queue"] == "sync"
+    assert routes["app.workers.tasks.schedule_all_syncs"]["queue"] == "sync"
+    assert routes["app.workers.tasks.run_ai_analysis"]["queue"] == "ai"
+    assert routes["app.workers.tasks.execute_action_task"]["queue"] == "ai"
+    assert routes["app.workers.creation_tasks.*"]["queue"] == "creation"
+
+
+def test_archive_old_snapshots_task_runs(mocker):
+    mock_archive = mocker.patch(
+        "app.workers.tasks.archive_old_snapshots", autospec=True
+    )
+    mock_archive.return_value = {"campaign_snapshots": 0, "adset_snapshots": 0, "ad_snapshots": 0}
+
+    run_in_thread(archive_old_snapshots_task)
+
+    mock_archive.assert_called_once()

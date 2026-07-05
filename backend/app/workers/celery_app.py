@@ -38,6 +38,8 @@ _TASK_ROUTES = {
     "app.workers.tasks.execute_action_task": {"queue": "ai"},
     # Creación de campañas/adsets/creativos/anuncios (flujo de escritura por pasos).
     "app.workers.creation_tasks.*": {"queue": "creation"},
+    # Mantenimiento de datos (D-3): sin apuro, va a la cola por defecto.
+    "app.workers.tasks.archive_old_snapshots_task": {"queue": "celery"},
 }
 
 # Configuración básica
@@ -64,6 +66,12 @@ celery_app.conf.update(
         "daily-ai-analysis": {
             "task": "app.workers.tasks.schedule_all_analyses",
             "schedule": crontab(hour=7, minute=0),
+            "args": ()
+        },
+        # D-3: archivado semanal de snapshots viejos (domingo 3:00 AM, hora Lima).
+        "weekly-snapshot-archival": {
+            "task": "app.workers.tasks.archive_old_snapshots_task",
+            "schedule": crontab(hour=3, minute=0, day_of_week=0),
             "args": ()
         }
     }

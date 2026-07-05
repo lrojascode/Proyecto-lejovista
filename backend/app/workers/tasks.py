@@ -11,6 +11,8 @@ from app.services.meta_ads.sync import MetaAdsSyncService
 from app.services.meta_ads.exceptions import TransientMetaError
 from app.services.ai.engine import AIEngine
 from app.services.ai.executor import AIExecutor
+from app.services.snapshot_archiver import archive_old_snapshots
+from app.config import settings
 from sqlalchemy import select
 
 logger = get_task_logger(__name__)
@@ -156,5 +158,17 @@ def execute_action_task(action_id: str):
             logger.info(f"Ejecutando acción {action.id} ({action.action_type}) en background...")
             updated_action = await executor.execute_action(acc, action)
             logger.info(f"Ejecución de acción {action.id} finalizada. Estado: {updated_action.status}")
-            
+
+    run_async(_impl())
+
+@celery_app.task(name="app.workers.tasks.archive_old_snapshots_task")
+def archive_old_snapshots_task():
+    """D-3: mueve a las tablas de archivo los snapshots más viejos que
+    SNAPSHOT_RETENTION_DAYS, para que campaign/adset/ad_snapshots no crezcan
+    sin límite. Corre semanalmente vía Celery Beat."""
+    async def _impl():
+        async with async_session() as db:
+            counts = await archive_old_snapshots(db, settings.SNAPSHOT_RETENTION_DAYS)
+            logger.info(f"Archivado de snapshots completado: {counts}")
+
     run_async(_impl())
