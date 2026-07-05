@@ -477,3 +477,41 @@ select:focus-visible {
     display: flex;
   }
 }
+
+/* Exportar a PDF vía "Imprimir" del navegador (ver botón en /reporte).
+   Redefine los tokens de color base (no los acentos semánticos: verde/rojo/
+   ámbar/violeta se mantienen igual, ya se leen bien sobre blanco) para que
+   todo el texto/fondo que use var(--color-*) o var(--text-*) pase a modo
+   claro automáticamente, sin pelear estilo por estilo contra los inline
+   styles de cada página. Oculta la navegación y deja las tarjetas a ancho
+   completo. */
+@media print {
+  :root {
+    --color-void: #ffffff;
+    --color-carbon: #ffffff;
+    --color-obsidian: #f7f7f8;
+    --color-graphite: #d8d8db;
+    --color-smoke: #b8b8bd;
+    --color-ash: #55585f;
+    --color-fog: #3d3f45;
+    --color-mist: #1c1d20;
+    --color-bone: #333438;
+    --color-paper: #0a0a0b;
+  }
+
+  .sidebar, .menu-toggle-btn, .no-print {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .glass-card, .card-subtle {
+    box-shadow: none !important;
+    border: 1px solid var(--color-graphite);
+    break-inside: avoid;
+  }
+}

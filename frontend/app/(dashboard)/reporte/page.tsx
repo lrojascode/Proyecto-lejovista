@@ -124,11 +124,16 @@ export default function Reporte() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
       {/* Header */}
-      <div>
-        <h1 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Reporte de Rendimiento</h1>
-        <p style={{ color: "var(--color-fog)", fontSize: "14px", marginTop: "4px" }}>
-          {data.ad_account_name} · <span className="mono">{r.account.external_account_id}</span> · últimos {r.window_days} días
-        </p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem", flexWrap: "wrap" }}>
+        <div>
+          <h1 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Reporte de Rendimiento</h1>
+          <p style={{ color: "var(--color-fog)", fontSize: "14px", marginTop: "4px" }}>
+            {data.ad_account_name} · <span className="mono">{r.account.external_account_id}</span> · últimos {r.window_days} días
+          </p>
+        </div>
+        <button onClick={() => window.print()} className="btn-secondary no-print">
+          Exportar PDF
+        </button>
       </div>
 
       {/* KPIs */}
