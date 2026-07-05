@@ -63,6 +63,85 @@ async def test_mock_narrative_uses_real_numbers():
     assert "S/.12.00" not in text
 
 
+# --- Routing multi-proveedor: OpenAI > Gemini directo > OpenRouter (fallback) ---
+@pytest.mark.asyncio
+async def test_llm_client_routes_to_openai_when_key_present(monkeypatch):
+    from app.services.ai.llm import OpenRouterClient
+    from app.config import settings
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test-openai")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+    client = OpenRouterClient()
+    assert client.api_key == "sk-test-openai"
+    assert client.base_url == "https://api.openai.com/v1/chat/completions"
+    assert client.is_gemini_direct is False
+
+
+@pytest.mark.asyncio
+async def test_llm_client_routes_to_gemini_direct_without_openai_key(monkeypatch):
+    from app.services.ai.llm import OpenRouterClient
+    from app.config import settings
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "gm-test-key")
+    client = OpenRouterClient()
+    assert client.api_key == "gm-test-key"
+    assert client.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    assert client.is_gemini_direct is True
+
+
+@pytest.mark.asyncio
+async def test_llm_client_falls_back_to_openrouter_without_own_keys(monkeypatch):
+    from app.services.ai.llm import OpenRouterClient
+    from app.config import settings
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "or-test-key")
+    client = OpenRouterClient()
+    assert client.api_key == "or-test-key"
+    assert client.base_url == "https://openrouter.ai/api/v1/chat/completions"
+    assert client.is_gemini_direct is False
+
+
+@pytest.mark.asyncio
+async def test_llm_client_strips_google_prefix_for_gemini_direct(monkeypatch):
+    """Gemini directo (endpoint compat OpenAI) no reconoce el prefijo 'google/' que
+    usa OpenRouter para namespacing de modelos — hay que pelarlo antes de enviarlo."""
+    import httpx
+    from app.services.ai.llm import OpenRouterClient
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "gm-test-key")
+
+    captured = {}
+
+    class _FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _FakeAsyncClient:
+        def __init__(self, *a, **kw):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *a):
+            return False
+        async def post(self, url, json=None, headers=None):
+            captured["url"] = url
+            captured["model"] = json["model"]
+            return _FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+
+    org = Organization(slug="gm-org", name="Gemini Org", ai_model="google/gemini-2.5-flash")
+    acc = AdAccount(organization_id="o", platform="META", external_account_id="1", name="Acc")
+    await OpenRouterClient().analyze_campaigns(org, acc, "sin alertas", {})
+
+    assert captured["model"] == "gemini-2.5-flash"  # sin el prefijo "google/"
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
 # --- AI-3: aviso explícito de histórico insuficiente ---
 @pytest.mark.asyncio
 async def test_capa2_flags_insufficient_history(db_session: AsyncSession):
