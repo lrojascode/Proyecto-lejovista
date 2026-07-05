@@ -347,6 +347,14 @@ a {
   border-color: rgba(235, 87, 87, 0.2);
 }
 
+/* Distingue contenido generado por el LLM del que sale directo de los datos
+   sincronizados (agregaciones/reglas, sin IA generativa de por medio). */
+.badge-ai {
+  background: rgba(139, 92, 246, 0.12);
+  color: var(--color-lavender);
+  border-color: rgba(139, 92, 246, 0.25);
+}
+
 /* Navegación del sidebar */
 .nav-item {
   display: flex;
@@ -429,7 +437,7 @@ select:focus-visible {
   flex-grow: 1;
   padding: 32px 40px;
   min-height: 100vh;
-  max-width: calc(var(--page-max-width) + 80px);
+  width: calc(100% - 260px);
   transition: padding var(--transition-normal), margin var(--transition-normal);
 }
 

@@ -331,7 +331,10 @@ export default function Reporte() {
       {/* Narrativa IA (si existe) */}
       {data.narrative && (
         <div style={card}>
-          <h2 style={h2}>Diagnóstico de la IA</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "0.75rem" }}>
+            <h2 style={{ ...h2, marginBottom: 0 }}>Diagnóstico de la IA</h2>
+            <span className="badge badge-ai">Procesado por IA</span>
+          </div>
           <div style={{ whiteSpace: "pre-line", color: "var(--text-primary)", lineHeight: 1.6, fontSize: "0.9rem" }}>{data.narrative}</div>
         </div>
       )}

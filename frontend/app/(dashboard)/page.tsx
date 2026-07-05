@@ -41,7 +41,7 @@ export default function DashboardPage() {
       setLoading(false);
     }
     try {
-      const history = await api.getApiCallHistory(10);
+      const history = await api.getApiCallHistory(30);
       setApiCallHistory(history || []);
     } catch (e) {
       console.error("Error fetching API call history:", e);
@@ -249,9 +249,9 @@ export default function DashboardPage() {
         {apiCallHistory.length === 0 ? (
           <p style={{ padding: 24, color: "var(--color-fog)", fontSize: 14 }}>Todavía no hay llamadas registradas.</p>
         ) : (
-          <div style={{ overflowX: "auto" }}>
+          <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: 460 }}>
             <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
-              <thead>
+              <thead style={{ position: "sticky", top: 0, background: "var(--color-carbon)", zIndex: 1 }}>
                 <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
                   <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Fecha/Hora</th>
                   <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Cuenta</th>
