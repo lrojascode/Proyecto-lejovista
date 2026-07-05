@@ -94,7 +94,7 @@ API y página `/reporte`). 33 tests backend + 7 frontend.
 |---|---|---|
 | A-1 | Tareas Celery no registradas | ✅ |
 | A-2 | Reintentos/backoff | ✅ |
-| A-3 | Consolidar 2 stacks de Meta | ❌ **Sigue abierto.** Verificado con grep: `master_brief_generator.py` y `gemini_client.py` **ya no los importa nadie** (código muerto — `ReportBuilder` los reemplazó). `meta_api_client.py` + `rate_limiter.py` (el otro) sí se usan (creación de campañas, S-10). Es decir: la consolidación se puede simplificar **borrando directamente** `master_brief_generator.py` y `gemini_client.py` en vez de "migrar" — ya no hacen nada. |
+| A-3 | Consolidar 2 stacks de Meta | ✅ **Cerrado (2026-07-05).** `master_brief_generator.py` y `gemini_client.py` borrados (código muerto confirmado — `ReportBuilder` los reemplazó). `meta_api_client.py` + `rate_limiter.py` (el otro stack) se quedan, los usa `campaigns.py` (creación de campañas, S-10). |
 | A-4 | GET de reportes sin efectos | ✅ |
 | A-5 | Loop de Celery robusto | ✅ |
 | A-6 | Testing | ✅ el núcleo, pero ⚠️ **la funcionalidad agregada en la sesión #2 (breakdowns reales, hallazgos/recomendaciones) no tiene ningún test.** El resumen de esa sesión dice "20 tests backend en verde" — la suite real tiene **33**, sin tests nuevos para esa lógica. No es mentira necesariamente (puede haber corrido un subconjunto), pero **no hay cobertura real de esas ~150 líneas nuevas de negocio**. |
@@ -103,7 +103,7 @@ API y página `/reporte`). 33 tests backend + 7 frontend.
 | # | Hallazgo | Estado |
 |---|---|---|
 | D-1/D-2 | Unicidad + índice en snapshots | ✅ |
-| D-3 | Particionado/archivado | ❌ **Sigue abierto.** Con adset/ad/breakdowns nuevos, hay 3 tablas más creciendo a diario — más urgente que antes. |
+| D-3 | Particionado/archivado | ✅ **Cerrado (2026-07-05)** con archivado periódico (no particionado nativo): `snapshot_archiver.py` + tablas `_archive` + Celery task semanal. Ver sección 4 punto 8. |
 | D-4 | Metadatos de narrativa | ✅ (pero ver AI-4 abajo: no registra el *proveedor* LLM) |
 | D-5 | `create_all` gateado / Alembic | ✅ en código, pero en la práctica `AUTO_CREATE_TABLES=true` sigue siendo el mecanismo real en local — cuidado, ya nos mordió dos veces (columnas/tablas nuevas no aparecían hasta hacer `--build`, no `restart`). |
 | D-6 | FK `ondelete` | ✅ |
@@ -112,9 +112,9 @@ API y página `/reporte`). 33 tests backend + 7 frontend.
 | # | Hallazgo | Estado |
 |---|---|---|
 | AI-1 | Cifras inventadas | ✅ mock corregido + prompt real con regla anti-alucinación. La sesión #1 (routing LLM) no rompió esto — la regla de sistema sigue en `analyze_campaigns`. |
-| AI-2 | Presupuesto real del planner / **resolver adset real antes del write-back** | 🟡 **Parcial.** El planner ya usa presupuesto real (fase 2, hecho hace tiempo). Lo que sigue sin cerrar es que `AIExecutor`/`MetaCampaignModifier` apunten al `adset_id` real — hoy los `planned_api_calls` siguen usando `campaign_id` como target. Ahora que P-2 captura adsets reales, **esto ya es técnicamente resoluble** — es la pieza que falta para poder activar `ENABLE_META_WRITEBACK` con confianza. |
+| AI-2 | Presupuesto real del planner / **resolver adset real antes del write-back** | ✅ **Cerrado (2026-07-05).** El planner resuelve `target_adset_id` real desde `adset_snapshots` (solo si no hay ambigüedad); el modifier/rollback apuntan al adset para presupuesto/targeting/placements y a la campaña para pausar/reanudar. `ENABLE_META_WRITEBACK` sigue en `false` — activarlo es una decisión de negocio aparte. |
 | AI-3 | Histórico insuficiente | ✅ |
-| AI-4 | Versionado de prompts | 🟡 `PROMPT_VERSION` existe, pero con el cambio de sesión #1 (multi-proveedor) **no se registra qué proveedor** (OpenAI/Gemini directo/OpenRouter) generó cada narrativa — solo el nombre del modelo (`org.ai_model`), que es ambiguo entre proveedores. Gap nuevo, no estaba en la auditoría original porque el multi-proveedor no existía. |
+| AI-4 | Versionado de prompts | ✅ **Cerrado (2026-07-05).** `PROMPT_VERSION` existe, y ahora `AdAccount.narrative_provider` (openai/gemini_direct/openrouter) se persiste junto a `narrative_model`, expuesto en `GET /reports/brief-data`. |
 | AI-5 | Umbrales centralizados | ✅ |
 | AI-6 | Flag de write-back | ✅ (`ENABLE_META_WRITEBACK=false`, sigue así — correcto, ver AI-2) |
 
@@ -122,7 +122,7 @@ API y página `/reporte`). 33 tests backend + 7 frontend.
 | # | Hallazgo | Estado |
 |---|---|---|
 | I-1 | Beat cron + jitter | ✅ |
-| I-2 | Colas dedicadas (sync/ai/creation) | ❌ **Sigue abierto**, no estaba en el handoff anterior como pendiente explícito pero tampoco se hizo — un solo worker/cola para todo. Con P-2 real ahora haciendo ~12-15 llamadas a Meta por sync (antes ~5-8: cuenta + campañas + insights + adsets + ads + adimages + audiencias + **5 breakdowns nuevos**), esto pesa más. |
+| I-2 | Colas dedicadas (sync/ai/creation) | ✅ **Cerrado (2026-07-05).** `task_routes` en `celery_app.py` + un worker dedicado por cola en `docker-compose.yml`/`.prod.yml`. Validado en vivo. |
 | I-3 | Healthchecks/límites/nginx | ✅ + reforzado (frontend a build de producción resuelve el OOM real que sufrías) |
 | I-4 | Logging + Sentry | ✅ |
 | I-5 | Cooldown en triggers | ✅ pero con **bug de orden confirmado en el código actual** (ver sección 3.1) |
@@ -204,33 +204,72 @@ el mock también usaba el nombre de campo viejo (ya corregido también en
 
 ## 4. Qué falta — priorizado para la próxima sesión
 
+Estado al **2026-07-05**: todos los ítems de esta lista quedaron cerrados salvo S-5
+(decisión de negocio explícitamente fuera de alcance). Detalle de cada uno:
+
 1. ✅ **Decidir sobre los cambios sin commitear** (routing LLM) — commiteado tal cual
-   el 2026-07-05, sin test (decisión del usuario). Pendiente menor: sigue sin test
-   (ver 3.3, ahora baja prioridad).
-2. ✅ **Fix del bug de cooldown** (3.1) — arreglado el 2026-07-05: el chequeo de
-   cuentas `ACTIVE` ahora corre antes de `enforce_cooldown`.
-3. ✅ **Validar P-2 contra Meta real** — hecho el 2026-07-05 con un token nuevo de
-   corta duración sobre `act_992953052009562`. Encontró y resolvió un bug real
-   (hallazgo 3.8, audiencias). **Nota:** el token usado no era long-lived; para
-   producción sigue haciendo falta el flujo de intercambio a token de larga duración
-   (60 días) — no se tocó ese flujo en esta sesión.
-4. **AI-2, cierre real**: resolver `target_adset_id` en el executor/modifier usando
-   los `adset_snapshots` ya capturados, para poder considerar activar
-   `ENABLE_META_WRITEBACK` con confianza. (M)
-5. **A-3, ahora más barato de lo que parecía**: borrar `master_brief_generator.py` y
-   `gemini_client.py` (código muerto confirmado) en vez de "migrar" — es casi gratis.
-   Lo que sigue vivo de Stack B (`meta_api_client.py`, `rate_limiter.py`,
-   `meta_credential_service.py`, `audit_log_service.py`) se queda, ya lo usa
-   `campaigns.py`. (S/M)
-6. **Tests para lo que agregó la sesión #2**: `_sync_real_breakdowns`, `_findings`,
-   `_recommendations`, y el routing LLM de la sesión #1. (M)
-7. **I-2, colas dedicadas** de Celery (sync/ai/creation), más relevante ahora que el
-   volumen de llamadas por sync subió (3.6). (M)
-8. **D-3, particionado**: cada vez más urgente con 3 tablas nuevas creciendo a diario. (M/L)
-9. **AI-4, registrar el proveedor LLM** junto a `narrative_model` (para no confundir
-   "gpt-5.4-mini vía OpenAI" con "vía OpenRouter"). (S)
-10. **S-5**: seguir sin tocar — es una decisión de negocio (deprecar `paso0`/`paso1`),
-    no una tarea de código para esta sesión salvo que el usuario lo pida.
+   el 2026-07-05, sin test al principio; el test se agregó después en el punto 6.
+2. ✅ **Fix del bug de cooldown** (3.1) — el chequeo de cuentas `ACTIVE` ahora corre
+   antes de `enforce_cooldown`.
+3. ✅ **Validar P-2 contra Meta real** — hecho con un token nuevo de corta duración
+   sobre `act_992953052009562`. Encontró y resolvió un bug real (hallazgo 3.8,
+   audiencias). **Nota pendiente:** el token usado no era long-lived; el flujo de
+   intercambio a token de 60 días para producción sigue sin implementarse.
+4. ✅ **AI-2, cierre real** — el planner resuelve `target_adset_id` desde
+   `adset_snapshots` reales (solo si hay exactamente un adset sin ambigüedad para la
+   campaña; si no, omite la acción en vez de adivinar). El modifier/rollback eligen
+   el nodo correcto según el tipo de acción (adset vs. campaña). Validado con tests
+   nuevos. **`ENABLE_META_WRITEBACK` sigue en `false`** — este cierre lo hace
+   técnicamente activable con confianza, pero activarlo es una decisión aparte que
+   no se tomó en esta sesión.
+5. ✅ **A-3** — `master_brief_generator.py` y `gemini_client.py` borrados (código
+   muerto confirmado). Resuelve también el hallazgo 3.2 (doble lectura de
+   `GEMINI_API_KEY`).
+6. ✅ **Tests para sesión #2 y routing LLM** — `_sync_real_breakdowns` y
+   `_findings`/`_recommendations` **ya tenían tests desde `efd57c2`** (el hallazgo
+   A-6 original estaba desactualizado, se verificó contra el código). Se agregaron
+   los tests que sí faltaban: routing OpenAI/Gemini directo/OpenRouter de
+   `OpenRouterClient`.
+7. ✅ **I-2, colas dedicadas** de Celery — `task_routes` en `celery_app.py` enruta
+   sync/ai/creation a colas separadas; `docker-compose.yml` y `.prod.yml` levantan
+   un worker por cola. Validado en vivo (sync corrió en `celery-worker-sync`,
+   encadenó IA en `celery-worker-ai`).
+8. ✅ **D-3, archivado** — en vez de particionado nativo de Postgres (exige migrar
+   PKs/constraints de tablas en producción), se implementó archivado periódico:
+   `snapshot_archiver.py` mueve a tablas `_archive` (sin FKs) las filas más viejas
+   que `SNAPSHOT_RETENTION_DAYS` (180 por defecto) y las borra de la tabla caliente.
+   Celery task semanal vía Beat. Validado en vivo.
+9. ✅ **AI-4, proveedor LLM** — `OpenRouterClient.provider` (openai/gemini_direct/
+   openrouter) se persiste en `AdAccount.narrative_provider` junto a
+   `narrative_model`, expuesto en `GET /reports/brief-data`. Validado en vivo:
+   `narrative_model=gpt-5.4-mini`, `narrative_provider=openai`.
+10. **S-5**: sigue sin tocar — decisión de negocio (deprecar `paso0`/`paso1`), no una
+    tarea de código salvo que el usuario lo pida explícitamente.
+
+### 4.1 — Features nuevas pedidas por el usuario (2026-07-05)
+
+- ✅ **Selector de modelo de IA dinámico en Preferencias**: antes mostraba 4 modelos
+  fijos de Gemini/Claude vía OpenRouter aunque el backend podía estar enrutando a
+  OpenAI o Gemini directo — se podía guardar un modelo que el proveedor activo ni
+  soporta. `GET /organizations/ai-models` expone el proveedor realmente activo
+  (según qué API key está configurada) y solo sus modelos válidos
+  (`MODELS_BY_PROVIDER` en `llm.py`); el frontend puebla el `<select>` con eso y
+  muestra qué proveedor detectó. Validado en navegador: con `OPENAI_API_KEY`
+  configurada, el selector muestra exactamente gpt-5.4-mini/gpt-5.4/gpt-5.4-nano.
+- ✅ **Historial de llamadas a la API de Meta en el dashboard**: `api_call_logs` ya
+  se poblaba (vía `rate_limiter.py`) pero no había endpoint ni UI para verlo.
+  `GET /campaigns/api-call-history?limit=10` (scopeado por tenant) + tabla al final
+  del dashboard principal (fecha/hora, cuenta, método, endpoint, status). Validado
+  en navegador con datos reales de la cuenta conectada.
+
+### 4.2 — Limpieza de archivos sueltos (sección 5 de este documento)
+
+- ✅ `informe-rendimiento-jun2026.html` — commiteado, se conserva como referencia.
+- ✅ `auditoria2026-opus4.6.md`, `backend/test_db.py` — borrados (ya incorporados/
+  redundantes).
+- ✅ `auditoria26.md`, `plan.md` — se confirmó y commiteó su borrado.
+- ✅ `status.md` — se descartaron los cambios sin commitear (eran una versión más
+  vieja/simple que la ya commiteada, confirmado con el usuario antes de tocarlo).
 
 ---
 
