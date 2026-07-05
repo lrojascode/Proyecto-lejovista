@@ -16,8 +16,18 @@ PROMPT_VERSION = "master-brief-v1"
 
 class OpenRouterClient:
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.OPENROUTER_API_KEY
-        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+        if settings.OPENAI_API_KEY:
+            self.api_key = settings.OPENAI_API_KEY
+            self.base_url = "https://api.openai.com/v1/chat/completions"
+            self.is_gemini_direct = False
+        elif settings.GEMINI_API_KEY:
+            self.api_key = settings.GEMINI_API_KEY
+            self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+            self.is_gemini_direct = True
+        else:
+            self.api_key = api_key or settings.OPENROUTER_API_KEY
+            self.base_url = "https://openrouter.ai/api/v1/chat/completions"
+            self.is_gemini_direct = False
 
     async def analyze_campaigns(
         self, 
@@ -71,6 +81,9 @@ class OpenRouterClient:
         )
 
         model = org.ai_model or settings.DEFAULT_AI_MODEL
+        if self.is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
         payload = {
             "model": model,
             "temperature": 0.2,  # menor creatividad => menos invención de cifras
