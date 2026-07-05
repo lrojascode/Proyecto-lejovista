@@ -7,10 +7,12 @@ export default function Settings() {
   const [org, setOrg] = useState<any>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Settings Form States
   const [aiModel, setAiModel] = useState("google/gemini-3.5-flash");
   const [maxBudget, setMaxBudget] = useState(1000);
+  const [aiModels, setAiModels] = useState<{ value: string; label: string }[]>([]);
+  const [aiProvider, setAiProvider] = useState<string>("");
   
   // Connection Form States
   const [accName, setAccName] = useState("");
@@ -26,9 +28,16 @@ export default function Settings() {
       const accountsData = await api.getAdAccounts();
       setOrg(orgData);
       setAccounts(accountsData);
-      
-      setAiModel(orgData.ai_model);
       setMaxBudget(orgData.max_budget);
+
+      // Solo se ofrecen los modelos del proveedor de IA realmente activo
+      // (según qué API key esté configurada en el backend), para no guardar
+      // un modelo que el proveedor activo no reconocería.
+      const modelsData = await api.getAiModels();
+      setAiProvider(modelsData.active_provider);
+      setAiModels(modelsData.models);
+      const isKnownModel = modelsData.models.some((m: any) => m.value === orgData.ai_model);
+      setAiModel(isKnownModel ? orgData.ai_model : modelsData.models[0]?.value ?? orgData.ai_model);
     } catch (e) {
       console.error("Error fetching settings:", e);
     } finally {
@@ -106,17 +115,23 @@ export default function Settings() {
               <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
                 Modelo de IA Preferido
               </label>
-              <select 
-                className="form-input" 
-                value={aiModel} 
+              <select
+                className="form-input"
+                value={aiModel}
                 onChange={(e) => setAiModel(e.target.value)}
                 style={{ background: "var(--color-obsidian)" }}
               >
-                <option value="google/gemini-3.5-flash">Gemini 3.5 Flash (Más rápido y avanzado)</option>
-                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash (Estándar)</option>
-                <option value="google/gemini-2.5-pro">Gemini 2.5 Pro (Avanzado)</option>
-                <option value="anthropic/claude-3-5-sonnet">Claude 3.5 Sonnet (Premium)</option>
+                {aiModels.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
               </select>
+              {aiProvider && (
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
+                  Proveedor activo detectado: <strong>{
+                    { openai: "OpenAI", gemini_direct: "Gemini (directo)", openrouter: "OpenRouter" }[aiProvider] ?? aiProvider
+                  }</strong>. Solo se muestran los modelos que este proveedor soporta.
+                </span>
+              )}
             </div>
 
             <div>

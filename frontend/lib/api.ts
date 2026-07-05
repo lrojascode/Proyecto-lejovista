@@ -112,6 +112,7 @@ export const api = {
   // --- ORGANIZATIONS & ACCOUNTS ---
   getOrg: () => apiRequest("/api/v1/organizations/my", "GET"),
   updateOrg: (data: any) => apiRequest("/api/v1/organizations/my", "PUT", data),
+  getAiModels: () => apiRequest("/api/v1/organizations/ai-models", "GET"),
   getAdAccounts: () => apiRequest("/api/v1/organizations/my/ad-accounts", "GET"),
   connectAdAccount: (data: any) => apiRequest("/api/v1/organizations/my/ad-accounts", "POST", data),
 
@@ -119,6 +120,7 @@ export const api = {
   getRecentCampaigns: () => apiRequest("/api/v1/campaigns/recent", "GET"),
   getCampaignHistory: (campaignId: string) => apiRequest(`/api/v1/campaigns/${campaignId}/history`, "GET"),
   triggerSync: () => apiRequest("/api/v1/campaigns/sync-trigger", "POST"),
+  getApiCallHistory: (limit: number = 10) => apiRequest(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
 
   // --- INSIGHTS ---
   getInsights: () => apiRequest("/api/v1/insights", "GET"),

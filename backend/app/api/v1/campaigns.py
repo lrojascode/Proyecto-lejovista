@@ -5,6 +5,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ad_account import AdAccount
+from app.models.api_call_log import APICallLog
 from app.schemas.schemas import CampaignSnapshotResponse
 from app.utils.security import get_current_user
 from app.utils.throttle import enforce_cooldown
@@ -61,6 +62,36 @@ async def list_recent_campaign_snapshots(
             latest_snapshots.append(s)
             
     return latest_snapshots
+
+@router.get("/api-call-history")
+async def list_api_call_history(
+    limit: int = 10,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Últimas llamadas a la API de Meta hechas por las cuentas del tenant (auditoría
+    visible en el dashboard: cuándo se sincronizó, qué se pidió, si falló).
+    """
+    q = (
+        select(APICallLog, AdAccount.name)
+        .join(AdAccount, APICallLog.ad_account_id == AdAccount.id)
+        .where(AdAccount.organization_id == current_user.organization_id)
+        .order_by(desc(APICallLog.timestamp))
+        .limit(min(limit, 50))
+    )
+    res = await db.execute(q)
+    return [
+        {
+            "id": log.id,
+            "ad_account_name": acc_name,
+            "method": log.method,
+            "endpoint": log.endpoint,
+            "status_code": log.status_code,
+            "timestamp": log.timestamp.isoformat(),
+        }
+        for log, acc_name in res.all()
+    ]
 
 @router.get("/{campaign_id}/history", response_model=List[CampaignSnapshotResponse])
 async def get_campaign_history(

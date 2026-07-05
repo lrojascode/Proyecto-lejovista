@@ -13,6 +13,31 @@ logger = logging.getLogger("lejovista.llm")
 # poder trazar qué versión generó cada informe (AI-4).
 PROMPT_VERSION = "master-brief-v1"
 
+# Modelos válidos por proveedor, para que el selector de Preferencias solo
+# muestre los que realmente puede usar el proveedor activo (ver
+# GET /organizations/ai-models). El proveedor activo depende de qué API key
+# esté configurada (OPENAI_API_KEY > GEMINI_API_KEY > OPENROUTER_API_KEY),
+# no de lo que elija cada organización — antes se podía guardar un modelo de
+# un proveedor distinto al que realmente atendía las llamadas.
+MODELS_BY_PROVIDER = {
+    "openai": [
+        {"value": "gpt-5.4-mini", "label": "GPT-5.4 Mini (rápido y económico)"},
+        {"value": "gpt-5.4", "label": "GPT-5.4 (estándar)"},
+        {"value": "gpt-5.4-nano", "label": "GPT-5.4 Nano (el más rápido)"},
+    ],
+    "gemini_direct": [
+        {"value": "gemini-2.5-flash", "label": "Gemini 2.5 Flash (estándar)"},
+        {"value": "gemini-2.5-pro", "label": "Gemini 2.5 Pro (avanzado)"},
+        {"value": "gemini-3.5-flash", "label": "Gemini 3.5 Flash (más rápido y avanzado)"},
+    ],
+    "openrouter": [
+        {"value": "google/gemini-3.5-flash", "label": "Gemini 3.5 Flash (más rápido y avanzado)"},
+        {"value": "google/gemini-2.5-flash", "label": "Gemini 2.5 Flash (estándar)"},
+        {"value": "google/gemini-2.5-pro", "label": "Gemini 2.5 Pro (avanzado)"},
+        {"value": "anthropic/claude-3-5-sonnet", "label": "Claude 3.5 Sonnet (premium)"},
+    ],
+}
+
 
 class OpenRouterClient:
     def __init__(self, api_key: Optional[str] = None):

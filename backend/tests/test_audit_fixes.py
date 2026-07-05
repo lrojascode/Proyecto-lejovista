@@ -636,3 +636,72 @@ async def test_archive_old_snapshots_moves_old_rows(db_session: AsyncSession):
 
     assert (await db_session.execute(select(func.count()).select_from(AdsetSnapshotArchive))).scalar() == 1
     assert (await db_session.execute(select(func.count()).select_from(AdSnapshotArchive))).scalar() == 1
+
+
+# --- Selector de modelo de IA: solo ofrece modelos del proveedor realmente activo ---
+@pytest.mark.asyncio
+async def test_ai_models_endpoint_reflects_active_provider(async_client: AsyncClient, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+
+    signup_res = await async_client.post("/api/v1/auth/signup", json={
+        "email": "aimodels@example.com", "password": "securepassword123",
+        "full_name": "AI Models User", "organization_slug": "ai-models-org",
+        "organization_name": "AI Models Org",
+    })
+    token = signup_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    res = await async_client.get("/api/v1/organizations/ai-models", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["active_provider"] == "openai"
+    values = [m["value"] for m in data["models"]]
+    assert values == ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"]
+
+
+# --- Historial de llamadas a la API de Meta en el dashboard ---
+@pytest.mark.asyncio
+async def test_api_call_history_scoped_to_tenant(async_client: AsyncClient, db_session: AsyncSession):
+    from app.models.api_call_log import APICallLog
+
+    org, acc = await _make_org_and_account(db_session, slug="hist-org")
+    other_org, other_acc = await _make_org_and_account(db_session, slug="hist-org-2")
+    db_session.add(APICallLog(
+        ad_account_id=acc.id, method="GET", endpoint=f"{acc.external_account_id}/insights",
+        status_code=200, response_preview="ok",
+    ))
+    db_session.add(APICallLog(
+        ad_account_id=other_acc.id, method="GET", endpoint="otro-tenant/insights",
+        status_code=200, response_preview="ok",
+    ))
+    await db_session.commit()
+
+    signup_res = await async_client.post("/api/v1/auth/signup", json={
+        "email": "histuser@example.com", "password": "securepassword123",
+        "full_name": "Hist User", "organization_slug": "hist-user-org",
+        "organization_name": "Hist User Org",
+    })
+    # El usuario nuevo pertenece a su propia org, no a "hist-org" — para probar
+    # el scoping usamos directamente el organization_id de la fixture en vez del
+    # usuario recién creado.
+    token = signup_res.json()["access_token"]
+
+    # Ligamos manualmente al usuario a la organización de la fixture para probar el filtro.
+    from app.models.user import User
+    from sqlalchemy import select as sa_select
+    user = (await db_session.execute(
+        sa_select(User).where(User.email == "histuser@example.com")
+    )).scalar_one()
+    from app.models.organization_user import OrganizationUser
+    db_session.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    await db_session.commit()
+
+    headers = {"Authorization": f"Bearer {token}", "X-Tenant-Slug": "hist-org"}
+    res = await async_client.get("/api/v1/campaigns/api-call-history?limit=10", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    assert data[0]["endpoint"] == f"{acc.external_account_id}/insights"
+    assert data[0]["ad_account_name"] == acc.name

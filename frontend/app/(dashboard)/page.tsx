@@ -28,6 +28,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [apiCallHistory, setApiCallHistory] = useState<any[]>([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -38,6 +39,12 @@ export default function DashboardPage() {
       console.error("Error fetching dashboard data:", e);
     } finally {
       setLoading(false);
+    }
+    try {
+      const history = await api.getApiCallHistory(10);
+      setApiCallHistory(history || []);
+    } catch (e) {
+      console.error("Error fetching API call history:", e);
     }
   };
 
@@ -231,6 +238,49 @@ export default function DashboardPage() {
           </div>
         </>
       )}
+
+      <div className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{
+          padding: "16px 24px", borderBottom: "1px solid var(--color-graphite)",
+        }}>
+          <h2 style={{ fontSize: 16, fontWeight: 510 }}>Historial de Llamadas a la API de Meta</h2>
+          <p style={{ color: "var(--color-fog)", fontSize: 13, marginTop: 4 }}>Últimas {apiCallHistory.length} solicitudes registradas, para auditar cuándo y qué se sincronizó.</p>
+        </div>
+        {apiCallHistory.length === 0 ? (
+          <p style={{ padding: 24, color: "var(--color-fog)", fontSize: 14 }}>Todavía no hay llamadas registradas.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
+                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Fecha/Hora</th>
+                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Cuenta</th>
+                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Método</th>
+                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Endpoint</th>
+                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "center" }}>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {apiCallHistory.map((call) => (
+                  <tr key={call.id} style={{ borderBottom: "1px solid var(--color-graphite)" }}>
+                    <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-fog)" }}>
+                      {new Date(call.timestamp).toLocaleString()}
+                    </td>
+                    <td style={{ padding: "12px 24px", fontSize: 14, color: "var(--color-mist)" }}>{call.ad_account_name}</td>
+                    <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-fog)" }}>{call.method}</td>
+                    <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-mist)" }}>{call.endpoint}</td>
+                    <td style={{ padding: "12px 24px", textAlign: "center" }}>
+                      <span className={`badge ${call.status_code >= 200 && call.status_code < 300 ? 'badge-success' : 'badge-danger'}`}>
+                        {call.status_code}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

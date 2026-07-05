@@ -8,9 +8,21 @@ from app.models.ad_account import AdAccount
 from app.schemas.schemas import OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse
 from app.utils.security import get_current_user
 from app.workers.tasks import sync_ad_account
+from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from typing import List
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
+
+@router.get("/ai-models")
+async def get_available_ai_models(current_user: User = Depends(get_current_user)):
+    """
+    Modelos de IA que el selector de Preferencias debería ofrecer: solo los del
+    proveedor realmente activo (según qué API key esté configurada), para que
+    la organización no pueda guardar un modelo que el proveedor activo no
+    reconoce (ver AI-4/hallazgo del selector estático).
+    """
+    provider = OpenRouterClient().provider
+    return {"active_provider": provider, "models": MODELS_BY_PROVIDER[provider]}
 
 @router.get("/my", response_model=OrganizationResponse)
 async def get_my_organization(
