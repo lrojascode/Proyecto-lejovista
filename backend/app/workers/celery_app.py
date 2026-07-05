@@ -22,6 +22,24 @@ celery_app = Celery(
     ]
 )
 
+# Colas dedicadas (I-2): antes todo corría en una sola cola/worker. Con P-2 real
+# haciendo ~12-15 llamadas a Meta por sync (vs. ~5-8 antes), un pico de syncs podía
+# dejar sin turno a la ejecución de acciones de IA (escrituras aprobadas por el
+# usuario) o a la creación de campañas. Cada tipo de trabajo va a su propia cola;
+# los workers se escalan de forma independiente (ver docker-compose.yml).
+_TASK_ROUTES = {
+    # Sincronización con Meta (lecturas: cuentas, campañas, adsets, breakdowns...).
+    "app.workers.tasks.schedule_all_syncs": {"queue": "sync"},
+    "app.workers.tasks.sync_ad_account": {"queue": "sync"},
+    "app.workers.sync_tasks.*": {"queue": "sync"},
+    # Motor de IA (análisis + ejecución de acciones aprobadas contra Meta).
+    "app.workers.tasks.schedule_all_analyses": {"queue": "ai"},
+    "app.workers.tasks.run_ai_analysis": {"queue": "ai"},
+    "app.workers.tasks.execute_action_task": {"queue": "ai"},
+    # Creación de campañas/adsets/creativos/anuncios (flujo de escritura por pasos).
+    "app.workers.creation_tasks.*": {"queue": "creation"},
+}
+
 # Configuración básica
 celery_app.conf.update(
     task_serializer="json",
@@ -29,7 +47,9 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="America/Lima",
     enable_utc=True,
-    
+    task_routes=_TASK_ROUTES,
+    task_default_queue="celery",
+
     # Programación de Tareas Periódicas (Celery Beat).
     # timezone=America/Lima (arriba) → crontab evalúa en hora local, sin derivar
     # con reinicios del contenedor. El fan-out se escalona con jitter en las tareas.

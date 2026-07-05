@@ -54,9 +54,13 @@ services:
     mem_limit: 512m
     cpus: 1.0
 
-  celery-worker:
+  # I-2: colas dedicadas. Antes un único worker/cola atendía sync + IA + creación de
+  # campañas; con P-2 real haciendo ~12-15 llamadas a Meta por sync, un pico de syncs
+  # podía retrasar la ejecución de acciones de IA o la creación de campañas. Cada
+  # worker atiende solo su cola (ver task_routes en app/workers/celery_app.py).
+  celery-worker-sync:
     build: ./backend
-    command: watchfiles "celery -A app.workers worker --loglevel=info --concurrency=2" app
+    command: watchfiles "celery -A app.workers worker -Q sync --loglevel=info --concurrency=2 --hostname=sync@%h" app
     restart: unless-stopped
     depends_on:
       backend:
@@ -65,20 +69,62 @@ services:
         condition: service_healthy
     env_file: .env
     healthcheck:
-      test: ["CMD-SHELL", "celery -A app.workers inspect ping || exit 1"]
+      test: ["CMD-SHELL", "celery -A app.workers inspect ping -d sync@$$HOSTNAME || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
-    mem_limit: 512m
-    cpus: 1.0
+    mem_limit: 384m
+    cpus: 0.75
+
+  celery-worker-ai:
+    build: ./backend
+    command: watchfiles "celery -A app.workers worker -Q ai --loglevel=info --concurrency=1 --hostname=ai@%h" app
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers inspect ping -d ai@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 256m
+    cpus: 0.5
+
+  celery-worker-creation:
+    build: ./backend
+    command: watchfiles "celery -A app.workers worker -Q creation,celery --loglevel=info --concurrency=1 --hostname=creation@%h" app
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers inspect ping -d creation@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    mem_limit: 256m
+    cpus: 0.5
 
   celery-beat:
     build: ./backend
     command: celery -A app.workers beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     restart: unless-stopped
     depends_on:
-      celery-worker:
+      celery-worker-sync:
+        condition: service_started
+      celery-worker-ai:
+        condition: service_started
+      celery-worker-creation:
         condition: service_started
     env_file: .env
     mem_limit: 256m

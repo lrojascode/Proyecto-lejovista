@@ -34,9 +34,27 @@ services:
     expose:
       - "8000"
 
-  celery-worker:
+  # I-2: colas dedicadas (sync/ai/creation) — ver app/workers/celery_app.py (task_routes)
+  # y la nota equivalente en docker-compose.yml.
+  celery-worker-sync:
     build: ./backend
-    command: celery -A app.workers worker --loglevel=info --concurrency=2
+    command: celery -A app.workers worker -Q sync --loglevel=info --concurrency=2 --hostname=sync@%h
+    restart: unless-stopped
+    depends_on:
+      - backend
+    env_file: .env
+
+  celery-worker-ai:
+    build: ./backend
+    command: celery -A app.workers worker -Q ai --loglevel=info --concurrency=1 --hostname=ai@%h
+    restart: unless-stopped
+    depends_on:
+      - backend
+    env_file: .env
+
+  celery-worker-creation:
+    build: ./backend
+    command: celery -A app.workers worker -Q creation,celery --loglevel=info --concurrency=1 --hostname=creation@%h
     restart: unless-stopped
     depends_on:
       - backend
@@ -47,7 +65,9 @@ services:
     command: celery -A app.workers beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     restart: unless-stopped
     depends_on:
-      - celery-worker
+      - celery-worker-sync
+      - celery-worker-ai
+      - celery-worker-creation
     env_file: .env
 
   frontend:
