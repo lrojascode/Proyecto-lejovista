@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MTV Cables — Informe de Rendimiento | Jun 2026</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; color: #1c1e21; }
+
+  .header { background: linear-gradient(135deg, #1877f2, #0a5cc7); color: white; padding: 30px 40px; }
+  .header h1 { font-size: 26px; font-weight: 700; }
+  .header p { font-size: 13px; opacity: 0.85; margin-top: 4px; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+
+  /* RESUMEN EJECUTIVO */
+  .resumen { background: white; border-radius: 12px; padding: 28px; margin-bottom: 24px; border-left: 5px solid #1877f2; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+  .resumen h2 { font-size: 18px; color: #1877f2; margin-bottom: 16px; }
+  .resumen-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 20px; }
+  .kpi { background: #f0f4ff; border-radius: 10px; padding: 16px; text-align: center; }
+  .kpi .valor { font-size: 24px; font-weight: 800; color: #1877f2; }
+  .kpi .label { font-size: 12px; color: #606770; margin-top: 4px; }
+
+  .hallazgos { background: #fff8e1; border: 1px solid #ffc107; border-radius: 10px; padding: 16px; }
+  .hallazgos h3 { font-size: 14px; font-weight: 700; color: #e65100; margin-bottom: 10px; }
+  .hallazgos ul { list-style: none; }
+  .hallazgos ul li { font-size: 13px; padding: 4px 0; padding-left: 20px; position: relative; }
+  .hallazgos ul li::before { content: '→'; position: absolute; left: 0; color: #e65100; font-weight: bold; }
+
+  .recomendaciones { background: #e8f5e9; border: 1px solid #4caf50; border-radius: 10px; padding: 16px; margin-top: 12px; }
+  .recomendaciones h3 { font-size: 14px; font-weight: 700; color: #1b5e20; margin-bottom: 10px; }
+  .recomendaciones ul { list-style: none; }
+  .recomendaciones ul li { font-size: 13px; padding: 4px 0; padding-left: 20px; position: relative; }
+  .recomendaciones ul li::before { content: '✓'; position: absolute; left: 0; color: #2e7d32; font-weight: bold; }
+
+  /* ALERTAS */
+  .alertas { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .alerta { border-radius: 10px; padding: 16px; }
+  .alerta.rojo { background: #ffebee; border-left: 4px solid #f44336; }
+  .alerta.verde { background: #e8f5e9; border-left: 4px solid #4caf50; }
+  .alerta h4 { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .alerta p { font-size: 12px; line-height: 1.5; }
+
+  /* SECCIONES */
+  .seccion { background: white; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.07); }
+  .seccion h2 { font-size: 16px; font-weight: 700; color: #333; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #f0f2f5; }
+  .seccion h2 span { font-size: 12px; font-weight: 400; color: #888; margin-left: 8px; }
+
+  /* TABLAS */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f0f4ff; color: #1877f2; font-weight: 700; padding: 10px 12px; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 10px 12px; border-bottom: 1px solid #f0f2f5; vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafbff; }
+
+  .badge { display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge.verde { background: #e8f5e9; color: #2e7d32; }
+  .badge.amarillo { background: #fff8e1; color: #e65100; }
+  .badge.rojo-badge { background: #ffebee; color: #c62828; }
+  .badge.azul { background: #e3f2fd; color: #1565c0; }
+
+  .winner { background: #fff8e1 !important; }
+  .winner td { font-weight: 600; }
+
+  /* DEVICE */
+  .device-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .platform-card { background: #f8f9fa; border-radius: 10px; padding: 16px; }
+  .platform-card h4 { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 12px; }
+  .bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .bar-label { font-size: 12px; width: 140px; color: #555; }
+  .bar-track { flex: 1; background: #e0e0e0; border-radius: 4px; height: 8px; }
+  .bar-fill { height: 8px; border-radius: 4px; }
+  .bar-value { font-size: 12px; font-weight: 700; width: 50px; text-align: right; color: #333; }
+
+  .footer { text-align: center; padding: 20px; color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>MTV Cables — Informe de Rendimiento de Campañas</h1>
+  <p>Período: 04 mayo – 02 junio 2026 &nbsp;|&nbsp; Cuenta publicitaria: act_668428693743215 &nbsp;|&nbsp; Generado: 03 junio 2026</p>
+</div>
+
+<div class="container">
+
+  <!-- RESUMEN EJECUTIVO -->
+  <div class="resumen">
+    <h2>Resumen Ejecutivo — ¿Cómo vamos en términos simples?</h2>
+    <div class="resumen-grid">
+      <div class="kpi">
+        <div class="valor">S/ 338</div>
+        <div class="label">Total invertido</div>
+      </div>
+      <div class="kpi">
+        <div class="valor">39,569</div>
+        <div class="label">Personas alcanzadas</div>
+      </div>
+      <div class="kpi">
+        <div class="valor">128</div>
+        <div class="label">Conversaciones WhatsApp</div>
+      </div>
+      <div class="kpi" style="background:#e8f5e9;">
+        <div class="valor" style="color:#2e7d32;">S/ 1.56</div>
+        <div class="label">Mejor costo/conversación</div>
+      </div>
+      <div class="kpi">
+        <div class="valor">1.72%</div>
+        <div class="label">CTR promedio</div>
+      </div>
+    </div>
+
+    <div class="hallazgos">
+      <h3>Lo más importante que encontramos</h3>
+      <ul>
+        <li><strong>Advantage+ gana sobre Intereses en Marsano:</strong> S/1.56 vs S/2.00 por conversación — 22% más barato.</li>
+        <li><strong>Las campañas SA y SC son las más caras:</strong> S/3.65–3.75 por conversación, casi el doble del resto. Son campañas de engagement de posts, no optimizadas para WhatsApp.</li>
+        <li><strong>Facebook Android domina:</strong> más del 85% de las conversiones vienen de Android en Facebook. Instagram casi no convierte para MTV.</li>
+        <li><strong>Marsano/Surquillo rinde mejor que Cercado</strong> en costo por conversación en todas las variantes probadas.</li>
+        <li><strong>La campaña MTV-C V2 (Surquillo):</strong> con solo S/2.41 gastados, logró 2 conversaciones a S/1.21 — el costo más bajo de toda la cuenta.</li>
+      </ul>
+    </div>
+
+    <div class="recomendaciones">
+      <h3>Qué hacer con las nuevas campañas (Vulcanizado, GPT, Doble Esmalte)</h3>
+      <ul>
+        <li>Usar <strong>Advantage+ (no intereses)</strong> para ambas zonas — baja el costo y simplifica la gestión.</li>
+        <li>Presupuesto recomendado: <strong>S/80–100 por campaña/semana</strong> — suficiente para obtener datos significativos.</li>
+        <li>Excluir Instagram de los placements o dejarlo sin presupuesto mínimo — no convierte para este cliente.</li>
+        <li><strong>Marsano/Surquillo primero:</strong> si hay que elegir una zona para probar, priorizar Surquillo (históricamente mejor CTR y costo).</li>
+        <li>No replicar el formato SA/SC (post boost) para conversaciones — crear anuncios nuevos con objetivo conversaciones directas a WhatsApp.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ALERTAS -->
+  <div class="alertas">
+    <div class="alerta rojo">
+      <h4>⚠️ Campañas a revisar / pausar</h4>
+      <p><strong>SA – MTV 02 – CABLE – WSP:</strong> S/3.75 por conversación — 2x más caro que el promedio.<br><br>
+      <strong>SC – MTV 02 – CABLE – WSP:</strong> S/3.65 por conversación, mayor gasto de la cuenta (S/113.20). Genera volumen pero a costo alto.<br><br>
+      <strong>[MTV-A] General:</strong> Solo 2 conversaciones en S/12.24 = S/6.12 cada una. Audiencia "General" no segmentada por zona no funciona.</p>
+    </div>
+    <div class="alerta verde">
+      <h4>🏆 Campañas ganadoras — replicar su estructura</h4>
+      <p><strong>[MTV-B] Marsano Advantage+:</strong> S/1.56/conv, CTR 1.93% (el más alto). <em>Mejor campaña de la cuenta.</em><br><br>
+      <strong>[MTV-A] Marsano Intereses:</strong> S/1.86/conv, 25 conversaciones con S/46.49.<br><br>
+      <strong>[MTV-A] Cercado Intereses:</strong> S/2.00/conv, sólido y estable.<br><br>
+      <strong>[MTV-C] Surquillo V2:</strong> S/1.21/conv (pocos datos, pero muy prometedor).</p>
+    </div>
+  </div>
+
+  <!-- TABLA CAMPAÑAS -->
+  <div class="seccion">
+    <h2>Rendimiento por Campaña <span>últimos 30 días | ordenado por costo/conversación</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Campaña</th>
+          <th>Gasto</th>
+          <th>Alcance</th>
+          <th>Impresiones</th>
+          <th>Frecuencia</th>
+          <th>CPM</th>
+          <th>CTR</th>
+          <th>Conversaciones</th>
+          <th>Costo/Conv.</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="winner">
+          <td><strong>[MTV-B] Marsano – Advantage+</strong></td>
+          <td>S/ 26.60</td>
+          <td>3,179</td>
+          <td>3,944</td>
+          <td>1.24</td>
+          <td>S/ 6.74</td>
+          <td>1.93%</td>
+          <td>17</td>
+          <td><strong>S/ 1.56</strong></td>
+          <td><span class="badge verde">🏆 GANADORA</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Marsano – Intereses</td>
+          <td>S/ 46.49</td>
+          <td>6,071</td>
+          <td>7,605</td>
+          <td>1.25</td>
+          <td>S/ 6.11</td>
+          <td>1.67%</td>
+          <td>25</td>
+          <td>S/ 1.86</td>
+          <td><span class="badge verde">Buena</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Cercado – Intereses</td>
+          <td>S/ 25.98</td>
+          <td>4,385</td>
+          <td>5,157</td>
+          <td>1.18</td>
+          <td>S/ 5.04</td>
+          <td>1.47%</td>
+          <td>13</td>
+          <td>S/ 2.00</td>
+          <td><span class="badge verde">Buena</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-B] Cercado – Advantage+</td>
+          <td>S/ 30.93</td>
+          <td>4,065</td>
+          <td>5,398</td>
+          <td>1.33</td>
+          <td>S/ 5.73</td>
+          <td>1.63%</td>
+          <td>15</td>
+          <td>S/ 2.06</td>
+          <td><span class="badge verde">Buena</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-C] Surquillo 2 – Intereses</td>
+          <td>S/ 16.95</td>
+          <td>1,956</td>
+          <td>2,525</td>
+          <td>1.29</td>
+          <td>S/ 6.71</td>
+          <td>1.78%</td>
+          <td>6</td>
+          <td>S/ 2.83</td>
+          <td><span class="badge amarillo">Regular</span></td>
+        </tr>
+        <tr>
+          <td>SC – MTV 02 – CABLE – WSP</td>
+          <td>S/ 113.20</td>
+          <td>12,791</td>
+          <td>19,558</td>
+          <td>1.53</td>
+          <td>S/ 5.79</td>
+          <td>1.74%</td>
+          <td>31</td>
+          <td>S/ 3.65</td>
+          <td><span class="badge amarillo">Caro</span></td>
+        </tr>
+        <tr>
+          <td>SA – MTV 02 – CABLE – WSP</td>
+          <td>S/ 56.27</td>
+          <td>6,407</td>
+          <td>8,886</td>
+          <td>1.39</td>
+          <td>S/ 6.33</td>
+          <td>1.76%</td>
+          <td>15</td>
+          <td>S/ 3.75</td>
+          <td><span class="badge amarillo">Caro</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-B] General – Advantage+</td>
+          <td>S/ 7.84</td>
+          <td>923</td>
+          <td>1,033</td>
+          <td>1.12</td>
+          <td>S/ 7.59</td>
+          <td>1.45%</td>
+          <td>2</td>
+          <td>S/ 3.92</td>
+          <td><span class="badge rojo-badge">Pausar</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-A] General – Intereses</td>
+          <td>S/ 12.24</td>
+          <td>1,567</td>
+          <td>1,749</td>
+          <td>1.12</td>
+          <td>S/ 6.99</td>
+          <td>1.66%</td>
+          <td>2</td>
+          <td>S/ 6.12</td>
+          <td><span class="badge rojo-badge">Pausar</span></td>
+        </tr>
+        <tr>
+          <td>[MTV-C] Surquillo V2 – Intereses</td>
+          <td>S/ 2.41</td>
+          <td>385</td>
+          <td>405</td>
+          <td>1.05</td>
+          <td>S/ 5.95</td>
+          <td>1.23%</td>
+          <td>2</td>
+          <td>S/ 1.21*</td>
+          <td><span class="badge azul">Potencial</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="font-size:11px;color:#888;margin-top:10px;">* Pocos datos — prometedor pero requiere más inversión para confirmar. Ordenado por costo/conversación iniciada vía WhatsApp.</p>
+  </div>
+
+  <!-- TABLA ADSETS -->
+  <div class="seccion">
+    <h2>Rendimiento por Conjunto de Anuncios <span>nivel adset</span></h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Adset</th>
+          <th>Campaña</th>
+          <th>Gasto</th>
+          <th>Alcance</th>
+          <th>CTR</th>
+          <th>Conversaciones</th>
+          <th>Costo/Conv.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="winner">
+          <td><strong>[MTV-B] Marsano A+</strong></td>
+          <td>MTV-B Marsano Advantage+</td>
+          <td>S/ 26.60</td>
+          <td>3,179</td>
+          <td>1.93%</td>
+          <td>17</td>
+          <td><strong>S/ 1.56</strong></td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Marsano Intereses</td>
+          <td>MTV-A Marsano Intereses</td>
+          <td>S/ 46.49</td>
+          <td>6,071</td>
+          <td>1.67%</td>
+          <td>25</td>
+          <td>S/ 1.86</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Cercado Intereses</td>
+          <td>MTV-A Cercado Intereses</td>
+          <td>S/ 25.98</td>
+          <td>4,385</td>
+          <td>1.47%</td>
+          <td>13</td>
+          <td>S/ 2.00</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] Cercado A+</td>
+          <td>MTV-B Cercado Advantage+</td>
+          <td>S/ 30.93</td>
+          <td>4,065</td>
+          <td>1.63%</td>
+          <td>15</td>
+          <td>S/ 2.06</td>
+        </tr>
+        <tr>
+          <td>[MTV-C] Marsano Intereses</td>
+          <td>MTV-C Surquillo V2</td>
+          <td>S/ 2.41</td>
+          <td>385</td>
+          <td>1.23%</td>
+          <td>2</td>
+          <td>S/ 1.21*</td>
+        </tr>
+        <tr>
+          <td>[MTV-C] Surquillo 2 Intereses</td>
+          <td>MTV-C Surquillo 2</td>
+          <td>S/ 16.95</td>
+          <td>1,956</td>
+          <td>1.78%</td>
+          <td>6</td>
+          <td>S/ 2.83</td>
+        </tr>
+        <tr>
+          <td>SC – MTV POST CABLE</td>
+          <td>SC – MTV 02</td>
+          <td>S/ 113.20</td>
+          <td>12,791</td>
+          <td>1.74%</td>
+          <td>31</td>
+          <td>S/ 3.65</td>
+        </tr>
+        <tr>
+          <td>SA – MTV POST CABLE</td>
+          <td>SA – MTV 02</td>
+          <td>S/ 56.27</td>
+          <td>6,407</td>
+          <td>1.76%</td>
+          <td>15</td>
+          <td>S/ 3.75</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] General Marsano A+</td>
+          <td>MTV-B General Advantage+</td>
+          <td>S/ 3.95</td>
+          <td>468</td>
+          <td>1.81%</td>
+          <td>2</td>
+          <td>S/ 1.98</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] General Cercado</td>
+          <td>MTV-A General Intereses</td>
+          <td>S/ 6.36</td>
+          <td>890</td>
+          <td>1.65%</td>
+          <td>2</td>
+          <td>S/ 3.18</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] General Marsano</td>
+          <td>MTV-A General Intereses</td>
+          <td>S/ 5.88</td>
+          <td>703</td>
+          <td>1.66%</td>
+          <td>0</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] General Cercado A+</td>
+          <td>MTV-B General Advantage+</td>
+          <td>S/ 3.89</td>
+          <td>493</td>
+          <td>1.12%</td>
+          <td>0</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- TABLA ANUNCIOS -->
+  <div class="seccion">
+    <h2>Rendimiento por Anuncio / Creativo</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Anuncio</th>
+          <th>Adset</th>
+          <th>Gasto</th>
+          <th>Alcance</th>
+          <th>Impresiones</th>
+          <th>CTR</th>
+          <th>Conversaciones</th>
+          <th>Costo/Conv.</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="winner">
+          <td><strong>[MTV-B] Marsano – Cuadrado</strong></td>
+          <td>MTV-B Marsano A+</td>
+          <td>S/ 26.60</td>
+          <td>3,179</td>
+          <td>3,944</td>
+          <td>1.93%</td>
+          <td>17</td>
+          <td><strong>S/ 1.56</strong></td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Marsano – Cuadrado</td>
+          <td>MTV-A Marsano Int.</td>
+          <td>S/ 46.49</td>
+          <td>6,071</td>
+          <td>7,605</td>
+          <td>1.67%</td>
+          <td>25</td>
+          <td>S/ 1.86</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Cercado – Cuadrado</td>
+          <td>MTV-A Cercado Int.</td>
+          <td>S/ 25.98</td>
+          <td>4,385</td>
+          <td>5,157</td>
+          <td>1.47%</td>
+          <td>13</td>
+          <td>S/ 2.00</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] Cercado – Cuadrado</td>
+          <td>MTV-B Cercado A+</td>
+          <td>S/ 30.93</td>
+          <td>4,065</td>
+          <td>5,398</td>
+          <td>1.63%</td>
+          <td>15</td>
+          <td>S/ 2.06</td>
+        </tr>
+        <tr>
+          <td>[MTV-C] SURQUILLO – Cuadrado</td>
+          <td>MTV-C Marsano Int.</td>
+          <td>S/ 2.41</td>
+          <td>385</td>
+          <td>405</td>
+          <td>1.23%</td>
+          <td>2</td>
+          <td>S/ 1.21*</td>
+        </tr>
+        <tr>
+          <td>Nuevo anuncio de Clientes pot.</td>
+          <td>MTV-C Surquillo Int.</td>
+          <td>S/ 16.95</td>
+          <td>1,956</td>
+          <td>2,525</td>
+          <td>1.78%</td>
+          <td>6</td>
+          <td>S/ 2.83</td>
+        </tr>
+        <tr>
+          <td>POST CABLE (SC)</td>
+          <td>SC – MTV POST CABLE</td>
+          <td>S/ 113.20</td>
+          <td>12,791</td>
+          <td>19,558</td>
+          <td>1.74%</td>
+          <td>31</td>
+          <td>S/ 3.65</td>
+        </tr>
+        <tr>
+          <td>POST CABLE (SA)</td>
+          <td>SA – MTV POST CABLE</td>
+          <td>S/ 56.27</td>
+          <td>6,407</td>
+          <td>8,886</td>
+          <td>1.76%</td>
+          <td>15</td>
+          <td>S/ 3.75</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] General – Cercado</td>
+          <td>MTV-A General Cercado</td>
+          <td>S/ 6.36</td>
+          <td>890</td>
+          <td>967</td>
+          <td>1.65%</td>
+          <td>2</td>
+          <td>S/ 3.18</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] General – Marsano</td>
+          <td>MTV-B General Marsano A+</td>
+          <td>S/ 3.95</td>
+          <td>468</td>
+          <td>497</td>
+          <td>1.81%</td>
+          <td>2</td>
+          <td>S/ 1.98</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- DESGLOSE DISPOSITIVO / PLATAFORMA -->
+  <div class="seccion">
+    <h2>¿Dónde convierte mejor? — Plataforma y Dispositivo</h2>
+    <div class="device-grid">
+      <div>
+        <div class="platform-card">
+          <h4>Distribución de Gasto por Plataforma</h4>
+          <div class="bar-row">
+            <span class="bar-label">Facebook Android</span>
+            <div class="bar-track"><div class="bar-fill" style="width:87%;background:#1877f2;"></div></div>
+            <span class="bar-value">~87%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Facebook iPhone</span>
+            <div class="bar-track"><div class="bar-fill" style="width:8%;background:#4299e1;"></div></div>
+            <span class="bar-value">~8%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Instagram Android</span>
+            <div class="bar-track"><div class="bar-fill" style="width:3%;background:#e1306c;"></div></div>
+            <span class="bar-value">~3%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">Instagram iPhone</span>
+            <div class="bar-track"><div class="bar-fill" style="width:1%;background:#f77737;"></div></div>
+            <span class="bar-value">~1%</span>
+          </div>
+          <div class="bar-row">
+            <span class="bar-label">WhatsApp</span>
+            <div class="bar-track"><div class="bar-fill" style="width:1%;background:#25d366;"></div></div>
+            <span class="bar-value">&lt;1%</span>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="platform-card" style="background:#fff8e1;">
+          <h4>Conclusiones de Dispositivo</h4>
+          <ul style="list-style:none;font-size:13px;">
+            <li style="padding:5px 0;border-bottom:1px solid #ffe082;">📱 <strong>Android Facebook es el canal principal</strong> — concentra +85% del gasto Y de las conversiones.</li>
+            <li style="padding:5px 0;border-bottom:1px solid #ffe082;">🍎 <strong>iPhone Facebook convierte</strong> — proporcional a su inversión, no descartarlo.</li>
+            <li style="padding:5px 0;border-bottom:1px solid #ffe082;">📸 <strong>Instagram no convierte para MTV</strong> — muchas impresiones, pocas o ninguna conversación. Reducir presupuesto aquí.</li>
+            <li style="padding:5px 0;border-bottom:1px solid #ffe082;">💚 <strong>WhatsApp como placement</strong> — mínimo impacto, no es relevante.</li>
+            <li style="padding:5px 0;">✅ <strong>Recomendación:</strong> Para nuevas campañas, priorizar Facebook (feed + stories) y limitar Instagram o dejarlo sin piso mínimo.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <table style="margin-top:20px;">
+      <thead>
+        <tr>
+          <th>Campaña</th>
+          <th>Plataforma</th>
+          <th>Dispositivo</th>
+          <th>Gasto</th>
+          <th>Alcance</th>
+          <th>CTR</th>
+          <th>Conversaciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="winner">
+          <td>[MTV-B] Marsano Advantage+</td>
+          <td>Facebook</td>
+          <td>Android</td>
+          <td>S/ 22.86</td>
+          <td>2,895</td>
+          <td>1.93%</td>
+          <td>15 ⭐</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Marsano Intereses</td>
+          <td>Facebook</td>
+          <td>Android</td>
+          <td>S/ 39.74</td>
+          <td>5,496</td>
+          <td>1.65%</td>
+          <td>24</td>
+        </tr>
+        <tr>
+          <td>[MTV-A] Cercado Intereses</td>
+          <td>Facebook</td>
+          <td>Android</td>
+          <td>S/ 23.75</td>
+          <td>4,164</td>
+          <td>1.43%</td>
+          <td>10</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] Cercado Advantage+</td>
+          <td>Facebook</td>
+          <td>Android</td>
+          <td>S/ 27.86</td>
+          <td>3,736</td>
+          <td>1.62%</td>
+          <td>13</td>
+        </tr>
+        <tr>
+          <td>SC – MTV 02</td>
+          <td>Facebook</td>
+          <td>Android</td>
+          <td>S/ 98.52</td>
+          <td>11,511</td>
+          <td>1.78%</td>
+          <td>27</td>
+        </tr>
+        <tr>
+          <td>[MTV-B] Marsano Advantage+</td>
+          <td>Instagram</td>
+          <td>iPhone</td>
+          <td>S/ 0.81</td>
+          <td>39</td>
+          <td>9.09%</td>
+          <td>2</td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="font-size:11px;color:#888;margin-top:8px;">Nota: La fila de Instagram iPhone de Marsano A+ tiene CTR altísimo (9%) con solo S/0.81 — dato interesante para probar en escala.</p>
+  </div>
+
+  <!-- PARAMETROS PARA NUEVAS CAMPAÑAS -->
+  <div class="seccion" style="border-left: 5px solid #4caf50;">
+    <h2>Parámetros Óptimos para las Nuevas Campañas (Vulcanizado, GPT, Doble Esmalte)</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Parámetro</th>
+          <th>Valor recomendado</th>
+          <th>Justificación</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Objetivo</strong></td>
+          <td>OUTCOME_LEADS → Conversaciones → WhatsApp</td>
+          <td>Las campañas de mensajes convierten mejor que boost de posts</td>
+        </tr>
+        <tr>
+          <td><strong>Tipo de audiencia</strong></td>
+          <td>Advantage+ (audiencia amplia)</td>
+          <td>MTV-B ganó sobre MTV-A en Marsano: S/1.56 vs S/2.00</td>
+        </tr>
+        <tr>
+          <td><strong>Segmentación geo</strong></td>
+          <td>Lima Región (no Perú entero)</td>
+          <td>El negocio opera en dos tiendas físicas en Lima</td>
+        </tr>
+        <tr>
+          <td><strong>Placements</strong></td>
+          <td>Facebook Feed + Stories (principal) | Instagram secundario</td>
+          <td>+85% de conversiones vienen de Facebook Android</td>
+        </tr>
+        <tr>
+          <td><strong>Puja</strong></td>
+          <td>LOWEST_COST_WITHOUT_CAP</td>
+          <td>Funcionó bien en todas las campañas de la cuenta</td>
+        </tr>
+        <tr>
+          <td><strong>Presupuesto</strong></td>
+          <td>S/ 80–100 lifetime por semana por campaña</td>
+          <td>Suficiente para acumular datos y activar aprendizaje del algoritmo</td>
+        </tr>
+        <tr>
+          <td><strong>Estado inicial</strong></td>
+          <td>PAUSED → activar manualmente desde Ads Manager</td>
+          <td>Permite revisar todo antes de encender</td>
+        </tr>
+        <tr>
+          <td><strong>Meta de costo</strong></td>
+          <td>S/ 1.50 – 2.50 por conversación</td>
+          <td>Basado en rango histórico de campañas ganadoras</td>
+        </tr>
+        <tr>
+          <td><strong>Formato creativo</strong></td>
+          <td>Imagen cuadrada (1:1)</td>
+          <td>Todos los anuncios ganadores usaron formato cuadrado</td>
+        </tr>
+        <tr>
+          <td><strong>Prioridad por zona</strong></td>
+          <td>Marsano/Surquillo primero, Cercado segundo</td>
+          <td>Marsano tiene menor CPM (S/5.73) y mejor conversión</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<div class="footer">
+  Informe generado automáticamente con datos de Meta Ads API · Cuenta act_668428693743215 · MTV Cables / Agencia Calema
+</div>
+
+</body>
+</html>
