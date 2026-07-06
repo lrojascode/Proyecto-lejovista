@@ -100,6 +100,16 @@ def task_upload_image(self, context: Dict[str, Any]) -> Dict[str, Any]:
     async def _impl():
         async with async_session() as db:
             acc = await _get_ad_account(db, context["ad_account_id"])
+
+            # Video/UGC (playbook §5 Paso 4): si ya hay video_id + thumbnail_url,
+            # no hay imagen que subir — el creativo usará video_data en su lugar.
+            if context.get("video_id"):
+                await _merge_draft_result(
+                    db, context["draft_id"],
+                    video_id=context["video_id"], thumbnail_url=context.get("thumbnail_url"),
+                )
+                return context
+
             image_hash = context.get("image_hash")
             if not image_hash:
                 limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
@@ -249,8 +259,10 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
             spec = CreativeBuilder.build_creative_payload(
                 name=creative_name,
                 page_id=context["page_id"],
-                image_hash=context["image_hash"],
                 copy_text=context["copy_text"],
+                image_hash=context.get("image_hash"),
+                video_id=context.get("video_id"),
+                thumbnail_url=context.get("thumbnail_url"),
             )
 
             payload = {

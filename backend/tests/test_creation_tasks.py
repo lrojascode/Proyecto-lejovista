@@ -381,3 +381,90 @@ async def test_merge_draft_result_no_op_when_draft_missing(ad_account, mocker):
     context = run_in_thread(task_create_campaign, _base_context(acc, draft_id="nonexistent-draft"))
 
     assert context["campaign_id"].startswith("mock_camp_")
+
+
+# --- Fase 6: soporte de video/UGC en la Saga (playbook §5 Paso 4) ---
+
+@pytest.mark.asyncio
+async def test_task_upload_image_skips_upload_when_video_provided(ad_account, mocker):
+    org, acc = ad_account
+    mock_repo = mocker.patch(
+        "app.services.meta_asset_repository.MetaAssetRepository.get_or_upload_image", autospec=True
+    )
+
+    context = run_in_thread(
+        task_upload_image,
+        _base_context(
+            acc, image_hash=None, image_url=None,
+            video_id="vid_123", thumbnail_url="https://cdn.example/thumb.jpg",
+        ),
+    )
+
+    mock_repo.assert_not_called()
+    assert context["video_id"] == "vid_123"
+    assert "image_hash" not in context or context.get("image_hash") is None
+
+
+@pytest.mark.asyncio
+async def test_task_create_creative_uses_video_data_when_video_provided(ad_account, mocker):
+    import json
+    org, acc = ad_account
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+
+    context = _base_context(
+        acc, image_hash=None, video_id="vid_123", thumbnail_url="https://cdn.example/thumb.jpg",
+    )
+    run_in_thread(task_create_creative, context)
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    spec = json.loads(payload["object_story_spec"])
+    assert "video_data" in spec
+    assert spec["video_data"]["video_id"] == "vid_123"
+    assert spec["video_data"]["image_url"] == "https://cdn.example/thumb.jpg"
+
+
+# --- Fase 6: error a mitad de la Saga — progreso parcial + estado FAILED coherente ---
+
+@pytest.mark.asyncio
+async def test_saga_mid_chain_failure_preserves_partial_progress_and_marks_failed(
+    campaign_draft, mocker, db_session
+):
+    """Simula el escenario real que dispara `on_error` en producción: el paso 2
+    (crear campaña) tiene éxito y deja su progreso en el draft, pero el paso 3
+    (crear adset) falla de forma permanente. El draft debe reflejar tanto el
+    campaign_id ya creado (Meta no lo elimina — sigue PAUSED y sin adset, bajo
+    riesgo) como el estado final FAILED con el motivo real, exactamente lo que
+    haría Celery al invocar `task_handle_chain_error` tras la excepción."""
+    org, acc = campaign_draft[0], campaign_draft[1]
+    draft = campaign_draft[2]
+
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+
+    # Paso 2: crear campaña — éxito.
+    mock_call_api.return_value = {"mock": True}
+    context = run_in_thread(task_create_campaign, _base_context(acc, draft_id=draft.id))
+
+    await db_session.refresh(draft)
+    assert draft.payload["result"]["campaign_id"] == context["campaign_id"]
+    assert draft.status == "PENDING_CREATION"  # aún no se marcó CREATED ni FAILED
+
+    # Paso 3: crear adset — falla de forma permanente (ej. targeting inválido).
+    mock_call_api.return_value = {"error": {"message": "Invalid parameter: targeting"}}
+    with pytest.raises(PermanentMetaError) as exc_info:
+        run_in_thread(task_create_adset, context)
+
+    # Lo que Celery haría al llegar a on_error: invocar el callback con la excepción real.
+    run_in_thread(
+        task_handle_chain_error, None, exc_info.value, None, draft.id, context["tenant_id"]
+    )
+
+    await db_session.refresh(draft)
+    assert draft.status == "FAILED"
+    assert "targeting" in draft.error_message
+    # El progreso del paso exitoso NO se pierde — queda trazado para diagnóstico.
+    assert draft.payload["result"]["campaign_id"] == context["campaign_id"]

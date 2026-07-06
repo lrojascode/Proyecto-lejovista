@@ -11,6 +11,10 @@ class CampaignCreateRequest(BaseModel):
     whatsapp_number: str = Field(..., description="Número de WhatsApp sin + ni espacios")
     image_url: Optional[str] = None
     image_hash: Optional[str] = None
+    # Video/UGC (playbook §5 Paso 4: "el video suele rendir mejor que la imagen
+    # estática"). Si se provee video_id, se ignoran image_url/image_hash.
+    video_id: Optional[str] = Field(default=None, description="ID del video ya subido a Meta (/advideos)")
+    thumbnail_url: Optional[str] = Field(default=None, description="URL de la miniatura, requerida junto a video_id")
     copy_text: str = Field(..., description="Texto completo del anuncio, incluyendo hook, bullets y CTA")
 
     class Config:

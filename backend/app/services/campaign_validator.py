@@ -26,9 +26,11 @@ class CampaignValidator:
         await self._verify_meta_account_status(request.ad_account_id)
 
     def _validate_business_rules(self, request: CampaignCreateRequest):
-        # 1. Sin imagen ni hash
-        if not request.image_url and not request.image_hash:
-            raise HTTPException(status_code=400, detail="Must provide either image_url or image_hash.")
+        # 1. Sin imagen, hash, ni video (playbook §5 Paso 4: soporte de video/UGC)
+        if not request.image_url and not request.image_hash and not request.video_id:
+            raise HTTPException(status_code=400, detail="Must provide image_url, image_hash, or video_id.")
+        if request.video_id and not request.thumbnail_url:
+            raise HTTPException(status_code=400, detail="video_id requires thumbnail_url.")
         
         # 2. Sanitización de nombre de producto/zona (no tildes ni emojis)
         # Permite letras, números, espacios y guiones bajos básicos

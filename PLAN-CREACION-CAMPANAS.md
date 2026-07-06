@@ -97,10 +97,18 @@ Se separó en dos capas con responsabilidades distintas (evita mezclar cifras co
 - **Verificado en navegador** (servidor de desarrollo propio en un puerto aparte, sin tocar el stack Docker compartido de la sesión concurrente): la página renderiza sin errores de React, el guard de "sin cuenta activa" se muestra correctamente, el dropdown de páginas cae a "no hay páginas" quando corresponde, y el layout responde bien en mobile. **No pudo probarse el flujo de red completo** (CORS del backend solo permite `localhost:3000`/`localhost`, no el puerto de este servidor de verificación) — pendiente de una prueba end-to-end contra el stack real en Fase 6.
 - Suite de frontend (`npx jest`) y `tsc --noEmit` sin errores nuevos en los archivos tocados.
 
-## Fase 6 — Video, tests y validación real
-- [ ] `video_data` (thumbnail + `video_id`) en `CreativeBuilder`.
-- [ ] Tests backend (fake limiter con 2 páginas, patrón de la casa): todo-PAUSED, persistencia del draft, error/rollback de la Saga, `CampaignSuggester`.
-- [ ] Validación end-to-end con `ENABLE_META_WRITEBACK=true` contra cuenta sandbox: 4 IDs creados, todos PAUSED, WhatsApp correcto.
+## Fase 6 — Video, tests y validación real ✅ (parcial) 2026-07-06
+- [x] `video_data` (`video_id` + `thumbnail_url`) en [CreativeBuilder](backend/app/services/creative_builder.py) — alternativa a `link_data`/`image_hash`, playbook §5 Paso 4 ("el video suele rendir mejor que la imagen estática"). Propagado en `CampaignCreateRequest`, el validador (acepta imagen O video) y `task_upload_image`/`task_create_creative` (si hay `video_id`, se salta la subida de imagen).
+- [x] Tests backend: 4 nuevos en `test_creative_builder.py` (imagen, video, ninguno de los dos, video sin thumbnail) + 2 en `test_creation_tasks.py` (salta la subida con video, el creativo usa `video_data`). "Todo-PAUSED" y "persistencia del draft" ya tenían cobertura de las Fases 1/2; `CampaignSuggester` de la Fase 3. Nuevo test de **error/rollback de la Saga**: `test_saga_mid_chain_failure_preserves_partial_progress_and_marks_failed` — simula el escenario real que dispara `on_error` en producción (paso 2 exitoso, paso 3 falla permanentemente) y confirma que el `campaign_id` ya creado queda trazado en el draft **y** el estado final es `FAILED` con el motivo real. Suite completa: **117 passed**.
+- [ ] **Sin ejecutar — requiere credenciales reales de Meta que este entorno no tiene:** validación end-to-end con `ENABLE_META_WRITEBACK=true` contra una cuenta sandbox (4 IDs creados, todos PAUSED, WhatsApp correcto). **Pendiente de que el usuario la corra manualmente** antes de considerar el flujo listo para producción — ver checklist abajo.
+
+### Cómo correr la validación end-to-end pendiente (manual, fuera de este entorno)
+1. Conectar una cuenta de Meta real/sandbox con un token vigente (Configuración → cuentas).
+2. `ENABLE_META_WRITEBACK=true` en el `.env` del backend + `docker compose up -d --build backend celery-worker-creation`.
+3. Crear una campaña desde `/campaigns/new` con un producto/zona reales.
+4. Verificar en Ads Manager: campaña, adset y ad en estado **PAUSED**; el adset con el `whatsapp_phone_number` correcto en `promoted_object`.
+5. Confirmar que `GET /campaigns/drafts/{id}` refleja `status=CREATED` con los 4 IDs reales en `payload.result`.
+6. **Volver `ENABLE_META_WRITEBACK=false`** al terminar la prueba (evita escrituras reales accidentales en sesiones futuras).
 
 ---
 

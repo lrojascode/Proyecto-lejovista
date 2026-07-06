@@ -308,6 +308,8 @@ async def create_campaign(
         "whatsapp_number": request.whatsapp_number,
         "image_url": request.image_url,
         "image_hash": request.image_hash,
+        "video_id": request.video_id,
+        "thumbnail_url": request.thumbnail_url,
         "copy_text": request.copy_text
     }
     
