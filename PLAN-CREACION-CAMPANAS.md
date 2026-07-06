@@ -81,9 +81,10 @@ Se separó en dos capas con responsabilidades distintas (evita mezclar cifras co
 
 **Suite completa tras Fase 3: 103 passed.**
 
-## Fase 4 — Descubrimiento de página + WhatsApp
-- [ ] Poblar `MetaPage` en el sync vía `/me/accounts` (`page_id`, WhatsApp, `instagram_actor_id`).
-- [ ] Dropdown de página en la UI en vez de pedir `page_id`/`whatsapp` a mano → elimina la fuente del bug de WhatsApp.
+## Fase 4 — Descubrimiento de página + WhatsApp ✅ 2026-07-06
+- [x] Poblar `MetaPage` en el sync vía `/me/accounts` (`page_id`, WhatsApp, `instagram_actor_id`). `MetaPage` existía pero no se usaba en ningún lado — se le agregó la columna `whatsapp_number` (migración `e1a2b3c4d5f6`, no existía antes) y el sync real (`_sync_real_pages` en [sync.py](backend/app/services/meta_ads/sync.py)) la puebla. El WhatsApp se pide en una llamada **separada por página** — si el campo no está soportado o falla para una página, solo esa página se queda sin número (no tumba el descubrimiento de las demás; misma lección del bug de `customaudiences`/`approximate_count` del HANDOFF 3.8). El sync mock también crea una página de ejemplo (`_ensure_mock_inventory`).
+- [x] Nuevo endpoint `GET /organizations/my/pages` expone las páginas activas de la organización (con WhatsApp) — la UI puede ofrecer un dropdown en vez de pedir `page_id`/`whatsapp` a mano, eliminando la fuente del bug de WhatsApp de la reunión. (El dropdown en sí, del lado del frontend, queda para la Fase 5.)
+- [x] 7 tests nuevos (`test_sync_pages.py`: descubrimiento real, error en `/me/accounts`, fallo aislado del campo WhatsApp por página, sync mock; `test_pages_endpoint.py`: auth, datos correctos, aislamiento por organización). Suite completa: **110 passed**.
 
 ## Fase 5 — UI de creación "revisar y activar"
 - [ ] Reescribir [campaigns/new/page.tsx](frontend/app/(dashboard)/campaigns/new/page.tsx) con el cliente autenticado ([lib/api.ts](frontend/lib/api.ts)).

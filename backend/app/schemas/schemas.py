@@ -70,6 +70,17 @@ class AdAccountResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+# --- META PAGE SCHEMA (Fase 4: descubrimiento de página + WhatsApp) ---
+class MetaPageResponse(BaseModel):
+    id: str
+    external_page_id: str
+    name: str
+    instagram_actor_id: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
 # --- CAMPAIGN SCHEMAS ---
 class CampaignSnapshotResponse(BaseModel):
     id: str

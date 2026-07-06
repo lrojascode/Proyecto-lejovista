@@ -12,6 +12,7 @@ from app.models.adset_snapshot import AdsetSnapshot
 from app.models.ad_snapshot import AdSnapshot
 from app.models.meta_creative import MetaCreative
 from app.models.custom_audience import CustomAudience
+from app.models.meta_page import MetaPage
 from app.models.sync_job import SyncJob
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
@@ -321,6 +322,18 @@ class MetaAdsSyncService:
                     meta_time_created=datetime.datetime.utcnow(),
                 ))
 
+        # Fase 4 (plan de creación de campañas): página + WhatsApp mock, para
+        # que la UI pueda probar el dropdown de página sin depender de Meta real.
+        exists_page = (await self.db.execute(select(MetaPage).where(
+            MetaPage.organization_id == ad_account.organization_id,
+            MetaPage.external_page_id == "mock_page_1"))).scalar_one_or_none()
+        if not exists_page:
+            self.db.add(MetaPage(
+                organization_id=ad_account.organization_id, external_page_id="mock_page_1",
+                name=f"Página de {ad_account.name}", whatsapp_number="51999888777",
+                instagram_actor_id="mock_ig_1",
+            ))
+
     async def _sync_real_data(self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter) -> int:
         """
         Lógica real de producción usando llamadas a la Graph API de Meta Ads.
@@ -447,6 +460,7 @@ class MetaAdsSyncService:
         )
         await self._sync_real_ads(ad_account, token, limiter, date_preset)
         await self._sync_real_inventory(ad_account, token, limiter)
+        await self._sync_real_pages(ad_account, token, limiter)
 
         # Bug 5: en cuentas ABO el presupuesto vive a nivel adset, así que el
         # campaign-level daily_budget/lifetime_budget viene null/0. Cuando es 0,
@@ -729,6 +743,54 @@ class MetaAdsSyncService:
                 row.subtype = au.get("subtype")
                 row.description = au.get("description")
                 row.approximate_count = au.get("approximate_count_lower_bound")
+
+    async def _sync_real_pages(self, ad_account, token, limiter):
+        """Fase 4 (plan de creación de campañas): descubre las páginas administradas
+        por el token y el WhatsApp conectado a cada una, para que la UI ofrezca un
+        dropdown de página en vez de que el usuario tipee `page_id`/`whatsapp_number`
+        a mano (fuente del bug de WhatsApp de la reunión con Alejandro: "aparece un
+        código en vez del número").
+
+        `/me/accounts` es a nivel de usuario, no de cuenta publicitaria (playbook
+        §1.4) — el mismo token de la cuenta sirve para ambos. El WhatsApp se pide
+        en una llamada aparte POR página: si el campo no está soportado o falla
+        para una página, solo esa página se queda sin número (no debe tumbar el
+        descubrimiento de las demás — misma lección que el bug de
+        `customaudiences`/`approximate_count`, HANDOFF hallazgo 3.8).
+        """
+        pages_res = await limiter.call_api(
+            "me/accounts",
+            {"fields": "name,id,category,connected_instagram_account", "limit": "100"},
+            access_token=token,
+        )
+        if self._has_error(pages_res):
+            logger.warning("No se pudieron leer las páginas del token (cuenta %s): %s",
+                           ad_account.id, pages_res)
+            return
+
+        for p in pages_res.get("data", []):
+            ext_id = p.get("id")
+            if not ext_id:
+                continue
+            row = (await self.db.execute(select(MetaPage).where(
+                MetaPage.organization_id == ad_account.organization_id,
+                MetaPage.external_page_id == ext_id,
+            ))).scalar_one_or_none()
+            if row is None:
+                row = MetaPage(organization_id=ad_account.organization_id, external_page_id=ext_id)
+                self.db.add(row)
+            row.name = p.get("name", "")
+            row.instagram_actor_id = (p.get("connected_instagram_account") or {}).get("id")
+            row.status = "ACTIVE"
+
+            wa_res = await limiter.call_api(ext_id, {"fields": "whatsapp_number"}, access_token=token)
+            if self._has_error(wa_res):
+                logger.info(
+                    "La página %s no expone whatsapp_number (o el token no tiene permiso): %s",
+                    ext_id, wa_res,
+                )
+            else:
+                row.whatsapp_number = wa_res.get("whatsapp_number")
 
     # Cada dimensión de breakdown es una llamada aparte: la Graph API no permite
     # combinar publisher_platform+platform_position con age/gender/region en una

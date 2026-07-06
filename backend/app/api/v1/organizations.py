@@ -5,7 +5,10 @@ from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
-from app.schemas.schemas import OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse
+from app.models.meta_page import MetaPage
+from app.schemas.schemas import (
+    OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse, MetaPageResponse,
+)
 from app.utils.security import get_current_user
 from app.workers.tasks import sync_ad_account
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
@@ -57,6 +60,23 @@ async def list_my_ad_accounts(
     db: AsyncSession = Depends(get_db)
 ):
     q = select(AdAccount).where(AdAccount.organization_id == current_user.organization_id)
+    res = await db.execute(q)
+    return res.scalars().all()
+
+@router.get("/my/pages", response_model=List[MetaPageResponse])
+async def list_my_pages(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Páginas descubiertas por el sync (Fase 4 del plan de creación de campañas)
+    con su WhatsApp conectado, para que el formulario de "Crear campaña" ofrezca
+    un dropdown en vez de que el usuario tipee page_id/whatsapp_number a mano.
+    """
+    q = select(MetaPage).where(
+        MetaPage.organization_id == current_user.organization_id,
+        MetaPage.status == "ACTIVE",
+    )
     res = await db.execute(q)
     return res.scalars().all()
 
