@@ -51,6 +51,10 @@ export default function NewCampaignPage() {
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestError, setSuggestError] = useState("");
 
+  const [waInput, setWaInput] = useState("");
+  const [waSaving, setWaSaving] = useState(false);
+  const [waError, setWaError] = useState("");
+
   const [status, setStatus] = useState<DraftStatus>("idle");
   const [draftId, setDraftId] = useState<string | null>(null);
   const [riskLevel, setRiskLevel] = useState<string | null>(null);
@@ -74,6 +78,21 @@ export default function NewCampaignPage() {
 
   const selectedPage = pages.find((p) => p.id === selectedPageId) || null;
   const activeAccount = accounts.find((a) => a.id === activeAdAccountId) || null;
+
+  const handleSaveWhatsApp = async () => {
+    if (!selectedPage || !waInput.trim()) return;
+    setWaSaving(true);
+    setWaError("");
+    try {
+      const updated = await api.setPageWhatsApp(selectedPage.id, waInput.trim());
+      setPages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setWaInput("");
+    } catch (err: any) {
+      setWaError(err.message || "No se pudo guardar el número de WhatsApp.");
+    } finally {
+      setWaSaving(false);
+    }
+  };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
@@ -291,6 +310,30 @@ export default function NewCampaignPage() {
                 <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
                   No hay páginas descubiertas todavía — sincroniza tu cuenta primero.
                 </span>
+              )}
+              {selectedPage && !selectedPage.whatsapp_number && (
+                <div style={{ marginTop: "8px" }}>
+                  <span style={{ fontSize: "12px", color: "var(--color-fog)", display: "block", marginBottom: "4px" }}>
+                    Meta no expone el WhatsApp de esta página automáticamente (el token no tiene el permiso
+                    whatsapp_business_management). Ingrésalo a mano una vez:
+                  </span>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="51999888777"
+                      value={waInput}
+                      onChange={(e) => setWaInput(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    <button type="button" onClick={handleSaveWhatsApp} disabled={waSaving || !waInput.trim()} className="btn-secondary">
+                      {waSaving ? "Guardando..." : "Guardar"}
+                    </button>
+                  </div>
+                  {waError && (
+                    <p role="alert" style={{ color: "var(--color-coral-red)", fontSize: "12px", marginTop: "4px" }}>{waError}</p>
+                  )}
+                </div>
               )}
             </div>
             <div>

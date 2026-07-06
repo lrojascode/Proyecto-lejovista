@@ -46,12 +46,17 @@ export default function CampaignsList() {
 
   return (
     <div>
-      <div style={{ marginBottom: "24px" }}>
-        <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Todas las Campañas</h2>
-        <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Consulta el rendimiento y estado de optimización de todas las campañas de anuncios.</p>
-        {syncMessage && (
-          <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
-        )}
+      <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Todas las Campañas</h2>
+          <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Consulta el rendimiento y estado de optimización de todas las campañas de anuncios.</p>
+          {syncMessage && (
+            <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
+          )}
+        </div>
+        <Link href="/campaigns/new" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
+          + Crear Campaña
+        </Link>
       </div>
 
       <div className="glass-card">

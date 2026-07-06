@@ -7,7 +7,8 @@ from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
 from app.schemas.schemas import (
-    OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse, MetaPageResponse,
+    OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse,
+    MetaPageResponse, MetaPageWhatsAppUpdate,
 )
 from app.utils.security import get_current_user
 from app.workers.tasks import sync_ad_account
@@ -79,6 +80,31 @@ async def list_my_pages(
     )
     res = await db.execute(q)
     return res.scalars().all()
+
+@router.patch("/my/pages/{page_id}/whatsapp", response_model=MetaPageResponse)
+async def set_page_whatsapp_number(
+    page_id: str,
+    payload: MetaPageWhatsAppUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fallback manual del WhatsApp de una página (Fase 4). El descubrimiento
+    automático vía Graph API (`GET /{page_id}?fields=whatsapp_number`) depende
+    de que el token tenga el permiso `whatsapp_business_management` —muchos
+    tokens conectados no lo tienen (confirmado contra Meta real: el campo no
+    da error, Meta simplemente lo omite en la respuesta). Sin este fallback,
+    esas cuentas quedarían bloqueadas para siempre en "Crear campaña".
+    """
+    page = await db.get(MetaPage, page_id)
+    if not page or page.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Página no encontrada para esta organización.")
+
+    page.whatsapp_number = payload.whatsapp_number
+    db.add(page)
+    await db.commit()
+    await db.refresh(page)
+    return page
 
 @router.post("/my/ad-accounts", response_model=AdAccountResponse)
 async def connect_ad_account(

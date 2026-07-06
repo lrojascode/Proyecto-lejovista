@@ -126,6 +126,8 @@ export const api = {
   triggerSync: () => apiRequest("/api/v1/campaigns/sync-trigger", "POST"),
   getApiCallHistory: (limit: number = 10) => apiRequest(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
   getMyPages: () => apiRequest("/api/v1/organizations/my/pages", "GET"),
+  setPageWhatsApp: (pageId: string, whatsappNumber: string) =>
+    apiRequest(`/api/v1/organizations/my/pages/${pageId}/whatsapp`, "PATCH", { whatsapp_number: whatsappNumber }),
   getCampaignSuggestion: (adAccountId: string, productName: string, zone: string) =>
     apiRequest(
       `/api/v1/campaigns/suggestion?ad_account_id=${encodeURIComponent(adAccountId)}` +

@@ -81,6 +81,9 @@ class MetaPageResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class MetaPageWhatsAppUpdate(BaseModel):
+    whatsapp_number: str = Field(..., description="Número de WhatsApp sin + ni espacios")
+
 # --- CAMPAIGN SCHEMAS ---
 class CampaignSnapshotResponse(BaseModel):
     id: str

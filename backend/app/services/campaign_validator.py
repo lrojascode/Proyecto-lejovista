@@ -1,10 +1,10 @@
 import re
-from fastapi import HTTPException
-from typing import Dict, Any
-from app.schemas.campaign_schemas import CampaignCreateRequest
-from app.services.meta_api_client import MetaApiClient
-from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 import logging
+from fastapi import HTTPException
+from app.config import settings
+from app.models.ad_account import AdAccount
+from app.schemas.campaign_schemas import CampaignCreateRequest
+from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -12,10 +12,18 @@ class CampaignValidator:
     """
     Ejecuta validaciones síncronas antes de encolar la creación de una campaña.
     Verifica reglas de negocio y hace un request de validación (estado de cuenta) a Meta.
+
+    Antes recibía `tenant_id` + `MetaApiClient`, que resolvía el token vía
+    `MetaCredentialService.get_valid_token(organization_id)` — una consulta que
+    solo consideraba la ORGANIZACIÓN, no la cuenta publicitaria específica.
+    Con multi-cuenta (2+ AdAccount por organización) eso rompía con
+    `MultipleResultsFound` en cuanto la org tenía más de una credencial activa.
+    Ahora recibe el `AdAccount` ya resuelto y usa `MetaAPIRateLimiter` (el mismo
+    stack real usado por el resto de la app), sin ambigüedad posible.
     """
-    def __init__(self, tenant_id: str, meta_client: MetaApiClient):
-        self.tenant_id = tenant_id
-        self.meta_client = meta_client
+    def __init__(self, ad_account: AdAccount, limiter: MetaAPIRateLimiter | None = None):
+        self.ad_account = ad_account
+        self.limiter = limiter or MetaAPIRateLimiter(ad_account_id=ad_account.id)
 
     async def validate(self, request: CampaignCreateRequest) -> None:
         """
@@ -23,7 +31,7 @@ class CampaignValidator:
         Lanza HTTPException si algo no cumple.
         """
         self._validate_business_rules(request)
-        await self._verify_meta_account_status(request.ad_account_id)
+        await self._verify_meta_account_status()
 
     def _validate_business_rules(self, request: CampaignCreateRequest):
         # 1. Sin imagen, hash, ni video (playbook §5 Paso 4: soporte de video/UGC)
@@ -31,42 +39,53 @@ class CampaignValidator:
             raise HTTPException(status_code=400, detail="Must provide image_url, image_hash, or video_id.")
         if request.video_id and not request.thumbnail_url:
             raise HTTPException(status_code=400, detail="video_id requires thumbnail_url.")
-        
+
         # 2. Sanitización de nombre de producto/zona (no tildes ni emojis)
         # Permite letras, números, espacios y guiones bajos básicos
         if not re.match(r"^[A-Za-z0-9 _-]+$", request.product_name):
             raise HTTPException(status_code=400, detail="product_name contains invalid characters (no accents or emojis allowed).")
-            
+
         if not re.match(r"^[A-Za-z0-9 _-]+$", request.zone):
             raise HTTPException(status_code=400, detail="zone contains invalid characters (no accents or emojis allowed).")
 
-    async def _verify_meta_account_status(self, ad_account_id: str):
+    async def _verify_meta_account_status(self):
         """
         Paso 1 del documento: GET /act_[ID]?fields=amount_spent,spend_cap,account_status
+
+        `external_account_id` ya incluye el prefijo `act_` (confirmado contra
+        Meta real en sync.py/creation_tasks.py) — no hay que añadirlo de nuevo.
         """
+        if settings.MOCK_SERVICES:
+            # Mismo criterio que el resto de la app (sync mock, modifier):
+            # en modo simulado no hay nada real que validar contra Meta.
+            return
+
         try:
-            # Asegurar prefijo act_
-            endpoint_id = ad_account_id if ad_account_id.startswith("act_") else f"act_{ad_account_id}"
-            response = await self.meta_client.get(
-                endpoint=f"/{endpoint_id}",
-                ad_account_id=ad_account_id,
-                params={"fields": "amount_spent,spend_cap,account_status"}
+            token = self.ad_account.get_access_token()
+            response = await self.limiter.call_api(
+                self.ad_account.external_account_id,
+                {"fields": "amount_spent,spend_cap,account_status"},
+                access_token=token,
             )
-            
+
+            if not isinstance(response, dict) or "error" in response or "ERROR" in response:
+                logger.error(f"Meta respondió con error al validar la cuenta {self.ad_account.id}: {response}")
+                raise HTTPException(status_code=502, detail="Meta rechazó la validación de la cuenta de anuncios.")
+
             # account_status = 1 es ACTIVO
             status = response.get("account_status")
             if status != 1:
-                logger.error(f"Account {ad_account_id} has invalid status {status}")
+                logger.error(f"Account {self.ad_account.id} has invalid status {status}")
                 raise HTTPException(status_code=400, detail=f"Cannot create campaign. Ad Account status is {status} (expected 1).")
-            
+
             # verificar spend_cap
             spend_cap = float(response.get("spend_cap", 0))
             amount_spent = float(response.get("amount_spent", 0))
-            
+
             if spend_cap > 0 and amount_spent >= spend_cap:
-                logger.error(f"Account {ad_account_id} has reached its spend cap ({amount_spent}/{spend_cap})")
+                logger.error(f"Account {self.ad_account.id} has reached its spend cap ({amount_spent}/{spend_cap})")
                 raise HTTPException(status_code=400, detail="Spend cap reached. Please increase your limit in Meta Ads Manager.")
-                
+
         except HTTPException:
             raise
         except Exception as e:

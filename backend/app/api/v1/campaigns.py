@@ -15,7 +15,6 @@ import datetime
 from fastapi import status
 from celery import chain
 
-from app.config import settings
 from app.models.campaign_draft import CampaignDraft
 from app.models.organization import Organization
 from app.schemas.campaign_schemas import CampaignCreateRequest
@@ -23,10 +22,6 @@ from app.schemas.schemas import CampaignDraftResponse
 from app.services.campaign_validator import CampaignValidator
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.ai.llm import OpenRouterClient
-from app.services.meta_api_client import MetaApiClient
-from app.services.meta_credential_service import MetaCredentialService
-from app.services.rate_limiter import RateLimiter
-from app.services.audit_log_service import AuditLogService
 from app.workers.creation_tasks import (
     task_upload_image,
     task_create_campaign,
@@ -174,18 +169,6 @@ async def trigger_manual_sync(
     return {"message": f"Sincronización manual programada para {len(accounts)} cuentas de anuncios."}
 
 
-def build_meta_client(tenant_id: str, db: AsyncSession) -> MetaApiClient:
-    """Construye el cliente de Meta con dependencias reales (Redis de settings,
-    tenant autenticado). Antes estaba hardcodeado a localhost + 'mock-tenant'."""
-    import redis.asyncio as redis
-    redis_client = redis.Redis.from_url(settings.REDIS_URL)
-    return MetaApiClient(
-        tenant_id,
-        MetaCredentialService(db),
-        RateLimiter(redis_client),
-        AuditLogService(db),
-    )
-
 @router.get("/suggestion")
 async def get_campaign_suggestion(
     ad_account_id: str,
@@ -252,7 +235,8 @@ async def create_campaign(
         AdAccount.organization_id == tenant_id
     )
     res_acc = await db.execute(q_acc)
-    if not res_acc.scalar_one_or_none():
+    ad_account = res_acc.scalar_one_or_none()
+    if not ad_account:
         raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
     # Anti-bloqueo (playbook §2: "Máx ~5 campañas nuevas por sesión"). Meta puede
@@ -275,8 +259,7 @@ async def create_campaign(
             ),
         )
 
-    meta_client = build_meta_client(tenant_id, db)
-    validator = CampaignValidator(tenant_id, meta_client)
+    validator = CampaignValidator(ad_account)
 
     # 1. Validación síncrona
     await validator.validate(request)
