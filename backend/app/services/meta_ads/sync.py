@@ -267,6 +267,7 @@ class MetaAdsSyncService:
                     self.db.add(AdsetSnapshot(
                         ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
                         campaign_id=c["id"], adset_id=adset_id, name=f"{c['name']}_{a['label']}",
+                        budget=round(c["budget"] * a["share"], 2),
                         spend=a_spend, reach=a_reach, impressions=a_impr, clicks=a_clicks,
                         conversions=a_conv, conversations=a_conv, cpl=a_cpl, ctr=a_ctr,
                         targeting_summary=a["targeting"], date=sync_date,
@@ -351,15 +352,17 @@ class MetaAdsSyncService:
         self.db.add(ad_account)
 
         # 1. Obtener todas las campañas de la cuenta
-        campaigns_res = await limiter.call_api(
+        campaigns_res = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/campaigns",
             {
                 "fields": "id,name,status,daily_budget,lifetime_budget",
+                "limit": 200,
             },
             access_token=token
         )
-        
+
         if "ERROR" in campaigns_res or "error" in campaigns_res:
+            self._maybe_mark_expired(ad_account, campaigns_res)
             raise Exception(f"Error al obtener campañas: {campaigns_res}")
             
         campaigns_map = {}
@@ -374,21 +377,27 @@ class MetaAdsSyncService:
         # 2. Insights diarios a nivel campaña (ahora con reach)
         date_preset = "last_30d" if sync_type == "FULL" else "yesterday"
 
-        campaigns_insights = await limiter.call_api(
+        campaigns_insights = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/insights",
             {
                 "level": "campaign",
                 "date_preset": date_preset,
                 "fields": "campaign_id,campaign_name,spend,impressions,reach,clicks,actions,frequency",
                 "time_increment": 1,  # datos diarios
+                # Sin `limit`, Meta devuelve su página default de 25 filas: con
+                # ~30 días × ~10 campañas eso truncaba a los 25 días más viejos.
+                # Subimos el tamaño de página y además paginamos (call_api_paginated).
+                "limit": 500,
             },
             access_token=token
         )
 
         if "ERROR" in campaigns_insights or "error" in campaigns_insights:
+            self._maybe_mark_expired(ad_account, campaigns_insights)
             raise Exception(f"Error al obtener insights de campañas: {campaigns_insights}")
 
         records_synced = 0
+        snapshots_by_campaign: Dict[str, list] = defaultdict(list)
         for item in campaigns_insights.get("data", []):
             camp_id = item.get("campaign_id")
             sync_date = self._parse_date(item.get("date_start"))
@@ -430,11 +439,25 @@ class MetaAdsSyncService:
             snapshot.ctr = ctr
             snapshot.frequency = frequency
             records_synced += 1
+            snapshots_by_campaign[camp_id].append(snapshot)
 
         # 3. Adsets, anuncios e inventario (P-2.2)
-        await self._sync_real_adsets(ad_account, token, limiter, date_preset)
+        adset_budget_by_campaign = await self._sync_real_adsets(
+            ad_account, token, limiter, date_preset
+        )
         await self._sync_real_ads(ad_account, token, limiter, date_preset)
         await self._sync_real_inventory(ad_account, token, limiter)
+
+        # Bug 5: en cuentas ABO el presupuesto vive a nivel adset, así que el
+        # campaign-level daily_budget/lifetime_budget viene null/0. Cuando es 0,
+        # usamos la suma de los daily_budget de los adsets ACTIVOS de la campaña.
+        for camp_id, snaps in snapshots_by_campaign.items():
+            if campaigns_map.get(camp_id, {}).get("budget", 0) > 0:
+                continue
+            adset_sum = adset_budget_by_campaign.get(camp_id, 0.0)
+            if adset_sum > 0:
+                for snap in snaps:
+                    snap.budget = adset_sum
 
         # 4. Desgloses por placement/edad/género/dispositivo/geografía (P-2.7).
         await self._sync_real_breakdowns(ad_account, token, limiter, date_preset)
@@ -464,24 +487,43 @@ class MetaAdsSyncService:
         except Exception:
             return None
 
-    @staticmethod
-    def _extract_conversions_conversations(actions):
-        """Cuenta leads (conversions) y conversaciones de mensajería iniciadas."""
+    # Whitelist explícita de action types que representan un "lead de formulario".
+    # Antes se usaba un fallback difuso (`"lead" in at or "conversion" in at`) que
+    # agarraba de casualidad los leads de esta cuenta
+    # (`offsite_complete_registration_add_meta_leads`, `offsite_search_add_meta_leads`)
+    # pero además podía DOBLE-contar (ambas variantes _add_meta_leads) o agarrar de
+    # más (ej. `onsite_conversion.post_net_like` matchea "conversion"). Con la
+    # whitelist contamos solo action types de lead reales y sin solapamiento.
+    _LEAD_ACTION_TYPES = frozenset({
+        "lead",
+        "leadgen_grouped",
+        "offsite_conversion.fb_pixel_lead",
+        "onsite_conversion.lead_grouped",
+        "offsite_complete_registration_add_meta_leads",
+        "offsite_search_add_meta_leads",
+    })
+
+    @classmethod
+    def _extract_conversions_conversations(cls, actions):
+        """Cuenta leads (conversions) y conversaciones de mensajería iniciadas.
+
+        `conversions` suma solo los action types de la whitelist de leads de
+        formulario (sin fallback difuso, para no doble-contar ni contar de más).
+        `conversations` suma los eventos de mensajería iniciada; si no hay ninguno
+        se usan los leads como proxy (cuentas de solo-formulario).
+        """
         actions = actions or []
         conversions, conversations = 0, 0
+        has_messaging = False
         for a in actions:
             at = a.get("action_type", "")
             val = int(float(a.get("value", 0) or 0))
-            if at in ("lead", "offsite_conversion.fb_pixel_lead", "onsite_conversion.lead_grouped"):
+            if at in cls._LEAD_ACTION_TYPES:
                 conversions += val
             if "messaging_conversation_started" in at:
                 conversations += val
-        if conversions == 0:
-            for a in actions:
-                at = a.get("action_type", "")
-                if "conversion" in at or "lead" in at:
-                    conversions += int(float(a.get("value", 0) or 0))
-        if conversations == 0:
+                has_messaging = True
+        if not has_messaging:
             conversations = conversions  # sin evento de mensajería: usar leads como proxy
         return conversions, conversations
 
@@ -502,28 +544,47 @@ class MetaAdsSyncService:
     def _has_error(res) -> bool:
         return not isinstance(res, dict) or "error" in res or "ERROR" in res
 
-    async def _sync_real_adsets(self, ad_account, token, limiter, date_preset):
-        # Estructura (para el resumen de targeting)
+    async def _sync_real_adsets(self, ad_account, token, limiter, date_preset) -> Dict[str, float]:
+        """Sincroniza adsets y devuelve, por campaña, la suma del daily_budget de
+        sus adsets ACTIVOS (para el fallback de presupuesto de campaña, Bug 5)."""
+        # Estructura (targeting + presupuesto + estado por adset)
         targeting_map = {}
-        structure = await limiter.call_api(
+        budget_map: Dict[str, float] = {}      # adset_id -> presupuesto diario nominal
+        status_map: Dict[str, str] = {}        # adset_id -> status
+        campaign_of: Dict[str, str] = {}       # adset_id -> campaign_id
+        structure = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/adsets",
-            {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status"},
+            {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status",
+             "limit": 200},
             access_token=token,
         )
         if not self._has_error(structure):
             for a in structure.get("data", []):
-                targeting_map[a.get("id")] = self._summarize_targeting(a.get("targeting", {}))
+                aid = a.get("id")
+                targeting_map[aid] = self._summarize_targeting(a.get("targeting", {}))
+                budget_map[aid] = float(a.get("daily_budget") or a.get("lifetime_budget") or 0) / 100.0
+                status_map[aid] = a.get("status")
+                campaign_of[aid] = a.get("campaign_id")
+        else:
+            self._maybe_mark_expired(ad_account, structure)
 
-        insights = await limiter.call_api(
+        # Suma de presupuesto de adsets ACTIVOS por campaña (Bug 5).
+        adset_budget_by_campaign: Dict[str, float] = defaultdict(float)
+        for aid, camp_id in campaign_of.items():
+            if camp_id and status_map.get(aid) == "ACTIVE":
+                adset_budget_by_campaign[camp_id] += budget_map.get(aid, 0.0)
+
+        insights = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/insights",
             {"level": "adset", "date_preset": date_preset,
              "fields": "adset_id,adset_name,campaign_id,spend,impressions,reach,clicks,actions,frequency",
-             "time_increment": 1},
+             "time_increment": 1, "limit": 500},
             access_token=token,
         )
         if self._has_error(insights):
             logger.warning("No se pudieron obtener insights de adsets: %s", insights)
-            return
+            self._maybe_mark_expired(ad_account, insights)
+            return dict(adset_budget_by_campaign)
 
         for item in insights.get("data", []):
             adset_id = item.get("adset_id")
@@ -550,26 +611,31 @@ class MetaAdsSyncService:
             row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
             row.targeting_summary = targeting_map.get(adset_id, {})
+            row.budget = budget_map.get(adset_id, 0.0)
+
+        return dict(adset_budget_by_campaign)
 
     async def _sync_real_ads(self, ad_account, token, limiter, date_preset):
         # Mapa ad_id -> creative_id
         creative_map = {}
-        ads_struct = await limiter.call_api(
-            f"{ad_account.external_account_id}/ads", {"fields": "id,creative"}, access_token=token,
+        ads_struct = await limiter.call_api_paginated(
+            f"{ad_account.external_account_id}/ads",
+            {"fields": "id,creative", "limit": 200}, access_token=token,
         )
         if not self._has_error(ads_struct):
             for a in ads_struct.get("data", []):
                 creative_map[a.get("id")] = (a.get("creative", {}) or {}).get("id")
 
-        insights = await limiter.call_api(
+        insights = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/insights",
             {"level": "ad", "date_preset": date_preset,
              "fields": "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,clicks,actions",
-             "time_increment": 1},
+             "time_increment": 1, "limit": 500},
             access_token=token,
         )
         if self._has_error(insights):
             logger.warning("No se pudieron obtener insights de anuncios: %s", insights)
+            self._maybe_mark_expired(ad_account, insights)
             return
 
         for item in insights.get("data", []):
@@ -601,7 +667,7 @@ class MetaAdsSyncService:
 
     async def _sync_real_inventory(self, ad_account, token, limiter):
         # Imágenes / creativos
-        imgs = await limiter.call_api(
+        imgs = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/adimages",
             {"fields": "hash,name,url,width,height,created_time", "limit": "50"},
             access_token=token,
@@ -609,6 +675,7 @@ class MetaAdsSyncService:
         if self._has_error(imgs):
             logger.warning("No se pudo leer el inventario de creativos (cuenta %s): %s",
                            ad_account.id, imgs)
+            self._maybe_mark_expired(ad_account, imgs)
         else:
             for im in imgs.get("data", []):
                 h = im.get("hash")
@@ -629,7 +696,7 @@ class MetaAdsSyncService:
         # segmentación por intereses no tienen audiencias guardadas — en ese caso Meta
         # responde una lista vacía (no un error). Un error aquí suele ser permiso del
         # token (falta ads_read / customaudience:read), por eso se distingue en el log.
-        auds = await limiter.call_api(
+        auds = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/customaudiences",
             # `approximate_count` ya no existe en la Graph API (confirmado contra la
             # API real: pedirlo devuelve OAuthException code 100 "Tried accessing
@@ -640,6 +707,7 @@ class MetaAdsSyncService:
         if self._has_error(auds):
             logger.warning("No se pudieron leer audiencias personalizadas (cuenta %s): "
                            "posible falta de permiso del token. Respuesta: %s", ad_account.id, auds)
+            self._maybe_mark_expired(ad_account, auds)
         else:
             data = auds.get("data", [])
             if not data:
@@ -683,15 +751,16 @@ class MetaAdsSyncService:
         )
 
         for bd_param, bucket, key_of in self._BREAKDOWN_SPECS:
-            res = await limiter.call_api(
+            res = await limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
                 {"level": "campaign", "date_preset": date_preset, "time_increment": 1,
-                 "fields": "campaign_id,spend,actions", "breakdowns": bd_param},
+                 "fields": "campaign_id,spend,actions", "breakdowns": bd_param, "limit": 500},
                 access_token=token,
             )
             if self._has_error(res):
                 logger.warning("Breakdown '%s' no disponible para cuenta %s: %s",
                                bd_param, ad_account.id, res)
+                self._maybe_mark_expired(ad_account, res)
                 continue
             for row in res.get("data", []):
                 camp_id = row.get("campaign_id")

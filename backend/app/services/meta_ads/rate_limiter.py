@@ -154,5 +154,55 @@ class MetaAPIRateLimiter:
                     logger.error(f"Excepción inesperada en llamada API: {exc}")
                     await self._log_api_call(method, endpoint, all_params, 500, str(exc))
                     return {"error": "excepcion", "detalle": str(exc)}
-            
+
             return {"error": "failed_after_retries", "detalle": "Llamada fallida tras reintentos"}
+
+    async def call_api_paginated(
+        self,
+        endpoint: str,
+        params: Dict[str, Any],
+        method: str = "GET",
+        access_token: str = "",
+        max_pages: int = 50,
+    ) -> Dict[str, Any]:
+        """Como `call_api` pero sigue la paginación por cursor de Meta.
+
+        Meta pagina los endpoints de listas (insights, campaigns, adsets, ads,
+        adimages, customaudiences) y devuelve por defecto ~25 filas con un
+        `paging.cursors.after` para pedir la siguiente página. `call_api` hacía
+        UNA sola request y se perdía el resto (bug crítico: solo se guardaban las
+        25 filas más viejas). Aquí concatenamos `data` de todas las páginas,
+        pasando cada página por `call_api` (respeta rate limiter, backoff y log).
+
+        Tope de seguridad `max_pages` para no quedar en un bucle si Meta devuelve
+        un cursor mal formado. Si una página falla:
+          - sin datos acumulados: se devuelve el error tal cual (el caller decide).
+          - con datos acumulados: se corta y se devuelve lo obtenido (parcial),
+            sin la clave `error`, para no descartar lo ya sincronizado.
+        """
+        all_data: list = []
+        page_params = {**params}
+
+        for _ in range(max_pages):
+            res = await self.call_api(endpoint, page_params, method=method, access_token=access_token)
+
+            if not isinstance(res, dict) or "error" in res or "ERROR" in res:
+                if all_data:
+                    logger.warning(
+                        "Paginación de %s interrumpida por error tras %d filas: %s",
+                        endpoint, len(all_data), res,
+                    )
+                    return {"data": all_data}
+                return res
+
+            all_data.extend(res.get("data", []))
+
+            paging = res.get("paging") or {}
+            after = (paging.get("cursors") or {}).get("after")
+            if not paging.get("next") or not after:
+                break
+            page_params["after"] = after
+        else:
+            logger.warning("Paginación de %s alcanzó el tope de %d páginas.", endpoint, max_pages)
+
+        return {"data": all_data}

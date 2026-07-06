@@ -16,6 +16,9 @@ class AdsetSnapshot(Base):
     adset_id: Mapped[str] = mapped_column(String, index=True)
     name: Mapped[str] = mapped_column(String)
 
+    # Presupuesto diario del adset (nominal, no en centavos). En cuentas ABO el
+    # presupuesto vive a nivel adset; se usa para derivar el de la campaña (Bug 5).
+    budget: Mapped[float] = mapped_column(Float, default=0.0)
     spend: Mapped[float] = mapped_column(Float, default=0.0)
     reach: Mapped[int] = mapped_column(Integer, default=0)
     impressions: Mapped[int] = mapped_column(Integer, default=0)

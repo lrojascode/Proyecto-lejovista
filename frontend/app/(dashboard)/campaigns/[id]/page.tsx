@@ -5,6 +5,15 @@ import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import Link from "next/link";
 
+// Las fechas de snapshot llegan como ISO date-only ("2026-07-03"). `new Date(s)`
+// las interpreta como medianoche UTC, así que en un navegador con offset negativo
+// (ej. Perú UTC-5) se mostraba el día anterior. Le agregamos "T00:00:00" para que
+// se parsee como medianoche LOCAL y la fecha no se corra un día.
+function formatSnapshotDate(dateOnly: string): string {
+  if (!dateOnly) return "";
+  return new Date(`${dateOnly}T00:00:00`).toLocaleDateString();
+}
+
 export default function CampaignDetail() {
   const params = useParams();
   const router = useRouter();
@@ -110,7 +119,7 @@ export default function CampaignDetail() {
                   const dayCpl = s.conversions > 0 ? s.spend / s.conversions : s.spend;
                   return (
                     <tr key={s.id} style={{ borderBottom: "1px solid var(--border-color)" }}>
-                      <td style={{ padding: "0.85rem 0.5rem", fontWeight: 510 }}>{new Date(s.date).toLocaleDateString()}</td>
+                      <td style={{ padding: "0.85rem 0.5rem", fontWeight: 510 }}>{formatSnapshotDate(s.date)}</td>
                       <td style={{ padding: "0.85rem 0.5rem" }}>S/.{s.spend.toFixed(2)}</td>
                       <td style={{ padding: "0.85rem 0.5rem" }}>{s.conversions}</td>
                       <td style={{ padding: "0.85rem 0.5rem", fontWeight: 510, color: "var(--color-paper)" }}>S/.{dayCpl.toFixed(2)}</td>

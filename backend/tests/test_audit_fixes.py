@@ -500,6 +500,10 @@ class _FakeLimiter:
         # info de cuenta
         return {"amount_spent": "10000", "spend_cap": "500000", "account_status": 1}
 
+    async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+        # Este fake no pagina: sus respuestas canned son de una sola página.
+        return await self.call_api(endpoint, params, method=method, access_token=access_token)
+
 
 @pytest.mark.asyncio
 async def test_real_sync_parses_meta_entities(db_session: AsyncSession):
@@ -543,6 +547,8 @@ async def test_real_sync_marks_account_expired_on_190(db_session: AsyncSession):
         ad_account_id = None
         async def call_api(self, endpoint, params, method="GET", access_token=""):
             return {"error": {"message": "Session has expired", "code": 190, "type": "OAuthException"}}
+        async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+            return await self.call_api(endpoint, params, method=method, access_token=access_token)
 
     org, acc = await _make_org_and_account(db_session, slug="exp-org")
     acc.set_access_token("some-token")
@@ -705,3 +711,222 @@ async def test_api_call_history_scoped_to_tenant(async_client: AsyncClient, db_s
     assert len(data) == 1
     assert data[0]["endpoint"] == f"{acc.external_account_id}/insights"
     assert data[0]["ad_account_name"] == acc.name
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: el sync sigue la paginación por cursor de Meta (call_api_paginated).
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_call_api_paginated_concatenates_all_pages():
+    """La unidad de paginación junta `data` de todas las páginas siguiendo
+    paging.cursors.after hasta que no haya paging.next."""
+    from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
+
+    class _TwoPageLimiter(MetaAPIRateLimiter):
+        def __init__(self):
+            super().__init__(ad_account_id=None)
+            self.calls = 0
+
+        async def call_api(self, endpoint, params, method="GET", access_token=""):
+            self.calls += 1
+            if not params.get("after"):
+                return {"data": [{"id": "a"}, {"id": "b"}],
+                        "paging": {"cursors": {"after": "CUR2"}, "next": "http://x/next"}}
+            return {"data": [{"id": "c"}], "paging": {"cursors": {}}}
+
+    lim = _TwoPageLimiter()
+    res = await lim.call_api_paginated("act_1/insights", {"level": "campaign"})
+    assert lim.calls == 2
+    assert [r["id"] for r in res["data"]] == ["a", "b", "c"]
+    assert "error" not in res
+
+
+class _PagingLimiter(_FakeLimiter):
+    """Limiter real de paginación (usa call_api_paginated heredado del limiter real),
+    pero con call_api canned que devuelve DOS páginas para los insights de campaña."""
+    def __init__(self):
+        super().__init__()
+        self.pages_served = 0
+
+    async def call_api(self, endpoint, params, method="GET", access_token=""):
+        if endpoint.endswith("/insights") and params.get("level") == "campaign" and not params.get("breakdowns"):
+            leads = [{"action_type": "offsite_complete_registration_add_meta_leads", "value": "10"}]
+            if not params.get("after"):
+                self.pages_served += 1
+                return {"data": [{"campaign_id": "c1", "campaign_name": "Camp 1", "date_start": "2026-06-01",
+                                  "spend": "100.0", "impressions": "1000", "reach": "800", "clicks": "20",
+                                  "frequency": "1.1", "actions": leads}],
+                        "paging": {"cursors": {"after": "CUR2"}, "next": "http://x/next"}}
+            self.pages_served += 1
+            return {"data": [{"campaign_id": "c1", "campaign_name": "Camp 1", "date_start": "2026-07-03",
+                              "spend": "200.0", "impressions": "2000", "reach": "1500", "clicks": "40",
+                              "frequency": "1.3", "actions": leads}],
+                    "paging": {"cursors": {}}}
+        return await super().call_api(endpoint, params, method=method, access_token=access_token)
+
+    # Usa la paginación REAL del limiter (no la sobrescribimos): recorre call_api.
+    async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+        from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
+        return await MetaAPIRateLimiter.call_api_paginated(
+            self, endpoint, params, method=method, access_token=access_token, max_pages=max_pages)
+
+
+@pytest.mark.asyncio
+async def test_real_sync_follows_pagination(db_session: AsyncSession):
+    from sqlalchemy import select, func
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    org, acc = await _make_org_and_account(db_session, slug="pag-org")
+    acc.set_access_token("valid-token")
+    await db_session.commit()
+
+    limiter = _PagingLimiter()
+    n = await MetaAdsSyncService(db_session)._sync_real_data(acc, "FULL", limiter)
+
+    # Ambas páginas de insights de campaña fueron pedidas y procesadas.
+    assert limiter.pages_served == 2
+    assert n == 2
+
+    dates = (await db_session.execute(
+        select(CampaignSnapshot.date).where(CampaignSnapshot.ad_account_id == acc.id)
+    )).scalars().all()
+    assert datetime.date(2026, 6, 1) in dates
+    assert datetime.date(2026, 7, 3) in dates  # el día reciente ya no se pierde
+
+    # Bug 2: los leads *_add_meta_leads se cuentan (10 por página = 20).
+    total_leads = (await db_session.execute(
+        select(func.sum(CampaignSnapshot.conversions)).where(CampaignSnapshot.ad_account_id == acc.id)
+    )).scalar()
+    assert total_leads == 20
+
+
+# ---------------------------------------------------------------------------
+# Bug 2: conteo de leads por whitelist (sin fallback difuso, sin doble-conteo).
+# ---------------------------------------------------------------------------
+def test_extract_conversions_whitelist_counts_meta_leads():
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    actions = [
+        {"action_type": "offsite_complete_registration_add_meta_leads", "value": "80"},
+        {"action_type": "offsite_search_add_meta_leads", "value": "57"},
+        {"action_type": "onsite_conversion.post_net_like", "value": "999"},  # "conversion" pero NO es lead
+        {"action_type": "post_engagement", "value": "500"},                  # ruido
+    ]
+    conv, convo = MetaAdsSyncService._extract_conversions_conversations(actions)
+    assert conv == 137   # 80 + 57 (calibra al 137 de Meta para ECQ003); likes/engagement excluidos
+    assert convo == 137  # sin evento de mensajería: proxy = leads
+
+
+def test_extract_conversions_counts_messaging_separately():
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    actions = [
+        {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "40"},
+        {"action_type": "onsite_conversion.post_net_like", "value": "5"},  # no debe contar como lead
+    ]
+    conv, convo = MetaAdsSyncService._extract_conversions_conversations(actions)
+    assert conv == 0     # ningún action type de lead de formulario
+    assert convo == 40   # solo el evento de mensajería
+
+
+# ---------------------------------------------------------------------------
+# Bug 5: presupuesto de campaña ABO derivado de la suma de adsets ACTIVOS.
+# ---------------------------------------------------------------------------
+class _ABOLimiter:
+    """Cuenta ABO: la campaña trae daily_budget null; el presupuesto vive en los adsets."""
+    ad_account_id = None
+
+    async def call_api(self, endpoint, params, method="GET", access_token=""):
+        d = "2026-07-03"
+        if endpoint.endswith("/insights"):
+            if params.get("breakdowns"):
+                return {"data": []}
+            level = params.get("level")
+            if level == "campaign":
+                return {"data": [{"campaign_id": "c1", "campaign_name": "ABO Camp", "date_start": d,
+                                  "spend": "50.0", "impressions": "5000", "reach": "4000", "clicks": "90",
+                                  "frequency": "1.2", "actions": []}]}
+            if level == "adset":
+                return {"data": [
+                    {"adset_id": "as1", "adset_name": "AS1", "campaign_id": "c1", "date_start": d,
+                     "spend": "30.0", "impressions": "3000", "reach": "2500", "clicks": "55", "actions": []},
+                    {"adset_id": "as2", "adset_name": "AS2", "campaign_id": "c1", "date_start": d,
+                     "spend": "20.0", "impressions": "2000", "reach": "1500", "clicks": "35", "actions": []},
+                ]}
+            return {"data": []}  # ads
+        if endpoint.endswith("/campaigns"):
+            return {"data": [{"id": "c1", "name": "ABO Camp", "status": "ACTIVE",
+                              "daily_budget": None, "lifetime_budget": None}]}
+        if endpoint.endswith("/adsets"):
+            return {"data": [
+                {"id": "as1", "name": "AS1", "campaign_id": "c1", "status": "ACTIVE",
+                 "daily_budget": "5000", "targeting": {}},   # 50.00
+                {"id": "as2", "name": "AS2", "campaign_id": "c1", "status": "ACTIVE",
+                 "daily_budget": "3000", "targeting": {}},   # 30.00
+                {"id": "as3", "name": "AS3", "campaign_id": "c1", "status": "PAUSED",
+                 "daily_budget": "9999", "targeting": {}},   # PAUSED → excluido de la suma
+            ]}
+        if endpoint.endswith(("/ads", "/adimages", "/customaudiences")):
+            return {"data": []}
+        return {"amount_spent": "10000", "spend_cap": "500000", "account_status": 1}
+
+    async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+        return await self.call_api(endpoint, params, method=method, access_token=access_token)
+
+
+@pytest.mark.asyncio
+async def test_campaign_budget_derived_from_active_adsets(db_session: AsyncSession):
+    from sqlalchemy import select
+    from app.services.meta_ads.sync import MetaAdsSyncService
+    from app.models.adset_snapshot import AdsetSnapshot
+
+    org, acc = await _make_org_and_account(db_session, slug="abo-org")
+    acc.set_access_token("valid-token")
+    await db_session.commit()
+
+    await MetaAdsSyncService(db_session)._sync_real_data(acc, "INCREMENTAL", _ABOLimiter())
+
+    snap = (await db_session.execute(
+        select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id)
+    )).scalar_one()
+    # 50.00 (as1 activo) + 30.00 (as2 activo); as3 PAUSED no cuenta.
+    assert snap.budget == 80.0
+
+    as1 = (await db_session.execute(
+        select(AdsetSnapshot).where(AdsetSnapshot.adset_id == "as1")
+    )).scalar_one()
+    assert as1.budget == 50.0
+
+
+# ---------------------------------------------------------------------------
+# Bug 4: un OAuthException 190 en los INSIGHTS (no solo en la verificación de
+# cuenta) también marca la cuenta EXPIRED.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_sync_marks_expired_on_190_in_insights(db_session: AsyncSession):
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    class _InsightsExpiredLimiter:
+        ad_account_id = None
+
+        async def call_api(self, endpoint, params, method="GET", access_token=""):
+            # La verificación de cuenta y la lista de campañas responden OK...
+            if endpoint.endswith("/campaigns"):
+                return {"data": [{"id": "c1", "name": "C1", "status": "ACTIVE", "daily_budget": "5000"}]}
+            if not endpoint.endswith("/insights") and not any(
+                endpoint.endswith(s) for s in ("/adsets", "/ads", "/adimages", "/customaudiences")
+            ):
+                return {"amount_spent": "0", "spend_cap": "0", "account_status": 1}
+            # ...pero los insights fallan con token expirado.
+            return {"error": {"message": "Session expired", "code": 190, "type": "OAuthException"}}
+
+        async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+            return await self.call_api(endpoint, params, method=method, access_token=access_token)
+
+    org, acc = await _make_org_and_account(db_session, slug="exp-insights-org")
+    acc.set_access_token("some-token")
+    await db_session.commit()
+
+    with pytest.raises(Exception):
+        await MetaAdsSyncService(db_session)._sync_real_data(acc, "FULL", _InsightsExpiredLimiter())
+    assert acc.status == "EXPIRED"

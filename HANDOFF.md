@@ -294,7 +294,7 @@ Estado al **2026-07-05**: todos los ítems de esta lista quedaron cerrados salvo
 
 ```bash
 # Tests del backend (Docker, sin Postgres/Redis reales — SQLite en archivo):
-cd backend && ./run_tests.sh -q              # esperado: 33 passed
+cd backend && ./run_tests.sh -q              # esperado: 55 passed
 
 # Tests del frontend:
 cd frontend && npx jest                       # esperado: 3 suites, 7 tests
@@ -317,6 +317,73 @@ docker compose run --rm backend alembic upgrade head
 - Migraciones vigentes: `c3d1e5a9f7b2`, `d5f2b1c8a3e4`, `e6a4c2f1b9d3`, `f1b7d9c4e2a6`
   (esta última crea `adset_snapshots`, `ad_snapshots`, `meta_creatives`, `custom_audiences`).
 - El plan detallado de P-2 (ya completo) está en [plan-p2-reporting.md](plan-p2-reporting.md).
+
+## 7. Bugs de discrepancia con Meta (2026-07-05) — 5 fixes relacionados
+
+Síntoma raíz: los datos de la app no coincidían con la plataforma de Meta (ej.
+campaña ECQ003 / `120207114665560569`: Meta 137 leads y S/407.90; la app 44 leads
+y S/62.27). Diagnosticados con evidencia en DB/logs y verificados contra el código.
+Ninguno se detectaba con los tests viejos porque el mock no reproducía la paginación
+ni los action types reales de Meta.
+
+**Bug 1 (CRÍTICO) — el sync no seguía la paginación de Meta.**
+`MetaAPIRateLimiter.call_api()` hacía UNA request y devolvía `data`, ignorando
+`paging.next`. Las llamadas de insights no ponían `limit`, así que Meta devolvía su
+página default de 25 filas (las más viejas). Con `last_30d × ~10 campañas ×
+time_increment:1` = ~300 filas/día, solo se guardaban 25 → `records_synced=25` exacto
+en todos los FULL. Fix: nuevo método `call_api_paginated()` en `rate_limiter.py` que
+sigue `paging.cursors.after` y concatena todas las páginas (tope 50, respeta el rate
+limiter). Aplicado a insights de campaña/adset/ad + breakdowns + las listas de
+estructura (campaigns/adsets/ads/adimages/customaudiences), todas con `limit` alto.
+Test: `test_call_api_paginated_concatenates_all_pages` (unidad) y
+`test_real_sync_follows_pagination` (fake limiter con 2 páginas, verifica que ambas
+fechas se guardan).
+
+**Bug 2 — el conteo de leads no reconocía los de este account.**
+`_extract_conversions_conversations` solo tenía `lead`/`fb_pixel_lead`/`lead_grouped`
+en la whitelist; los leads de esta cuenta llegan como
+`offsite_complete_registration_add_meta_leads` y `offsite_search_add_meta_leads`, que
+caían en un fallback difuso (`"lead" in at or "conversion" in at`) capaz de doble-contar
+o agarrar de más (ej. `onsite_conversion.post_net_like` matchea "conversion"). Fix:
+whitelist explícita `_LEAD_ACTION_TYPES` (incluye los `*_add_meta_leads`, grouped,
+fb_pixel_lead, lead, leadgen_grouped) y se eliminó el fallback difuso. Tests:
+`test_extract_conversions_whitelist_counts_meta_leads` (calibra 80+57=137) y
+`test_extract_conversions_counts_messaging_separately`.
+
+**Bug 3 — fecha off-by-one en el frontend.**
+`campaigns/[id]/page.tsx` usaba `new Date(s.date)` con `s.date` date-only
+("2026-07-03"), que JS parsea como medianoche UTC → en UTC-5 (Perú) mostraba el día
+anterior. Fix: helper `formatSnapshotDate` que parsea como fecha local
+(`new Date(\`${d}T00:00:00\`)`). Verificado con `TZ=America/Lima`: antes 2/7, ahora 3/7.
+El resto de fechas del front usan timestamp con hora (dashboard/acciones), esas estaban
+bien.
+
+**Bug 4 — la cuenta no quedaba EXPIRED de forma consistente ante 190.**
+`_maybe_mark_expired` solo se llamaba en el error de la verificación inicial de cuenta;
+un `OAuthException code 190` en los insights/estructura/breakdowns no marcaba la cuenta.
+Fix: se llama `_maybe_mark_expired` en TODOS los caminos de error (campaigns, insights de
+campaña/adset/ad, inventario, breakdowns). Test:
+`test_sync_marks_expired_on_190_in_insights`. (El TTL asumido de 60 días del token sigue
+como hint blando en `meta_credential.py`; ahora la señal fiable es el 190 real.)
+
+**Bug 5 — presupuesto diario = 0 en la lista de campañas (cuentas ABO).**
+`campaign_snapshots.budget` venía 0 porque estas campañas usan presupuesto a nivel ADSET
+(ABO), así que el campaign-level `daily_budget/lifetime_budget` viene null. Fix: se
+agregó columna `budget` a `AdsetSnapshot` (+ migración Alembic `a1b2c3d4e5f6`), se puebla
+en `_sync_real_adsets` desde el `daily_budget/lifetime_budget` del adset, y cuando el
+budget de campaña es 0 se setea `campaign.budget = suma de daily_budget de adsets
+ACTIVOS`. Test: `test_campaign_budget_derived_from_active_adsets` (50+30, PAUSED
+excluido).
+
+**Estado tests:** 55 backend (`./run_tests.sh -q`) + 7 frontend (`npx jest`), todos en
+verde.
+
+**⚠️ Pendiente de validación end-to-end contra Meta real:** falta correr un FULL sync
+con un token de Meta VIGENTE sobre `act_992953052009562` para confirmar en vivo
+(`records_synced` >> 25 ≈ 300, ~30 días continuos, ECQ003 ≈ 137 leads / S/407.90,
+presupuesto ya no S/0.00). El token de la cuenta probablemente esté EXPIRED — reconectar
+vía Configuración con Graph API Explorer antes de validar. La calibración exacta del
+"137" del Bug 2 debe confirmarse con los datos reales una vez arreglada la paginación.
 
 ## 📌 Workflow
 
