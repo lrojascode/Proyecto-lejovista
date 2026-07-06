@@ -42,6 +42,7 @@ class _FakeAsyncClient:
         return False
 
     async def post(self, url, json=None, headers=None):
+        self.captured_json = json
         if self._exc:
             raise self._exc
         return self._response
@@ -164,3 +165,35 @@ async def test_suggest_campaign_copy_no_api_key_uses_mock(monkeypatch):
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
+
+
+@pytest.mark.asyncio
+async def test_suggest_campaign_copy_includes_winning_ad_copy_in_prompt(monkeypatch):
+    """Fase 6b: el copy real del anuncio ganador (capturado por el sync) debe
+    llegar al prompt como inspiración fuerte, no solo el nombre/costo genérico
+    de winning_context."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+
+    fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
+        "choices": [{"message": {"content": json.dumps({
+            "headline": "H", "primary_text": "P", "description": "D", "welcome_message": "W",
+        })}}]
+    })))
+    monkeypatch.setattr(httpx, "AsyncClient", fake_client)
+
+    org, acc = _org_and_acc()
+    await OpenRouterClient().suggest_campaign_copy(
+        org, acc, "Cable GPT", "Surquillo",
+        winning_ad_copy={
+            "title": "El copy que ya funcionó",
+            "body": "Cuerpo real ganador con gancho probado",
+            "cta_type": "WHATSAPP_MESSAGE",
+        },
+    )
+
+    sent_messages = fake_client.captured_json["messages"]
+    user_message = next(m["content"] for m in sent_messages if m["role"] == "user")
+    assert "El copy que ya funcionó" in user_message
+    assert "Cuerpo real ganador con gancho probado" in user_message

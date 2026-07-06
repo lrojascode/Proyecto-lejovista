@@ -117,8 +117,11 @@ export const api = {
   getOrg: () => apiRequest("/api/v1/organizations/my", "GET"),
   updateOrg: (data: any) => apiRequest("/api/v1/organizations/my", "PUT", data),
   getAiModels: () => apiRequest("/api/v1/organizations/ai-models", "GET"),
-  getAdAccounts: () => apiRequest("/api/v1/organizations/my/ad-accounts", "GET"),
+  getAdAccounts: (includeArchived: boolean = false) =>
+    apiRequest(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),
   connectAdAccount: (data: any) => apiRequest("/api/v1/organizations/my/ad-accounts", "POST", data),
+  archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),
+  restoreAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/restore`, "POST"),
 
   // --- CAMPAIGNS ---
   getRecentCampaigns: () => apiRequest("/api/v1/campaigns/recent", "GET"),

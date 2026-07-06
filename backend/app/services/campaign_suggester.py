@@ -33,10 +33,20 @@ class CampaignSuggester:
         report = await ReportBuilder(self.db).build(ad_account)
 
         campaigns = report["campaigns"]
+        ads = report["ads"]
         segmentation = report["segmentation"]
         # `campaigns` ya viene ordenado por costo/conversación ascendente (ReportBuilder._agg_campaigns).
         winners = [c for c in campaigns if c["conversations"] > 0]
         best = winners[0] if winners else None
+
+        # `ads` también viene ordenado por costo/conversación ascendente
+        # (ReportBuilder._agg_ads). El copy real (título/cuerpo) del anuncio
+        # ganador — antes el sync solo capturaba la imagen, nunca el texto —
+        # permite que el LLM se inspire en lo que YA funcionó, no solo en el
+        # estilo genérico del playbook (Fase 3B).
+        winning_ad = next(
+            (a for a in ads if a["conversations"] > 0 and a.get("creative_body")), None
+        )
 
         # Playbook §4: "detecta desperdicio" — placements con gasto pero 0 conversiones.
         placements = segmentation.get("placements", {})
@@ -75,6 +85,11 @@ class CampaignSuggester:
             evidence.append(f"Dispositivo con menor costo por conversión: {best_device}.")
         if best_age_range:
             evidence.append(f"Rango de edad con menor costo por conversión: {best_age_range}.")
+        if winning_ad:
+            evidence.append(
+                f"Copy real capturado del anuncio '{winning_ad['name']}' "
+                f"(S/.{winning_ad['cost_per_conv']:.2f} por conversación) — disponible como inspiración."
+            )
 
         return {
             "has_history": best is not None,
@@ -92,6 +107,11 @@ class CampaignSuggester:
                 "ctr": best["ctr"],
                 "conversations": best["conversations"],
             } if best else None,
+            "winning_ad_copy": {
+                "title": winning_ad["creative_title"],
+                "body": winning_ad["creative_body"],
+                "cta_type": winning_ad["creative_cta_type"],
+            } if winning_ad else None,
             "evidence": evidence,
         }
 

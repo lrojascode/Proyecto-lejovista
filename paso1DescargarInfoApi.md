@@ -1,3 +1,23 @@
+> ## ⚠️ DEPRECADO (2026-07-06) — no usar para operar cuentas reales
+>
+> Este documento describe el flujo **manual** de descarga de información: pegar un
+> token de Meta real en una sesión de chat con una IA y pedirle que ejecute hasta 15
+> queries GET a mano para armar un Master Brief HTML. Ya no es necesario —
+> **`MetaAdsSyncService` + `ReportBuilder` automatizan esto por completo**, corriendo en
+> segundo plano vía Celery con las mismas pausas anti-detección descritas aquí, y el
+> Master Brief se genera y visualiza directamente en la app (`/reporte`), sin pegar
+> ningún token en un chat.
+>
+> **Riesgo de negocio (hallazgo S-5 del HANDOFF):** pegar un token real de Meta en el
+> texto de una sesión de chat lo deja circulando en historiales, capturas de pantalla o
+> logs de terceros — un riesgo de compliance que la app evita por completo (los tokens
+> se guardan cifrados en la base de datos, nunca en texto plano en un chat). Se conserva
+> este archivo como referencia histórica del razonamiento anti-detección (timing,
+> límites por sesión) ya incorporado al código de `MetaAPIRateLimiter` — no lo uses para
+> operar una cuenta real pegando un token.
+
+---
+
 Tengo una cuenta de Meta Ads y necesito que descargues TODA la información disponible
   vía API y construyas un HTML master brief de análisis y optimización.
   ════════════════════════════════════════

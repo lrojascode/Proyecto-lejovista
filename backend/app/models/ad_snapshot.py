@@ -1,6 +1,6 @@
 from datetime import datetime, date
 import uuid
-from sqlalchemy import String, Integer, Float, DateTime, Date, ForeignKey, Index, UniqueConstraint
+from sqlalchemy import String, Integer, Float, Text, DateTime, Date, ForeignKey, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -17,6 +17,14 @@ class AdSnapshot(Base):
     ad_id: Mapped[str] = mapped_column(String, index=True)
     creative_id: Mapped[str] = mapped_column(String, nullable=True)
     name: Mapped[str] = mapped_column(String)
+
+    # Copy real del creativo (título/cuerpo/CTA de Meta) — antes solo se
+    # guardaba la imagen (MetaCreative), nunca el texto del anuncio ganador.
+    # Permite que la IA se inspire en el copy que ya funcionó, no solo en el
+    # estilo genérico del playbook (Fase 3B del plan de creación de campañas).
+    creative_title: Mapped[str] = mapped_column(String, nullable=True)
+    creative_body: Mapped[str] = mapped_column(Text, nullable=True)
+    creative_cta_type: Mapped[str] = mapped_column(String, nullable=True)
 
     spend: Mapped[float] = mapped_column(Float, default=0.0)
     reach: Mapped[int] = mapped_column(Integer, default=0)

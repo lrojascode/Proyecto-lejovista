@@ -467,6 +467,7 @@ class OpenRouterClient:
         product_name: str,
         zone: str,
         winning_context: Optional[Dict[str, Any]] = None,
+        winning_ad_copy: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, str]:
         """
         Fase 3B del plan de creación de campañas: genera el copy de una campaña
@@ -475,6 +476,11 @@ class OpenRouterClient:
         URGENCIA → CTA). El LLM SOLO redacta texto — las cifras (presupuesto,
         placements, edad) las decide `CampaignSuggester` (Fase 3A) de forma
         determinista, nunca el LLM.
+
+        `winning_ad_copy` (título/cuerpo/CTA reales del anuncio ganador,
+        capturados por el sync — antes solo se guardaba la imagen) es
+        inspiración más fuerte que `winning_context`: el LLM puede reutilizar
+        frases o ganchos que ya demostraron funcionar, no solo el tono.
         """
         if settings.MOCK_SERVICES or not self.api_key:
             return self._generate_mock_copy(product_name, zone, winning_context)
@@ -493,6 +499,16 @@ class OpenRouterClient:
                 f"el tono, NUNCA menciones estas cifras en el copy): '{winning_context.get('name')}' — "
                 f"S/.{winning_context.get('cost_per_conv', 0):.2f} por conversación, "
                 f"CTR {winning_context.get('ctr', 0):.2f}%."
+            )
+
+        winning_copy_block = ""
+        if winning_ad_copy and winning_ad_copy.get("body"):
+            winning_copy_block = (
+                "\nCopy REAL del anuncio más eficiente de esta cuenta (puedes reutilizar frases, "
+                "ganchos o la estructura si encajan con el producto nuevo — es texto que ya "
+                "demostró funcionar, no una cifra):\n"
+                f"Título: {winning_ad_copy.get('title') or '(sin título)'}\n"
+                f"Cuerpo: {winning_ad_copy.get('body')}\n"
             )
 
         system_prompt = (
@@ -515,7 +531,8 @@ class OpenRouterClient:
         user_prompt = (
             f"Producto o servicio: {product_name}\n"
             f"Zona: {zone}\n"
-            f"{winning_summary}\n\n"
+            f"{winning_summary}\n"
+            f"{winning_copy_block}\n"
             "Genera el copy para una campaña nueva de mensajes de WhatsApp de esta marca."
         )
 

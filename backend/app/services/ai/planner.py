@@ -215,6 +215,7 @@ class AIPlanner:
             copy = await OpenRouterClient().suggest_campaign_copy(
                 org, ad_account, product_name=product_name, zone=zone,
                 winning_context=suggestion.get("winning_campaign"),
+                winning_ad_copy=suggestion.get("winning_ad_copy"),
             )
 
             brand = derive_brand_code(ad_account)

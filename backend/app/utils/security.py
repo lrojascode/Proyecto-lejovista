@@ -200,6 +200,7 @@ async def get_active_ad_account_id(
         q = select(AdAccount).where(
             AdAccount.id == header_value,
             AdAccount.organization_id == org_id,
+            AdAccount.status != "ARCHIVED",
         )
         res = await db.execute(q)
         if not res.scalar_one_or_none():
@@ -209,7 +210,12 @@ async def get_active_ad_account_id(
             )
         return header_value
 
-    q = select(AdAccount.id).where(AdAccount.organization_id == org_id)
+    # Las cuentas archivadas (soft-delete) no cuentan para la auto-selección ni
+    # para el aviso de "elige una cuenta" — quedan fuera del uso normal.
+    q = select(AdAccount.id).where(
+        AdAccount.organization_id == org_id,
+        AdAccount.status != "ARCHIVED",
+    )
     res = await db.execute(q)
     ids = res.scalars().all()
 

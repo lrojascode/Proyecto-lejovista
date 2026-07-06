@@ -101,7 +101,14 @@ class MetaAdsSyncService:
                 "budget": 70.0,  # Presupuesto diario S/.70
                 "ctr_base": 1.4, # 1.4%
                 "cpl_target": 1.50, # S/.1.50
-                "reels_better": True
+                "reels_better": True,
+                "creative_title": "Cable GPT en Cercado 🔥",
+                "creative_body": (
+                    "¿Buscas cable de confianza en Cercado? 😩\n\n"
+                    "✅ Entrega rápida\n✅ Precios justos\n✅ Atención inmediata\n\n"
+                    "📲 Escríbenos por WhatsApp y cotiza sin compromiso."
+                ),
+                "creative_cta_type": "WHATSAPP_MESSAGE",
             },
             {
                 "id": "camp_vulcanizado",
@@ -279,6 +286,9 @@ class MetaAdsSyncService:
                         creative_id=f"creative_{c['id']}", name=f"{c['name']}_{a['label']}_Cuadrado",
                         spend=a_spend, reach=a_reach, impressions=a_impr, clicks=a_clicks,
                         conversions=a_conv, conversations=a_conv, cpl=a_cpl, ctr=a_ctr, date=sync_date,
+                        creative_title=c.get("creative_title"),
+                        creative_body=c.get("creative_body"),
+                        creative_cta_type=c.get("creative_cta_type"),
                     ))
 
         # --- Inventario de creativos y audiencias (una vez por cuenta) ---
@@ -630,15 +640,24 @@ class MetaAdsSyncService:
         return dict(adset_budget_by_campaign)
 
     async def _sync_real_ads(self, ad_account, token, limiter, date_preset):
-        # Mapa ad_id -> creative_id
+        # Mapa ad_id -> {creative_id, title, body, cta_type}. El copy real
+        # (title/body/call_to_action_type) del anuncio ganador nunca se
+        # capturaba — solo la imagen (MetaCreative) — así que la IA no podía
+        # inspirarse en el texto que ya funcionó (Fase 3B).
         creative_map = {}
         ads_struct = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/ads",
-            {"fields": "id,creative", "limit": 200}, access_token=token,
+            {"fields": "id,creative{id,title,body,call_to_action_type}", "limit": 200}, access_token=token,
         )
         if not self._has_error(ads_struct):
             for a in ads_struct.get("data", []):
-                creative_map[a.get("id")] = (a.get("creative", {}) or {}).get("id")
+                creative = a.get("creative", {}) or {}
+                creative_map[a.get("id")] = {
+                    "id": creative.get("id"),
+                    "title": creative.get("title"),
+                    "body": creative.get("body"),
+                    "cta_type": creative.get("call_to_action_type"),
+                }
 
         insights = await limiter.call_api_paginated(
             f"{ad_account.external_account_id}/insights",
@@ -674,7 +693,11 @@ class MetaAdsSyncService:
                 self.db.add(row)
             row.campaign_id = item.get("campaign_id", "")
             row.adset_id = item.get("adset_id", "")
-            row.creative_id = creative_map.get(ad_id)
+            creative_info = creative_map.get(ad_id) or {}
+            row.creative_id = creative_info.get("id")
+            row.creative_title = creative_info.get("title")
+            row.creative_body = creative_info.get("body")
+            row.creative_cta_type = creative_info.get("cta_type")
             row.name = item.get("ad_name", "")
             row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr

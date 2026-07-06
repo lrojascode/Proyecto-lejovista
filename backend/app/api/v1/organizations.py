@@ -13,7 +13,7 @@ from app.schemas.schemas import (
 from app.utils.security import get_current_user
 from app.workers.tasks import sync_ad_account
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
@@ -57,12 +57,64 @@ async def update_my_organization(
 
 @router.get("/my/ad-accounts", response_model=List[AdAccountResponse])
 async def list_my_ad_accounts(
+    include_archived: bool = False,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    q = select(AdAccount).where(AdAccount.organization_id == current_user.organization_id)
+    """
+    Por defecto excluye las cuentas archivadas (soft-delete, ver
+    archive_ad_account) — así el selector global y el resto de la app no las
+    ofrecen para elegir. La pantalla de Configuración pide
+    `include_archived=true` para poder mostrarlas y ofrecer "Restaurar".
+    """
+    conditions = [AdAccount.organization_id == current_user.organization_id]
+    if not include_archived:
+        conditions.append(AdAccount.status != "ARCHIVED")
+    q = select(AdAccount).where(*conditions)
     res = await db.execute(q)
     return res.scalars().all()
+
+@router.post("/my/ad-accounts/{ad_account_id}/archive", response_model=AdAccountResponse)
+async def archive_ad_account(
+    ad_account_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Soft-delete de una cuenta publicitaria (HANDOFF §10): en vez de borrar de
+    verdad (irreversible, y `api_call_logs` no tiene `ondelete` configurado —
+    fallaría con un error de integridad referencial), solo se marca
+    `status=ARCHIVED`. Conserva todo el historial (snapshots, insights,
+    acciones) y se puede revertir con `restore_ad_account`.
+    """
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+
+    acc.status = "ARCHIVED"
+    db.add(acc)
+    await db.commit()
+    await db.refresh(acc)
+    return acc
+
+@router.post("/my/ad-accounts/{ad_account_id}/restore", response_model=AdAccountResponse)
+async def restore_ad_account(
+    ad_account_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Revierte el archivado de archive_ad_account."""
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+    if acc.status != "ARCHIVED":
+        raise HTTPException(status_code=400, detail="La cuenta no está archivada.")
+
+    acc.status = "ACTIVE"
+    db.add(acc)
+    await db.commit()
+    await db.refresh(acc)
+    return acc
 
 @router.get("/my/pages", response_model=List[MetaPageResponse])
 async def list_my_pages(

@@ -23,11 +23,13 @@ export default function Settings() {
   
   const [msg, setMsg] = useState("");
   const [connMsg, setConnMsg] = useState("");
+  const [archiveMsg, setArchiveMsg] = useState("");
+  const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
       const orgData = await api.getOrg();
-      const accountsData = await api.getAdAccounts();
+      const accountsData = await api.getAdAccounts(true); // incluye archivadas, para poder restaurarlas
       setOrg(orgData);
       setAccounts(accountsData);
       setMaxBudget(orgData.max_budget);
@@ -59,6 +61,29 @@ export default function Settings() {
       setMsg("Configuración de organización guardada con éxito.");
     } catch (err: any) {
       setMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleArchiveAccount = async (accId: string) => {
+    setArchiveMsg("");
+    try {
+      await api.archiveAdAccount(accId);
+      setConfirmArchiveId(null);
+      // Si era la cuenta activa, ya no debe quedar seleccionada.
+      if (activeAdAccountId === accId) setActiveAdAccountId("");
+      await fetchData();
+    } catch (err: any) {
+      setArchiveMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleRestoreAccount = async (accId: string) => {
+    setArchiveMsg("");
+    try {
+      await api.restoreAdAccount(accId);
+      await fetchData();
+    } catch (err: any) {
+      setArchiveMsg(`Error: ${err.message}`);
     }
   };
 
@@ -164,24 +189,37 @@ export default function Settings() {
           {/* List connected */}
           <div className="glass-card">
             <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem" }}>Cuentas Publicitarias Conectadas</h3>
+            {archiveMsg && (
+              <div style={{
+                background: "rgba(235, 87, 87, 0.1)", border: "1px solid rgba(235, 87, 87, 0.2)",
+                color: "var(--danger)", padding: "0.5rem 0.75rem", borderRadius: "6px",
+                fontSize: "0.85rem", marginBottom: "1rem",
+              }}>
+                {archiveMsg}
+              </div>
+            )}
             {accounts.length === 0 ? (
               <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No tienes ninguna cuenta conectada.</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                 {accounts.map((acc) => {
                   const isActive = acc.id === activeAdAccountId;
+                  const isArchived = acc.status === "ARCHIVED";
                   return (
                     <div
                       key={acc.id}
                       className="card-subtle"
-                      onClick={() => setActiveAdAccountId(acc.id)}
-                      title="Establecer como cuenta activa"
+                      onClick={() => !isArchived && setActiveAdAccountId(acc.id)}
+                      title={isArchived ? undefined : "Establecer como cuenta activa"}
                       style={{
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
-                        cursor: "pointer",
+                        cursor: isArchived ? "default" : "pointer",
+                        opacity: isArchived ? 0.6 : 1,
                         borderColor: isActive ? "var(--color-signal-teal)" : undefined,
+                        flexWrap: "wrap",
+                        gap: "0.75rem",
                       }}
                     >
                       <div>
@@ -201,14 +239,60 @@ export default function Settings() {
                             El token expiró. Reconecta la cuenta abajo con un token nuevo.
                           </p>
                         )}
+                        {isArchived && (
+                          <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
+                            Archivada — oculta del selector y de "Crear campaña". Su historial se conserva intacto.
+                          </p>
+                        )}
                       </div>
-                      {acc.status === "EXPIRED" ? (
-                        <span className="badge badge-danger">Token expirado</span>
-                      ) : acc.status === "SUSPENDED" ? (
-                        <span className="badge badge-warning">Suspendida</span>
-                      ) : (
-                        <span className="badge badge-success">Activo</span>
-                      )}
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                        {isArchived ? (
+                          <span className="badge">Archivada</span>
+                        ) : acc.status === "EXPIRED" ? (
+                          <span className="badge badge-danger">Token expirado</span>
+                        ) : acc.status === "SUSPENDED" ? (
+                          <span className="badge badge-warning">Suspendida</span>
+                        ) : (
+                          <span className="badge badge-success">Activo</span>
+                        )}
+
+                        {isArchived ? (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={(e) => { e.stopPropagation(); handleRestoreAccount(acc.id); }}
+                          >
+                            Restaurar
+                          </button>
+                        ) : confirmArchiveId === acc.id ? (
+                          <>
+                            <span style={{ fontSize: "12px", color: "var(--color-coral-red)" }}>¿Archivar {acc.name}?</span>
+                            <button
+                              type="button"
+                              className="btn-secondary btn-sm"
+                              onClick={(e) => { e.stopPropagation(); handleArchiveAccount(acc.id); }}
+                            >
+                              Sí, archivar
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary btn-sm"
+                              onClick={(e) => { e.stopPropagation(); setConfirmArchiveId(null); }}
+                            >
+                              Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            onClick={(e) => { e.stopPropagation(); setConfirmArchiveId(acc.id); }}
+                          >
+                            Archivar
+                          </button>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

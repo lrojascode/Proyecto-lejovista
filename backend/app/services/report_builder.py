@@ -171,6 +171,7 @@ class ReportBuilder:
                 "name": s.name, "adset_id": s.adset_id, "creative_id": s.creative_id,
                 "spend": 0.0, "reach": 0, "impressions": 0, "clicks": 0,
                 "conversions": 0, "conversations": 0,
+                "creative_title": None, "creative_body": None, "creative_cta_type": None,
             })
             a["name"] = s.name
             a["spend"] += s.spend
@@ -179,6 +180,12 @@ class ReportBuilder:
             a["clicks"] += s.clicks
             a["conversions"] += s.conversions
             a["conversations"] += s.conversations
+            # El copy no cambia día a día — nos quedamos con el más reciente
+            # que traiga texto (algunos días pueden venir sin este dato).
+            if s.creative_body:
+                a["creative_title"] = s.creative_title
+                a["creative_body"] = s.creative_body
+                a["creative_cta_type"] = s.creative_cta_type
 
         out = []
         for adid, a in agg.items():
@@ -190,6 +197,8 @@ class ReportBuilder:
                 "creative_id": a["creative_id"], "spend": round(a["spend"], 2), "reach": a["reach"],
                 "impressions": a["impressions"], "ctr": round(ctr, 2), "conversations": conv,
                 "cost_per_conv": round(cost, 2),
+                "creative_title": a["creative_title"], "creative_body": a["creative_body"],
+                "creative_cta_type": a["creative_cta_type"],
             })
         out.sort(key=lambda x: x["cost_per_conv"])
         return out

@@ -187,6 +187,7 @@ async def get_campaign_suggestion(
     q_acc = select(AdAccount).where(
         AdAccount.id == ad_account_id,
         AdAccount.organization_id == current_user.organization_id,
+        AdAccount.status != "ARCHIVED",
     )
     res_acc = await db.execute(q_acc)
     ad_account = res_acc.scalar_one_or_none()
@@ -199,6 +200,7 @@ async def get_campaign_suggestion(
     copy = await OpenRouterClient().suggest_campaign_copy(
         org, ad_account, product_name=product_name, zone=zone,
         winning_context=suggestion.get("winning_campaign"),
+        winning_ad_copy=suggestion.get("winning_ad_copy"),
     )
 
     return {
@@ -213,6 +215,7 @@ async def get_campaign_suggestion(
         "best_device": suggestion["best_device"],
         "best_age_range": suggestion["best_age_range"],
         "winning_campaign": suggestion["winning_campaign"],
+        "winning_ad_copy": suggestion["winning_ad_copy"],
         "evidence": suggestion["evidence"],
         "copy": copy,
     }
@@ -232,7 +235,8 @@ async def create_campaign(
     # 0. Validar que la cuenta destino pertenezca al tenant autenticado.
     q_acc = select(AdAccount).where(
         AdAccount.id == request.ad_account_id,
-        AdAccount.organization_id == tenant_id
+        AdAccount.organization_id == tenant_id,
+        AdAccount.status != "ARCHIVED",
     )
     res_acc = await db.execute(q_acc)
     ad_account = res_acc.scalar_one_or_none()

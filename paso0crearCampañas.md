@@ -1,3 +1,23 @@
+> ## ⚠️ DEPRECADO (2026-07-06) — no usar para operar cuentas reales
+>
+> Este documento describe el flujo **manual** de creación de campañas: pegar un token de
+> Meta real en una sesión de chat con una IA y pedirle que ejecute los 6 pasos a mano. Ya
+> no es necesario — **LejoVista automatiza este flujo completo** (Fases 0-6 del plan de
+> creación de campañas, ver [PLAN-CREACION-CAMPANAS.md](PLAN-CREACION-CAMPANAS.md)):
+> sugerencia de parámetros por IA basada en el histórico real, creación siempre en
+> `PAUSED`, anti-bloqueo (tope de sesión), y activación manual desde Ads Manager — usa
+> el formulario **Campañas → Crear Campaña** de la app en vez de este documento.
+>
+> **Riesgo de negocio (hallazgo S-5 del HANDOFF):** pegar un token real de Meta en el
+> texto de una sesión de chat lo deja circulando en historiales, capturas de pantalla o
+> logs de terceros — un riesgo de compliance que la app evita por completo (los tokens
+> se guardan cifrados en la base de datos, nunca en texto plano en un chat). Se conserva
+> este archivo como referencia histórica de las reglas de negocio (geo, placements,
+> nomenclatura) que ya están incorporadas al código de la app — no lo uses para operar
+> una cuenta real pegando un token.
+
+---
+
 PASO 0 — ANTES DE TOCAR LA API
   ════════════════════════════════════════
   1. Lee el brief master del cliente:

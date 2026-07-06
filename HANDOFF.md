@@ -82,7 +82,7 @@ API y página `/reporte`). 33 tests backend + 7 frontend.
 | S-2 | Auth en `/sync` | ✅ |
 | S-3 | Auth en WebSocket | ✅ |
 | S-4 | Anti-detección / Meta ToS | ✅ |
-| S-5 | Tokens en prompts manuales (`paso0`/`paso1`) | ❌ **Sin tocar** — es un workflow externo a la app, no un cambio de código. Sigue siendo un riesgo de negocio/compliance, no técnico. |
+| S-5 | Tokens en prompts manuales (`paso0`/`paso1`) | ✅ **Cerrado (2026-07-06)** — archivos deprecados con banner explícito, apuntan al flujo automatizado de la app. Se conservan como referencia histórica. |
 | S-6 | Expiración de tokens | ✅ + reforzado: el sync real ahora marca la cuenta `EXPIRED` ante `OAuthException code 190` (esto se agregó **después** del handoff anterior, ya en esta línea de trabajo). |
 | S-7 | `print(DEBUG)` | ✅ |
 | S-8 | Tenant activo real | ✅ |
@@ -243,8 +243,11 @@ Estado al **2026-07-05**: todos los ítems de esta lista quedaron cerrados salvo
    openrouter) se persiste en `AdAccount.narrative_provider` junto a
    `narrative_model`, expuesto en `GET /reports/brief-data`. Validado en vivo:
    `narrative_model=gpt-5.4-mini`, `narrative_provider=openai`.
-10. **S-5**: sigue sin tocar — decisión de negocio (deprecar `paso0`/`paso1`), no una
-    tarea de código salvo que el usuario lo pida explícitamente.
+10. ✅ **S-5** — **Cerrado (2026-07-06)**, a pedido explícito del usuario: `paso0crearCampañas.md`
+    y `paso1DescargarInfoApi.md` marcados como deprecados (banner al inicio de cada
+    archivo) — apuntan al flujo automatizado de la app (`/campaigns/new`, `/reporte`) en
+    vez de pegar un token real en una sesión de chat. Se conservan como referencia
+    histórica de las reglas de negocio ya incorporadas al código; no se borraron.
 
 ### 4.1 — Features nuevas pedidas por el usuario (2026-07-05)
 
@@ -444,12 +447,21 @@ org tenía 2+ cuentas — cerraba, de paso, el resto de la duplicación A-3 para
   testing (no usar por ahora).
 - Permiso `whatsapp_business_management` en el token, si se quiere que el descubrimiento
   automático de WhatsApp funcione sin el fallback manual.
-- Copy del anuncio ganador real nunca se capturó en el sync (solo `image_hash`) — la IA
-  genera copy nuevo con el estilo del playbook, no copia literalmente el mejor anuncio.
-- S-5 (sección 2, sigue igual): tokens en texto plano en `paso0`/`paso1`, decisión de
-  negocio pendiente.
 
-## 10. Propuesta (sin implementar): permitir eliminar una cuenta publicitaria
+**Cerrado en esta misma sesión (2026-07-06), a pedido del usuario:**
+- ✅ Soft-delete de cuenta publicitaria: `AdAccount.status="ARCHIVED"` vía
+  `POST /organizations/my/ad-accounts/{id}/archive` (+ `/restore`), excluida de
+  `list_my_ad_accounts` por defecto, de `get_active_ad_account_id` y de la creación de
+  campañas. UI en Configuración con confirmación antes de archivar. 7 tests nuevos.
+- ✅ Copy del anuncio ganador real: `_sync_real_ads` ahora captura
+  `creative{title,body,call_to_action_type}` (antes solo `image_hash`); nuevas columnas
+  `creative_title/body/cta_type` en `ad_snapshots` (migración `f2b3c4d5e6a7`).
+  `CampaignSuggester` expone `winning_ad_copy` y `OpenRouterClient.suggest_campaign_copy`
+  lo usa como inspiración fuerte (puede reutilizar frases/ganchos reales, no solo tono).
+  6 tests nuevos.
+- ✅ S-5 — ver arriba, archivos deprecados con banner.
+
+## 10. ✅ Eliminar/archivar cuenta publicitaria (implementado 2026-07-06)
 
 Planteado por el usuario (2026-07-06) a raíz de tener cuentas de prueba conectadas
 (Agencia Kibo, ITS IN) sin forma de desconectarlas. Hoy no existe ningún endpoint ni UI
@@ -487,7 +499,15 @@ para eliminar un `AdAccount` — análisis de qué implicaría antes de construi
 borrar nada — reversible, no toca el problema del `api_call_logs` FK, y ya existe el
 campo `status` en el modelo. Más barato de construir y sin el riesgo de pérdida de datos.
 
-No implementado — queda para cuando el usuario decida qué camino prefiere.
+**Implementado con la alternativa más segura propuesta abajo (soft-delete, no borrado real):**
+`POST /organizations/my/ad-accounts/{id}/archive` marca `status=ARCHIVED` (y `/restore`
+revierte). Excluida por defecto de `list_my_ad_accounts` (`include_archived=true` para
+verla en Configuración), de `get_active_ad_account_id` (no seleccionable ni cuenta para
+"elige una cuenta") y de la creación de campañas. Nada se borra — el historial
+(snapshots, insights, acciones) queda intacto y la cuenta se puede restaurar en cualquier
+momento. UI en Configuración: tarjeta atenuada con badge "Archivada" + botón "Restaurar";
+las activas piden confirmación inline ("¿Archivar X?") antes de archivar. 7 tests nuevos
+(`test_ad_account_archive.py`).
 
 ## 📌 Workflow
 
