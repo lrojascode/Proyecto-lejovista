@@ -424,6 +424,71 @@ solo los datos de esa cuenta — probado con los 5 campañas reales y las 30 lla
 historial de `act_992953052009562`, sin mezclar con las otras cuentas de la misma
 organización.
 
+## 9. Creación de campañas — 6 fases + 3 bugs encontrados depurando en vivo (2026-07-06)
+
+Ver [PLAN-CREACION-CAMPANAS.md](PLAN-CREACION-CAMPANAS.md) para el detalle completo de
+las 6 fases (Saga sobre stack real, persistencia de `CampaignDraft`, PAUSED/naming por
+marca/anti-bloqueo, motor de sugerencia 3A+3B+3C con LLM, descubrimiento de página+WhatsApp,
+UI, video/UGC). Resumen de lo que quedó pendiente ahí, más 3 bugs reales encontrados
+depurando contra la cuenta real de Agencia Kibo (`act_1317785970189038`) después del
+"listo": botón de entrada nunca cableado en la lista de Campañas, WhatsApp vacío por falta
+del permiso `whatsapp_business_management` del token (Meta omite el campo sin error — mismo
+patrón traicionero que el bug de `customaudiences`/`approximate_count`), y un bug de
+multi-cuenta real en `CampaignValidator` (resolvía el token de Meta por `organization_id`
+sin considerar qué `AdAccount` específica, rompiendo con `MultipleResultsFound` en cuanto la
+org tenía 2+ cuentas — cerraba, de paso, el resto de la duplicación A-3 para este flujo).
+
+**Sigue pendiente, sin cerrar:**
+- Validación end-to-end completa (los 4 objetos creados en Meta real) — bloqueada ahora
+  mismo por el spend cap/fondos de Kibo; ITS IN tiene el token expirado y está en fase de
+  testing (no usar por ahora).
+- Permiso `whatsapp_business_management` en el token, si se quiere que el descubrimiento
+  automático de WhatsApp funcione sin el fallback manual.
+- Copy del anuncio ganador real nunca se capturó en el sync (solo `image_hash`) — la IA
+  genera copy nuevo con el estilo del playbook, no copia literalmente el mejor anuncio.
+- S-5 (sección 2, sigue igual): tokens en texto plano en `paso0`/`paso1`, decisión de
+  negocio pendiente.
+
+## 10. Propuesta (sin implementar): permitir eliminar una cuenta publicitaria
+
+Planteado por el usuario (2026-07-06) a raíz de tener cuentas de prueba conectadas
+(Agencia Kibo, ITS IN) sin forma de desconectarlas. Hoy no existe ningún endpoint ni UI
+para eliminar un `AdAccount` — análisis de qué implicaría antes de construirlo:
+
+**Cascada de borrado (revisado en el código, `ondelete` de cada FK a `ad_accounts.id`):**
+- ✅ `CASCADE` automático: `campaign_snapshots`, `adset_snapshots`, `ad_snapshots`,
+  `ai_insights`, `ai_actions`, `campaigns`, `meta_creatives`, `custom_audiences`,
+  `tenant_api_quotas`, `sync_jobs` — se borran solos con la cuenta, sin acción extra.
+- ⚠️ **`api_call_logs` NO tiene `ondelete` configurado** (`app/models/api_call_log.py:11`,
+  FK sin cláusula → Postgres exige `RESTRICT` por defecto). Borrar una `AdAccount` con
+  cualquier llamada registrada (o sea, prácticamente todas) **fallaría con un error de
+  integridad referencial** tal como está el esquema hoy. Antes de exponer un "eliminar
+  cuenta" hay que decidir: (a) migración para poner `ondelete=CASCADE` también ahí
+  (se pierde el historial de auditoría de llamadas a Meta de esa cuenta), o (b) borrar
+  explícitamente los `api_call_logs` de esa cuenta en el mismo endpoint antes del delete
+  (conserva la posibilidad de archivarlos primero si se quisiera).
+- `MetaCredential` no cuelga de `AdAccount` sino al revés (`AdAccount.meta_credential_id`
+  apunta a `MetaCredential`, con `ondelete="SET NULL"") — el credential queda huérfano si
+  no se borra aparte; revisar si conviene borrarlo también o dejarlo (podría reusarse si
+  se reconecta la misma cuenta).
+
+**Riesgo de negocio, no solo técnico:**
+- Es **irreversible**: se pierde todo el historial de rendimiento (snapshots, insights,
+  acciones de IA) de esa cuenta — no hay "papelera" ni soft-delete hoy en el modelo.
+- Si la cuenta activa eliminada era la última/única de la organización, el frontend
+  (`AdAccountProvider`) queda sin cuenta seleccionada — hay que decidir el fallback (¿pantalla
+  de "conecta una cuenta"? ¿redirigir a Configuración?).
+- Acción "hard-to-reverse" según las reglas de seguridad del proyecto: si se implementa,
+  debería pedir confirmación explícita (ej. escribir el nombre de la cuenta) antes de
+  ejecutar, igual que otras acciones destructivas.
+
+**Alternativa más segura, a considerar primero:** en vez de un "eliminar" real, un
+`AdAccount.status = "ARCHIVED"` (soft-delete) que la oculte de dropdowns/selectores sin
+borrar nada — reversible, no toca el problema del `api_call_logs` FK, y ya existe el
+campo `status` en el modelo. Más barato de construir y sin el riesgo de pérdida de datos.
+
+No implementado — queda para cuando el usuario decida qué camino prefiere.
+
 ## 📌 Workflow
 
 Commits directos a `main`, sin PRs (`gh` no está instalado en el entorno).
