@@ -677,10 +677,12 @@ class MetaAdsSyncService:
                            ad_account.id, imgs)
             self._maybe_mark_expired(ad_account, imgs)
         else:
+            seen_hashes = set()
             for im in imgs.get("data", []):
                 h = im.get("hash")
-                if not h:
+                if not h or h in seen_hashes:
                     continue
+                seen_hashes.add(h)
                 row = (await self.db.execute(select(MetaCreative).where(
                     MetaCreative.ad_account_id == ad_account.id, MetaCreative.image_hash == h,
                 ))).scalar_one_or_none()
