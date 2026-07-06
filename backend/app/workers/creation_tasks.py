@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
@@ -11,6 +10,7 @@ from app.config import settings
 from app.models.ad_account import AdAccount
 from app.models.campaign_draft import CampaignDraft
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
+from app.services.brand_code import derive_brand_code as _brand_code
 from app.services.creative_builder import CreativeBuilder
 from app.services.meta_asset_repository import MetaAssetRepository
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
@@ -30,14 +30,6 @@ async def _get_ad_account(db, ad_account_id: str) -> AdAccount:
         raise Exception(f"AdAccount {ad_account_id} no encontrada.")
     return acc
 
-
-def _brand_code(acc: AdAccount) -> str:
-    """Deriva el código de marca para la nomenclatura `MARCA_TIPO_PRODUCTO_ZONA_MESAA`
-    del playbook (§8, ej. `ALT_MSJ_PLATE46_JUL26`) a partir del nombre real de la
-    cuenta conectada (`AdAccount.name`, ej. "Althea Pack", "Expert Farma"), en vez
-    del literal "MTV" que antes quedaba hardcodeado para cualquier tenant."""
-    cleaned = re.sub(r"[^A-Za-z0-9]", "", acc.name or "")
-    return (cleaned[:10] or "MARCA").upper()
 
 
 def _raise_if_meta_error(result: Dict[str, Any]) -> None:

@@ -8,6 +8,11 @@ from app.models.ai_insight import AIInsight
 from app.models.ai_action import AIAction
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.adset_snapshot import AdsetSnapshot
+from app.models.organization import Organization
+from app.services.brand_code import derive_brand_code
+from app.services.campaign_suggester import CampaignSuggester
+from app.services.ai.llm import OpenRouterClient
+from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 
 logger = logging.getLogger("lejovista.planner")
 
@@ -30,7 +35,11 @@ class AIPlanner:
 
         # Mapa campaign_id -> presupuesto del snapshot más reciente. Se usa como
         # base real para MODIFY_BUDGET en lugar de valores hardcodeados (AI-2).
+        # También capturamos el nombre real de la campaña (name_map), usado por
+        # CREATE_CAMPAIGN para dar contexto de producto al generador de copy
+        # (Fase 3B) en vez del literal "THHN" hardcodeado para cualquier cuenta.
         budget_map = {}
+        name_map: Dict[str, str] = {}
         q_snaps = select(CampaignSnapshot).where(
             CampaignSnapshot.ad_account_id == ad_account.id
         ).order_by(CampaignSnapshot.date.desc())
@@ -38,6 +47,7 @@ class AIPlanner:
         for s in res_snaps.scalars().all():
             if s.campaign_id not in budget_map:
                 budget_map[s.campaign_id] = s.budget
+                name_map[s.campaign_id] = s.campaign_name
 
         # Mapa campaign_id -> adset_ids vigentes (según el snapshot más reciente de
         # cada campaña). Se usa para resolver el target real de las escrituras a
@@ -71,8 +81,9 @@ class AIPlanner:
                 continue # Ya hay un cambio de este tipo en cola
 
             # 2. Generar los detalles y parámetros según el tipo de acción
-            action = self._create_action_from_insight(
-                ad_account, ins, budget_map.get(ins.campaign_id), adset_map.get(ins.campaign_id, [])
+            action = await self._create_action_from_insight(
+                ad_account, ins, budget_map.get(ins.campaign_id), adset_map.get(ins.campaign_id, []),
+                name_map.get(ins.campaign_id),
             )
             if action:
                 self.db.add(action)
@@ -84,12 +95,13 @@ class AIPlanner:
             
         return actions
 
-    def _create_action_from_insight(
+    async def _create_action_from_insight(
         self,
         ad_account: AdAccount,
         insight: AIInsight,
         current_budget: Optional[float] = None,
         adset_ids: Optional[List[str]] = None,
+        existing_campaign_name: Optional[str] = None,
     ) -> Optional[AIAction]:
         """
         Construye una instancia de AIAction en base al insight y sus métricas.
@@ -192,41 +204,61 @@ class AIPlanner:
         elif action_type == "CREATE_CAMPAIGN":
             risk = "HIGH"
             title = "Crear nueva campaña optimizada"
-            # Nombre de campaña sin caracteres especiales (reglas de Meta)
-            new_camp_name = f"MTV_MSJ_THHN_LIMA_PROMO_{datetime.date.today().strftime('%b%Y').upper()}"
+
+            # Fase 3: parámetros estructurales del motor de sugerencia determinista
+            # (3A, sin LLM, deriva de datos reales) + copy generado por el LLM (3B).
+            # Reemplaza el stub que hardcodeaba "THHN"/Lima/S/.2.50 para cualquier cuenta.
+            suggestion = await CampaignSuggester(self.db).suggest(ad_account)
+            org = await self.db.get(Organization, ad_account.organization_id)
+            product_name = existing_campaign_name or "Producto"
+            zone = "Lima"  # geo por defecto del tenant (TENANT_CAMPAIGN_RULES); el insight no trae zona explícita
+            copy = await OpenRouterClient().suggest_campaign_copy(
+                org, ad_account, product_name=product_name, zone=zone,
+                winning_context=suggestion.get("winning_campaign"),
+            )
+
+            brand = derive_brand_code(ad_account)
+            month_year = datetime.date.today().strftime("%b%Y").upper()
+            new_camp_name = f"{brand}_MSJ_{product_name}_{zone}_{month_year}".replace(" ", "")
+
             description = (
-                f"Crear una campaña completamente nueva para promocionar 'THHN' en Lima, "
-                f"reemplazando el anuncio ineficiente. Se creará en estado PAUSADO por seguridad."
+                f"Crear una campaña nueva para reemplazar '{product_name}' (CTR bajo), con "
+                f"parámetros derivados del histórico real de la cuenta y copy generado por IA. "
+                f"Se creará en estado PAUSADO por seguridad."
             )
             parameters = {
                 "campaign_name": new_camp_name,
-                "objective": "OUTCOME_LEADS",
-                "daily_budget": 70.0,
-                "duration_days": 7,
+                "objective": suggestion["objective"],
+                "daily_budget": suggestion["suggested_budget"],
+                "duration_days": suggestion["suggested_days"],
+                "excluded_placements": suggestion["excluded_placements"],
                 "targeting": {
-                    "geo_locations": {"regions": [{"key": "2771", "name": "Lima Region"}]},
+                    "geo_locations": {"regions": [{"key": TENANT_CAMPAIGN_RULES["default_geo_region_key"], "name": "Lima Region"}]},
                     "age_min": 25,
                     "age_max": 65,
                     "publisher_platforms": ["facebook", "facebook_reels"]
                 },
                 "creative": {
-                    "headline": "Cables Eléctricos de Alta Calidad - Envío Rápido",
-                    "body": "Adquiere cables THHN con garantía y certificación. Solicita cotización inmediata por WhatsApp.",
-                    "whatsapp_number": "51999999999",
-                    "welcome_message": "Hola, estoy interesado en cotizar cables THHN."
-                }
+                    "headline": copy["headline"],
+                    "body": copy["primary_text"],
+                    "description": copy["description"],
+                    "welcome_message": copy["welcome_message"],
+                },
+                "suggestion_evidence": suggestion["evidence"],
             }
             # En producción esto generaría las 6 llamadas HTTP planificadas descritas en el paso0:
             # 1. GET act_info, 2. POST image, 3. POST campaign, 4. POST adset, 5. POST creative, 6. POST ad
             planned_calls = [
                 {"method": "GET", "endpoint": f"act_{ad_account.external_account_id}", "body": {}},
-                {"method": "POST", "endpoint": f"act_{ad_account.external_account_id}/campaigns", "body": {"name": new_camp_name, "objective": "OUTCOME_LEADS", "status": "PAUSED"}},
-                {"method": "POST", "endpoint": f"act_{ad_account.external_account_id}/adsets", "body": {"name": f"Adset - {new_camp_name}", "daily_budget": 7000, "status": "PAUSED"}},
+                {"method": "POST", "endpoint": f"act_{ad_account.external_account_id}/campaigns", "body": {"name": new_camp_name, "objective": suggestion["objective"], "status": "PAUSED"}},
+                {"method": "POST", "endpoint": f"act_{ad_account.external_account_id}/adsets", "body": {"name": f"Adset - {new_camp_name}", "daily_budget": int(suggestion["suggested_budget"] * 100), "status": "PAUSED"}},
                 {"method": "POST", "endpoint": f"act_{ad_account.external_account_id}/adcreatives", "body": {"name": f"Creative - {new_camp_name}"}},
                 {"method": "POST", "endpoint": f"act_{ad_account.external_account_id}/ads", "body": {"name": f"Ad - {new_camp_name}", "status": "PAUSED"}}
             ]
-            estimated_impact = "Establece un nuevo canal de leads optimizado con CPL estimado de S/.2.50."
-            confidence = 0.70
+            # Sin cifras inventadas (AI-1): la justificación es la evidencia real
+            # del suggester, y la confianza baja si no hay histórico de la cuenta.
+            estimated_impact = suggestion["evidence"][0] if suggestion["evidence"] else "Sin histórico suficiente para estimar impacto."
+            confidence = 0.75 if suggestion["has_history"] else 0.5
 
         else:
             return None

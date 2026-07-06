@@ -13,6 +13,14 @@ logger = logging.getLogger("lejovista.llm")
 # poder trazar qué versión generó cada informe (AI-4).
 PROMPT_VERSION = "master-brief-v1"
 
+# Versión del prompt de copy de campañas (Fase 3B del plan de creación de
+# campañas). Se persiste en el CampaignDraft para trazar qué prompt generó
+# cada copy (AI-4), igual que PROMPT_VERSION para el Master Brief.
+CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v1"
+
+# Claves obligatorias del JSON de copy que debe devolver el LLM.
+_REQUIRED_COPY_KEYS = {"headline", "primary_text", "description", "welcome_message"}
+
 # Modelos válidos por proveedor, para que el selector de Preferencias solo
 # muestre los que realmente puede usar el proveedor activo (ver
 # GET /organizations/ai-models). El proveedor activo depende de qué API key
@@ -451,6 +459,137 @@ class OpenRouterClient:
 </html>
 """
         return html_template
+
+    async def suggest_campaign_copy(
+        self,
+        org: Organization,
+        ad_account: AdAccount,
+        product_name: str,
+        zone: str,
+        winning_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """
+        Fase 3B del plan de creación de campañas: genera el copy de una campaña
+        nueva (headline/primary_text/description/welcome_message) siguiendo la
+        estructura ganadora del playbook (§6: DOLOR → PROMESA → BENEFICIOS →
+        URGENCIA → CTA). El LLM SOLO redacta texto — las cifras (presupuesto,
+        placements, edad) las decide `CampaignSuggester` (Fase 3A) de forma
+        determinista, nunca el LLM.
+        """
+        if settings.MOCK_SERVICES or not self.api_key:
+            return self._generate_mock_copy(product_name, zone, winning_context)
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "LejoVista Platform",
+            "Content-Type": "application/json",
+        }
+
+        winning_summary = ""
+        if winning_context:
+            winning_summary = (
+                f"Contexto de la campaña más eficiente de esta cuenta (úsalo solo para inspirar "
+                f"el tono, NUNCA menciones estas cifras en el copy): '{winning_context.get('name')}' — "
+                f"S/.{winning_context.get('cost_per_conv', 0):.2f} por conversación, "
+                f"CTR {winning_context.get('ctr', 0):.2f}%."
+            )
+
+        system_prompt = (
+            "Eres un copywriter experto en anuncios de Meta Ads (Facebook/Instagram) orientados a "
+            "WhatsApp, para el mercado peruano. Escribe SIEMPRE en español, con emojis y saltos de "
+            "línea naturales, tono directo y cercano.\n\n"
+            "Estructura OBLIGATORIA del primary_text: DOLOR → PROMESA → BENEFICIOS (✅) → URGENCIA → "
+            "CTA (📲).\n\n"
+            "REGLA INQUEBRANTABLE: no inventes ni menciones cifras de rendimiento (CPL, CTR, "
+            "conversiones, costos) en el copy — esas nunca forman parte del texto del anuncio.\n\n"
+            "REGLA DE POLÍTICAS DE META: evita por completo lenguaje de medicamentos o farmacéutico "
+            "('fórmula magistral', 'medicamento', 'dosis', 'tratamiento', 'receta médica'); si el "
+            "producto pertenece a ese rubro, enfócalo como cuidado personal o cosmético, o describe "
+            "el producto físico en vez del fármaco.\n\n"
+            "Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni markdown, con "
+            'exactamente estas claves: {"headline": "...", "primary_text": "...", '
+            '"description": "...", "welcome_message": "..."}.'
+        )
+
+        user_prompt = (
+            f"Producto o servicio: {product_name}\n"
+            f"Zona: {zone}\n"
+            f"{winning_summary}\n\n"
+            "Genera el copy para una campaña nueva de mensajes de WhatsApp de esta marca."
+        )
+
+        model = org.ai_model or settings.DEFAULT_AI_MODEL
+        if self.is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
+        payload = {
+            "model": model,
+            "temperature": 0.7,  # más creatividad que el brief (aquí sí redacta, no reporta cifras)
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=45.0) as client:
+                response = await client.post(self.base_url, json=payload, headers=headers)
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result["choices"][0]["message"]["content"]
+                    parsed = self._parse_copy_json(content)
+                    if parsed:
+                        return parsed
+                    logger.error(
+                        "Copy del LLM no es un JSON válido, usando plantilla local. Contenido: %s",
+                        content[:300],
+                    )
+                else:
+                    logger.error(
+                        f"OpenRouter API (copy de campaña) devolvió error {response.status_code}: {response.text}"
+                    )
+        except Exception:
+            logger.exception("Error llamando a la API del LLM para copy de campaña. Usando plantilla local.")
+
+        return self._generate_mock_copy(product_name, zone, winning_context)
+
+    @staticmethod
+    def _parse_copy_json(content: str) -> Optional[Dict[str, str]]:
+        """Extrae el JSON del copy de la respuesta del LLM. Tolera que el modelo
+        envuelva el JSON en texto o ```json ... ``` pese a la instrucción de no
+        hacerlo. Devuelve None si no se puede parsear o faltan claves."""
+        import re
+        match = re.search(r"\{.*\}", content.strip(), re.DOTALL)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(data, dict) or not _REQUIRED_COPY_KEYS.issubset(data.keys()):
+            return None
+        return {k: str(data[k]) for k in _REQUIRED_COPY_KEYS}
+
+    def _generate_mock_copy(
+        self, product_name: str, zone: str, winning_context: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, str]:
+        """Plantilla local determinista (sin LLM) — nunca rompe la creación de
+        campañas si el LLM falla, no hay API key configurada, o MOCK_SERVICES
+        está activo. Sigue la misma estructura DOLOR→PROMESA→BENEFICIOS→URGENCIA→CTA
+        del playbook (§6), sin inventar cifras de rendimiento."""
+        return {
+            "headline": f"{product_name} en {zone} 🔥",
+            "primary_text": (
+                f"¿Buscas {product_name.lower()} de confianza en {zone}? 😩\n\n"
+                f"Con nosotros lo tienes fácil: calidad garantizada y atención inmediata. ✅\n"
+                f"✅ Entrega rápida\n✅ Atención personalizada\n✅ Precios justos\n\n"
+                f"🔥 Cupos limitados esta semana.\n"
+                f"📲 Escríbenos ahora por WhatsApp y cotiza sin compromiso."
+            ),
+            "description": f"{product_name} · {zone} · Cotiza por WhatsApp",
+            "welcome_message": f"¡Hola! 👋 Gracias por escribir. Cuéntanos qué necesitas de {product_name} y te ayudamos al toque.",
+        }
 
     def _generate_mock_narrative(self, org: Organization, ad_account: AdAccount, raw_data_summary: Dict[str, Any]) -> str:
         """

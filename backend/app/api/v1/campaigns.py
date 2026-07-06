@@ -17,9 +17,12 @@ from celery import chain
 
 from app.config import settings
 from app.models.campaign_draft import CampaignDraft
+from app.models.organization import Organization
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.schemas.schemas import CampaignDraftResponse
 from app.services.campaign_validator import CampaignValidator
+from app.services.campaign_suggester import CampaignSuggester
+from app.services.ai.llm import OpenRouterClient
 from app.services.meta_api_client import MetaApiClient
 from app.services.meta_credential_service import MetaCredentialService
 from app.services.rate_limiter import RateLimiter
@@ -182,6 +185,55 @@ def build_meta_client(tenant_id: str, db: AsyncSession) -> MetaApiClient:
         RateLimiter(redis_client),
         AuditLogService(db),
     )
+
+@router.get("/suggestion")
+async def get_campaign_suggestion(
+    ad_account_id: str,
+    product_name: str = "Producto",
+    zone: str = "Lima",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fase 3C del plan de creación de campañas: une la sugerencia estructural
+    determinista (3A, `CampaignSuggester` — sin cifras inventadas, AI-1) con el
+    copy generado por el LLM (3B, `OpenRouterClient.suggest_campaign_copy`) para
+    pre-rellenar el formulario de "Crear campaña" con datos reales de la cuenta,
+    en vez de que el cliente empiece desde cero.
+    """
+    q_acc = select(AdAccount).where(
+        AdAccount.id == ad_account_id,
+        AdAccount.organization_id == current_user.organization_id,
+    )
+    res_acc = await db.execute(q_acc)
+    ad_account = res_acc.scalar_one_or_none()
+    if not ad_account:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+
+    org = await db.get(Organization, current_user.organization_id)
+
+    suggestion = await CampaignSuggester(db).suggest(ad_account)
+    copy = await OpenRouterClient().suggest_campaign_copy(
+        org, ad_account, product_name=product_name, zone=zone,
+        winning_context=suggestion.get("winning_campaign"),
+    )
+
+    return {
+        "risk_level": CAMPAIGN_CREATION_RISK_LEVEL,
+        "has_history": suggestion["has_history"],
+        "objective": suggestion["objective"],
+        "optimization_goal": suggestion["optimization_goal"],
+        "destination_type": suggestion["destination_type"],
+        "suggested_budget": suggestion["suggested_budget"],
+        "suggested_days": suggestion["suggested_days"],
+        "excluded_placements": suggestion["excluded_placements"],
+        "best_device": suggestion["best_device"],
+        "best_age_range": suggestion["best_age_range"],
+        "winning_campaign": suggestion["winning_campaign"],
+        "evidence": suggestion["evidence"],
+        "copy": copy,
+    }
+
 
 @router.post("/", status_code=status.HTTP_202_ACCEPTED)
 async def create_campaign(

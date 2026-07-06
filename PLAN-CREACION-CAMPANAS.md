@@ -53,30 +53,33 @@
 - [x] 6 tests nuevos. Suite completa: **87 passed**.
 - **DoD:** ninguna creación produce objetos ACTIVE; WhatsApp correcto; naming por marca real; tope anti-bloqueo activo. ✅
 
-## Fase 3 — Motor de sugerencia de parámetros (visión de la reunión)
+## Fase 3 — Motor de sugerencia de parámetros (visión de la reunión) ✅ 2026-07-06
 
-Se separa en dos capas con responsabilidades distintas (evita mezclar cifras con creatividad):
+Se separó en dos capas con responsabilidades distintas (evita mezclar cifras con creatividad):
 
-### 3A — Sugerencia determinista (SIN LLM, como `ReportBuilder`)
-- [ ] Servicio `CampaignSuggester`: lee snapshots + breakdowns (edad/género/placement/dispositivo/región) + `ReportBuilder`; detecta la ganadora (menor costo/conversación); deriva **con aritmética directa** objetivo, público, placements a excluir (los que dan S/0 conv), rango de edad, geo y presupuesto baseline. Cada parámetro viene con su **evidencia numérica** (regla AI-1: sin cifras inventadas).
-- **DoD:** los parámetros estructurales salen de la data real, no de constantes MTV ni del LLM.
+### 3A — Sugerencia determinista (SIN LLM, como `ReportBuilder`) ✅
+- [x] Nuevo servicio [CampaignSuggester](backend/app/services/campaign_suggester.py): reutiliza `ReportBuilder` (mismos números que el Master Brief); detecta la campaña ganadora (menor costo/conversación); deriva **con aritmética directa** objetivo, placements a excluir (spend>0 y 0 conversiones), dispositivo/edad con menor costo, y presupuesto baseline (20x el costo mínimo observado, documentado como tal). Cada parámetro viene con su **evidencia en texto** (regla AI-1: sin cifras inventadas); si no hay histórico, cae a defaults marcados explícitamente como "no derivados de datos reales".
+- [x] 4 tests en `test_campaign_suggester.py` (con histórico vía sync mock, sin histórico, exclusión de placements, budget_hint explícito).
+- **DoD:** los parámetros estructurales salen de la data real, no de constantes MTV ni del LLM. ✅
 
-### 3B — Capa de prompting / comunicación con la API de ChatGPT (LLM)
-El LLM se usa **solo para lo creativo** (copy), no para inventar números. Se apoya en el `OpenRouterClient` existente ([llm.py](backend/app/services/ai/llm.py)), que ya enruta a OpenAI/ChatGPT (`gpt-5.4-mini`) → Gemini → OpenRouter → mock.
-- [ ] Nuevo método `suggest_campaign_copy(org, ad_account, winning_context, product, zone)` en `OpenRouterClient`:
-  - **Entrada:** contexto de la campaña ganadora (copy/CTA/estructura de la mejor campaña, extraído en Fase 3A) + producto/zona objetivo.
-  - **Salida:** **JSON estructurado** (`response_format`/parseo estricto): `{ "headline", "primary_text", "description", "welcome_message" }`. Nada de HTML ni prosa libre.
-  - **System prompt:** reutiliza la regla anti-alucinación (no inventar métricas) + estructura de copy ganadora del playbook §6 (**DOLOR → PROMESA → BENEFICIOS ✅ → URGENCIA → CTA 📲**), tono WhatsApp Perú, emojis y saltos de línea.
-  - **Guardrails de políticas de Meta** (error conocido #7 del playbook): instruir al modelo a evitar lenguaje farmacéutico ("fórmula magistral / medicamento / dosis / tratamiento") y reencuadrar como cuidado personal/cosmético.
-  - `temperature` ~0.7 (más creatividad que el brief, porque aquí sí redacta), pero **los números del formulario NO pasan por el LLM**.
-- [ ] **Versionado del prompt:** `CAMPAIGN_COPY_PROMPT_VERSION` (paralelo a `PROMPT_VERSION`), persistido en el `CampaignDraft` para trazar qué prompt generó cada copy (AI-4).
-- [ ] **Fallback determinista:** si `MOCK_SERVICES` o no hay API key o el LLM falla/deuelve JSON inválido → plantilla de copy local basada en el copy ganador (mismo patrón `_generate_mock_narrative`). Nunca romper la creación por caída del LLM.
-- [ ] **Reemplazar el stub hardcodeado** `CREATE_CAMPAIGN` del planner ([planner.py:192](backend/app/services/ai/planner.py:192)) para que use este servicio en vez de MTV/THHN/`S/.2.50` inventado.
-- **DoD:** `suggest_campaign_copy` devuelve JSON válido contra ChatGPT real (probado 1 vez) y degrada a plantilla local sin API key.
+### 3B — Capa de prompting / comunicación con la API de ChatGPT (LLM) ✅
+- [x] Nuevo método `suggest_campaign_copy(org, ad_account, product_name, zone, winning_context)` en [OpenRouterClient](backend/app/services/ai/llm.py) — reutiliza el mismo cliente que ya enruta a OpenAI/ChatGPT → Gemini directo → OpenRouter → mock.
+  - **Salida:** JSON estricto `{headline, primary_text, description, welcome_message}`, parseado con `_parse_copy_json` (tolera que el modelo envuelva el JSON en ```` ```json ```` pese a la instrucción).
+  - **System prompt:** estructura DOLOR→PROMESA→BENEFICIOS(✅)→URGENCIA→CTA(📲) del playbook §6 + regla anti-alucinación (no menciona cifras de rendimiento en el copy) + guardrail de políticas de Meta (evitar lenguaje farmacéutico, error conocido #7 del playbook).
+  - `temperature=0.7` (vs. 0.2 del brief — aquí sí redacta). Los números del formulario **nunca** pasan por este método.
+- [x] `CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v1"` (paralelo a `PROMPT_VERSION`).
+- [x] Fallback determinista `_generate_mock_copy`: plantilla local con la misma estructura, usada si `MOCK_SERVICES`, sin API key, error HTTP, excepción de red, o JSON inválido del LLM — nunca rompe la creación.
+- [x] **Reemplazado el stub hardcodeado** `CREATE_CAMPAIGN` del planner ([planner.py](backend/app/services/ai/planner.py)): ya no usa "MTV_MSJ_THHN_LIMA"/copy de cables eléctricos/"CPL estimado S/.2.50" fijos — ahora llama a `CampaignSuggester` + `suggest_campaign_copy`, deriva la marca del `AdAccount.name` real (helper compartido `derive_brand_code`, movido a su propio módulo `app/services/brand_code.py` para evitar un import circular entre `planner.py` y `creation_tasks.py`), y baja la confianza (0.5 vs 0.75) cuando no hay histórico real.
+- [x] 7 tests en `test_campaign_copy_llm.py` (mock/MOCK_SERVICES, JSON válido, JSON envuelto en markdown, JSON inválido, error HTTP, excepción de red, sin API key) + 2 en `test_planner_create_campaign.py` (marca real sin "THHN", confianza más baja sin histórico).
+- **Gap descubierto (documentado, no cerrado en esta fase):** el sync nunca capturó el texto real del copy ganador (`message`/`title`/`call_to_action_type` del creativo) — solo `image_hash` en `MetaCreative`. `winning_context` para el LLM incluye nombre/costo/CTR de la campaña ganadora, pero no el copy textual real (nunca se guardó). Capturarlo requeriría extender el sync (`_sync_real_ads`) y el modelo `MetaCreative`/`AdSnapshot` — fuera de alcance de esta fase; el copy nuevo se genera siguiendo el estilo del playbook, no copiando el texto ganador literal.
+- **DoD:** `suggest_campaign_copy` devuelve JSON válido (probado con fakes de httpx; sin llamada real a producción en este entorno) y degrada a plantilla local sin API key. ✅
 
-### 3C — Endpoint que une ambas capas
-- [ ] `GET /campaigns/suggestion?ad_account_id=...&product=...&zone=...` → formulario pre-rellenado (parámetros de 3A + copy de 3B) + el "por qué" (hallazgos que respaldan cada parámetro).
-- **DoD:** abrir "Crear campaña" trae parámetros y copy sugeridos; el cliente solo revisa/edita y aprueba.
+### 3C — Endpoint que une ambas capas ✅
+- [x] `GET /campaigns/suggestion?ad_account_id=...&product_name=...&zone=...` → formulario pre-rellenado (parámetros de 3A + copy de 3B) + `evidence` (el "por qué" de cada parámetro) + `risk_level`.
+- [x] 3 tests en `test_campaign_suggestion_endpoint.py` (auth, estructura+copy con cuenta nueva sin histórico, 404 cross-tenant).
+- **DoD:** abrir "Crear campaña" trae parámetros y copy sugeridos; el cliente solo revisa/edita y aprueba. ✅ (endpoint listo; falta enganchar la UI en Fase 5)
+
+**Suite completa tras Fase 3: 103 passed.**
 
 ## Fase 4 — Descubrimiento de página + WhatsApp
 - [ ] Poblar `MetaPage` en el sync vía `/me/accounts` (`page_id`, WhatsApp, `instagram_actor_id`).
