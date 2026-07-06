@@ -73,15 +73,31 @@ Dejalo corriendo en una terminal aparte (o como servicio). La URL pública es
 
 ## 6. Volver a modo local
 
-Cuando termines la prueba, simplemente volvé a levantar sin el override:
+**Importante:** `docker compose` lee `.env` sin importar qué `-f` uses — si
+dejaste las 4 variables del paso 2 seteadas ahí, un `docker compose up -d
+--build` "normal" (sin `-f docker-compose.tunnel.yml`) **igual las toma** y
+reconstruye el frontend en modo single-host, rompiendo el dev local (las
+llamadas a la API quedan apuntando a `cliente1.localhost:3000/api/...` en vez
+de `localhost:8000`, y todo da 404). Esto pasó en una sesión real — antes de
+levantar en modo local, comentá o borrá esas 4 líneas del `.env`:
+
+```bash
+NEXT_PUBLIC_WS_URL=...
+NEXT_PUBLIC_SINGLE_HOST_MODE=true
+TUNNEL_ORIGIN_REGEX=...
+ENABLE_API_DOCS=false
+```
+
+Recién ahí:
 
 ```bash
 docker compose up -d --build
 ```
 
 Esto reconstruye el frontend sin `SINGLE_HOST_MODE` y Nginx vuelve a
-`default.conf` (subdominios `*.localhost`). No hace falta revertir nada en
-el código.
+`default.conf` (subdominios `*.localhost`). Para volver a activar el túnel
+más adelante, restaurá esas 4 líneas y repetí el paso 3
+(`docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d --build`).
 
 ## Qué NO cubre esta guía (fuera de alcance)
 
