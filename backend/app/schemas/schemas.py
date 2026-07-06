@@ -113,6 +113,18 @@ class AIInsightResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+# --- CAMPAIGN DRAFT SCHEMAS ---
+class CampaignDraftResponse(BaseModel):
+    id: str
+    name: str
+    payload: Dict[str, Any]
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
 # --- ACTION SCHEMAS ---
 class AIActionResponse(BaseModel):
     id: str

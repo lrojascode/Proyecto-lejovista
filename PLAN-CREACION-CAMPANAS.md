@@ -38,11 +38,12 @@
 - [x] 10 tests nuevos en `tests/test_creation_tasks.py` (reuso de hash, subida real, endpoint correcto, PAUSED en el payload de campaña, clasificación transitoria/permanente de errores, WhatsApp en `promoted_object`, payload del creativo, notificación con tenant real, callback de error con tenant real). Suite completa: **73 passed**.
 - **DoD:** con `ENABLE_META_WRITEBACK=false`, la Saga corre completa, loguea cada POST simulado y no rompe. ✅
 
-## Fase 1 — Persistencia y estado honesto
-- [ ] Guardar `CampaignDraft` real al iniciar (`status=PENDING_CREATION`, `payload` = request); escribir `campaign_id/adset_id/creative_id/ad_id` conforme avanza; `CREATED`/`FAILED` al final.
-- [ ] Arreglar `task_handle_chain_error` para marcar el draft `FAILED` con `error_message` y notificar al tenant real.
-- [ ] `GET /campaigns/drafts/{id}` (scopeado por tenant) para estado real.
-- **DoD:** un draft refleja el estado real de la Saga de punta a punta.
+## Fase 1 — Persistencia y estado honesto ✅ 2026-07-06
+- [x] Guardar `CampaignDraft` real al iniciar (`status=PENDING_CREATION`, `payload` = request); escribir `campaign_id/adset_id/creative_id/ad_id` conforme avanza (en `payload["result"]` vía el helper `_merge_draft_result`); `CREATED`/`FAILED` al final.
+- [x] Arreglar `task_handle_chain_error` para marcar el draft `FAILED` con `error_message` real y notificar al tenant real (ya no `"mock-tenant-id"`, resuelto en Fase 0).
+- [x] `GET /campaigns/drafts/{id}` (scopeado por tenant, 404 cross-tenant) para estado real — reemplaza el polling falso (`setInterval` de 3 ciclos) que tenía el frontend.
+- [x] 4 tests nuevos de persistencia en `test_creation_tasks.py` (campaign_id/name persistido, status `CREATED` al final, `FAILED` con mensaje real, no-op seguro si el draft no existe) + 4 tests del endpoint en `test_campaign_drafts.py` (auth, 200 con progreso real, 404 cross-tenant, 404 si no existe). Suite completa: **81 passed**.
+- **DoD:** un draft refleja el estado real de la Saga de punta a punta. ✅
 
 ## Fase 2 — Seguridad y reglas del playbook
 - [ ] **Todo PAUSED**: corregir `creation_tasks.py:83` (adset) y `:137` (ad).

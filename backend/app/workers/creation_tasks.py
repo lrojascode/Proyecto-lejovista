@@ -8,6 +8,7 @@ from app.workers.tasks import run_async
 from app.database import async_session
 from app.config import settings
 from app.models.ad_account import AdAccount
+from app.models.campaign_draft import CampaignDraft
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 from app.services.creative_builder import CreativeBuilder
 from app.services.meta_asset_repository import MetaAssetRepository
@@ -35,6 +36,44 @@ def _raise_if_meta_error(result: Dict[str, Any]) -> None:
     chain y cae en `task_handle_chain_error`)."""
     if not isinstance(result, dict) or "error" in result or "ERROR" in result:
         raise classify_meta_error(Exception(json.dumps(result)))
+
+
+async def _merge_draft_result(
+    db,
+    draft_id: str,
+    name: str | None = None,
+    status: str | None = None,
+    error_message: str | None = None,
+    **result_fields: Any,
+) -> None:
+    """Persiste el avance de la Saga en el `CampaignDraft` real.
+
+    Antes `draft_id` era un uuid suelto que nunca se guardaba en ningún lado —
+    el frontend "simulaba" el polling con un `setInterval` que siempre
+    terminaba en éxito (Fase 1 del plan de creación de campañas). Cada paso
+    del chain llama a esto para ir dejando los IDs de Meta (campaign_id,
+    adset_id, creative_id, ad_id) en `payload["result"]`.
+    """
+    draft = await db.get(CampaignDraft, draft_id)
+    if not draft:
+        logger.warning(f"CampaignDraft {draft_id} no encontrado al actualizar el progreso de la Saga.")
+        return
+
+    if result_fields:
+        payload = dict(draft.payload or {})
+        result = dict(payload.get("result", {}))
+        result.update(result_fields)
+        payload["result"] = result
+        draft.payload = payload
+    if name:
+        draft.name = name
+    if status:
+        draft.status = status
+    if error_message is not None:
+        draft.error_message = error_message
+
+    db.add(draft)
+    await db.commit()
 
 
 _RETRY_KWARGS = dict(
@@ -70,6 +109,7 @@ def task_upload_image(self, context: Dict[str, Any]) -> Dict[str, Any]:
                     image_hash=None,
                 )
             context["image_hash"] = image_hash
+            await _merge_draft_result(db, context["draft_id"], image_hash=image_hash)
             return context
 
     return run_async(_impl())
@@ -117,6 +157,10 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             context["campaign_id"] = campaign_id
             context["campaign_name"] = campaign_name
+            await _merge_draft_result(
+                db, context["draft_id"], name=campaign_name,
+                campaign_id=campaign_id, campaign_name=campaign_name,
+            )
             return context
 
     return run_async(_impl())
@@ -178,6 +222,7 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 raise Exception(f"Meta no devolvió id de adset: {result}")
 
             context["adset_id"] = adset_id
+            await _merge_draft_result(db, context["draft_id"], adset_id=adset_id)
             return context
 
     return run_async(_impl())
@@ -223,6 +268,7 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 raise Exception(f"Meta no devolvió id de creativo: {result}")
 
             context["creative_id"] = creative_id
+            await _merge_draft_result(db, context["draft_id"], creative_id=creative_id)
             return context
 
     return run_async(_impl())
@@ -264,6 +310,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             context["ad_id"] = ad_id
             context["status"] = "COMPLETED"
+            await _merge_draft_result(db, context["draft_id"], status="CREATED", ad_id=ad_id)
 
             logger.info(f"Campaign creation Saga completed successfully: {context}")
 
@@ -285,8 +332,17 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
 def task_handle_chain_error(request, exc, traceback, draft_id, tenant_id: str = "unknown-tenant"):
     """
     Callback de error para el chain. Si alguna tarea falla, cae aquí.
+    Marca el CampaignDraft como FAILED con el mensaje real (antes no se
+    persistía nada; el frontend no tenía forma de enterarse del motivo).
     """
     logger.error(f"Saga Failed for draft_id {draft_id}: {exc}")
+
+    async def _impl():
+        async with async_session() as db:
+            await _merge_draft_result(db, draft_id, status="FAILED", error_message=str(exc))
+
+    run_async(_impl())
+
     from app.services.notification_service import NotificationService
     notifier = NotificationService()
     notifier.notify_job_status(tenant_id, draft_id, "FAILED", event_type="campaign_creation")

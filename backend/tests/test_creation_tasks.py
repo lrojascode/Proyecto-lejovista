@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
+from app.models.campaign_draft import CampaignDraft
 from app.services.meta_ads.exceptions import TransientMetaError, PermanentMetaError
 from app.workers.creation_tasks import (
     task_upload_image,
@@ -235,13 +236,98 @@ async def test_task_create_ad_notifies_with_real_tenant_id_not_mock(ad_account, 
     )
 
 
-def test_task_handle_chain_error_notifies_real_tenant(mocker):
+@pytest.mark.asyncio
+async def test_task_handle_chain_error_notifies_real_tenant(ad_account, mocker):
+    org, acc = ad_account
     mock_notify = mocker.patch(
         "app.services.notification_service.NotificationService.notify_job_status"
     )
 
-    task_handle_chain_error(None, Exception("boom"), None, "draft-42", "real-tenant-id")
+    run_in_thread(
+        task_handle_chain_error, None, Exception("boom"), None, "draft-42", "real-tenant-id"
+    )
 
     mock_notify.assert_called_once_with(
         "real-tenant-id", "draft-42", "FAILED", event_type="campaign_creation"
     )
+
+
+# --- Fase 1: persistencia real del CampaignDraft (antes el draft_id era un
+# uuid suelto que no se guardaba en ningún lado y el frontend simulaba el
+# polling con un setInterval que siempre terminaba en éxito) ---
+
+@pytest.fixture
+async def campaign_draft(ad_account, db_session: AsyncSession):
+    org, acc = ad_account
+    draft = CampaignDraft(
+        organization_id=org.id,
+        name="CableGPT_Surquillo",
+        payload={"ad_account_id": acc.id, "product_name": "CableGPT", "zone": "Surquillo"},
+        status="PENDING_CREATION",
+    )
+    db_session.add(draft)
+    await db_session.commit()
+    return org, acc, draft
+
+
+@pytest.mark.asyncio
+async def test_task_create_campaign_persists_result_in_draft(campaign_draft, mocker, db_session):
+    org, acc, draft = campaign_draft
+    mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+
+    run_in_thread(task_create_campaign, _base_context(acc, draft_id=draft.id))
+
+    await db_session.refresh(draft)
+    assert draft.payload["result"]["campaign_id"].startswith("mock_camp_")
+    assert draft.name == draft.payload["result"]["campaign_name"]
+    assert draft.status == "PENDING_CREATION"  # solo task_create_ad marca CREATED
+
+
+@pytest.mark.asyncio
+async def test_task_create_ad_marks_draft_created(campaign_draft, mocker, db_session):
+    org, acc, draft = campaign_draft
+    mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+    mocker.patch("app.services.notification_service.NotificationService.notify_job_status")
+
+    context = _base_context(
+        acc, draft_id=draft.id, adset_id="mock_adset_1", creative_id="mock_creative_1"
+    )
+    run_in_thread(task_create_ad, context)
+
+    await db_session.refresh(draft)
+    assert draft.status == "CREATED"
+    assert draft.payload["result"]["ad_id"].startswith("mock_ad_")
+
+
+@pytest.mark.asyncio
+async def test_task_handle_chain_error_marks_draft_failed_with_message(campaign_draft, mocker, db_session):
+    org, acc, draft = campaign_draft
+    mocker.patch("app.services.notification_service.NotificationService.notify_job_status")
+
+    run_in_thread(
+        task_handle_chain_error, None, Exception("Meta rechazó el creativo"), None, draft.id, "real-tenant-id"
+    )
+
+    await db_session.refresh(draft)
+    assert draft.status == "FAILED"
+    assert draft.error_message == "Meta rechazó el creativo"
+
+
+@pytest.mark.asyncio
+async def test_merge_draft_result_no_op_when_draft_missing(ad_account, mocker):
+    """No debe romper la Saga si el draft no existe (ej. borrado manual) — solo loguea."""
+    org, acc = ad_account
+    mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+
+    context = run_in_thread(task_create_campaign, _base_context(acc, draft_id="nonexistent-draft"))
+
+    assert context["campaign_id"].startswith("mock_camp_")
