@@ -125,6 +125,15 @@ export const api = {
   getCampaignHistory: (campaignId: string) => apiRequest(`/api/v1/campaigns/${campaignId}/history`, "GET"),
   triggerSync: () => apiRequest("/api/v1/campaigns/sync-trigger", "POST"),
   getApiCallHistory: (limit: number = 10) => apiRequest(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
+  getMyPages: () => apiRequest("/api/v1/organizations/my/pages", "GET"),
+  getCampaignSuggestion: (adAccountId: string, productName: string, zone: string) =>
+    apiRequest(
+      `/api/v1/campaigns/suggestion?ad_account_id=${encodeURIComponent(adAccountId)}` +
+      `&product_name=${encodeURIComponent(productName)}&zone=${encodeURIComponent(zone)}`,
+      "GET"
+    ),
+  createCampaign: (data: any) => apiRequest("/api/v1/campaigns/", "POST", data),
+  getCampaignDraft: (draftId: string) => apiRequest(`/api/v1/campaigns/drafts/${draftId}`, "GET"),
 
   // --- INSIGHTS ---
   getInsights: () => apiRequest("/api/v1/insights", "GET"),

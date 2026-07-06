@@ -86,10 +86,16 @@ Se separó en dos capas con responsabilidades distintas (evita mezclar cifras co
 - [x] Nuevo endpoint `GET /organizations/my/pages` expone las páginas activas de la organización (con WhatsApp) — la UI puede ofrecer un dropdown en vez de pedir `page_id`/`whatsapp` a mano, eliminando la fuente del bug de WhatsApp de la reunión. (El dropdown en sí, del lado del frontend, queda para la Fase 5.)
 - [x] 7 tests nuevos (`test_sync_pages.py`: descubrimiento real, error en `/me/accounts`, fallo aislado del campo WhatsApp por página, sync mock; `test_pages_endpoint.py`: auth, datos correctos, aislamiento por organización). Suite completa: **110 passed**.
 
-## Fase 5 — UI de creación "revisar y activar"
-- [ ] Reescribir [campaigns/new/page.tsx](frontend/app/(dashboard)/campaigns/new/page.tsx) con el cliente autenticado ([lib/api.ts](frontend/lib/api.ts)).
-- [ ] Mostrar parámetros sugeridos (F3), permitir editar copy/presupuesto, mostrar **nivel de riesgo**, y hacer **polling real** del draft.
-- [ ] Post-creación: aviso "creada en PAUSED — actívala tú en Ads Manager" + link directo (playbook §5).
+## Fase 5 — UI de creación "revisar y activar" ✅ 2026-07-06
+- [x] Reescrito [campaigns/new/page.tsx](frontend/app/(dashboard)/campaigns/new/page.tsx) con el cliente autenticado ([lib/api.ts](frontend/lib/api.ts)) — el `fetch` sin token de antes (401 asegurado) desapareció. Nuevos métodos en `lib/api.ts`: `getMyPages`, `getCampaignSuggestion`, `createCampaign`, `getCampaignDraft`.
+- [x] Dropdown de página (Fase 4) en vez de pedir `page_id`/`whatsapp_number` a mano — el WhatsApp viaja implícito con la página elegida.
+- [x] Botón "✨ Sugerir con IA" trae los parámetros de la Fase 3 (presupuesto, días, copy) + la evidencia en texto + placements a excluir; el copy queda editable.
+- [x] Se muestra el **nivel de riesgo** durante el polling.
+- [x] **Polling real** del draft (antes `setInterval` de 3 ciclos que siempre terminaba en éxito) vía `GET /campaigns/drafts/{id}`, con tope de intentos.
+- [x] Post-creación: aviso explícito de que quedó **PAUSADA** + recordatorio (spend cap / revisar / activar manual, playbook §5) + link directo a Ads Manager (`?act=...&selected_campaign_ids=...`).
+- [x] Validaciones de UI: cuenta activa seleccionada, página con WhatsApp conectado, imagen (url o hash) presente.
+- **Verificado en navegador** (servidor de desarrollo propio en un puerto aparte, sin tocar el stack Docker compartido de la sesión concurrente): la página renderiza sin errores de React, el guard de "sin cuenta activa" se muestra correctamente, el dropdown de páginas cae a "no hay páginas" quando corresponde, y el layout responde bien en mobile. **No pudo probarse el flujo de red completo** (CORS del backend solo permite `localhost:3000`/`localhost`, no el puerto de este servidor de verificación) — pendiente de una prueba end-to-end contra el stack real en Fase 6.
+- Suite de frontend (`npx jest`) y `tsc --noEmit` sin errores nuevos en los archivos tocados.
 
 ## Fase 6 — Video, tests y validación real
 - [ ] `video_data` (thumbnail + `video_id`) en `CreativeBuilder`.
