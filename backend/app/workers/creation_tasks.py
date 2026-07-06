@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Dict, Any
 from datetime import datetime, timedelta
 
@@ -28,6 +29,15 @@ async def _get_ad_account(db, ad_account_id: str) -> AdAccount:
         # Fallo permanente: no existe la cuenta, no tiene sentido reintentar.
         raise Exception(f"AdAccount {ad_account_id} no encontrada.")
     return acc
+
+
+def _brand_code(acc: AdAccount) -> str:
+    """Deriva el código de marca para la nomenclatura `MARCA_TIPO_PRODUCTO_ZONA_MESAA`
+    del playbook (§8, ej. `ALT_MSJ_PLATE46_JUL26`) a partir del nombre real de la
+    cuenta conectada (`AdAccount.name`, ej. "Althea Pack", "Expert Farma"), en vez
+    del literal "MTV" que antes quedaba hardcodeado para cualquier tenant."""
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", acc.name or "")
+    return (cleaned[:10] or "MARCA").upper()
 
 
 def _raise_if_meta_error(result: Dict[str, Any]) -> None:
@@ -130,7 +140,8 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
             product_name = context["product_name"]
             zone = context["zone"]
             month_year = datetime.now().strftime("%b%Y").upper()
-            campaign_name = f"MTV_MSJ_{product_name}_{zone}_{month_year}".replace(" ", "")
+            brand = _brand_code(acc)
+            campaign_name = f"{brand}_MSJ_{product_name}_{zone}_{month_year}".replace(" ", "")
 
             payload = {
                 "name": campaign_name,
@@ -191,7 +202,9 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "lifetime_budget": int(context["budget"] * 100),  # Meta espera centavos
                 "start_time": start_time,
                 "end_time": end_time,
-                "status": "ACTIVE",  # TODO (Fase 2 del plan): debe ser PAUSED
+                # Regla de oro del playbook (#3): todo se crea PAUSED. La activación
+                # la hace el humano manualmente en Ads Manager — nunca por API.
+                "status": TENANT_CAMPAIGN_RULES["default_status"],
                 "targeting": json.dumps({
                     "geo_locations": {"regions": [{"key": TENANT_CAMPAIGN_RULES["default_geo_region_key"]}]},
                     "age_min": 25,
@@ -239,7 +252,8 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
         async with async_session() as db:
             acc = await _get_ad_account(db, context["ad_account_id"])
 
-            creative_name = f"MTV_CREATIVE_{context['product_name']}_{datetime.now().strftime('%b%Y').upper()}"
+            brand = _brand_code(acc)
+            creative_name = f"{brand}_CREATIVE_{context['product_name']}_{datetime.now().strftime('%b%Y').upper()}"
             spec = CreativeBuilder.build_creative_payload(
                 name=creative_name,
                 page_id=context["page_id"],
@@ -285,12 +299,14 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
         async with async_session() as db:
             acc = await _get_ad_account(db, context["ad_account_id"])
 
-            ad_name = f"MTV_AD_{context['product_name']}{context['zone']}_{datetime.now().strftime('%b%Y').upper()}"
+            brand = _brand_code(acc)
+            ad_name = f"{brand}_AD_{context['product_name']}{context['zone']}_{datetime.now().strftime('%b%Y').upper()}"
             payload = {
                 "name": ad_name,
                 "adset_id": context["adset_id"],
                 "creative": json.dumps({"creative_id": context["creative_id"]}),
-                "status": "ACTIVE",  # TODO (Fase 2 del plan): debe ser PAUSED
+                # Regla de oro del playbook (#3): todo se crea PAUSED.
+                "status": TENANT_CAMPAIGN_RULES["default_status"],
             }
 
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id)

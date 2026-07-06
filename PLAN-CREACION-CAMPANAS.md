@@ -45,12 +45,13 @@
 - [x] 4 tests nuevos de persistencia en `test_creation_tasks.py` (campaign_id/name persistido, status `CREATED` al final, `FAILED` con mensaje real, no-op seguro si el draft no existe) + 4 tests del endpoint en `test_campaign_drafts.py` (auth, 200 con progreso real, 404 cross-tenant, 404 si no existe). Suite completa: **81 passed**.
 - **DoD:** un draft refleja el estado real de la Saga de punta a punta. ✅
 
-## Fase 2 — Seguridad y reglas del playbook
-- [ ] **Todo PAUSED**: corregir `creation_tasks.py:83` (adset) y `:137` (ad).
-- [ ] Fijar `whatsapp_phone_number` en `promoted_object` (bug WhatsApp de la reunión).
-- [ ] Migrar [campaign_defaults.py](backend/app/tenant_rules/campaign_defaults.py) de constante MTV a **reglas por tenant** (config/tabla por organización) + nomenclatura `MARCA_TIPO_PUBLICO_PRODUCTO_MESAA`.
-- [ ] Endpoint devuelve **nivel de riesgo** (🟡 medio para creación) y aplica tope de ~5 campañas/sesión por cuenta.
-- **DoD:** ninguna creación produce objetos ACTIVE; WhatsApp correcto; naming por marca.
+## Fase 2 — Seguridad y reglas del playbook ✅ 2026-07-06
+- [x] **Todo PAUSED**: `task_create_adset`/`task_create_ad` ahora usan `TENANT_CAMPAIGN_RULES["default_status"]` (PAUSED) en vez del `"ACTIVE"` hardcodeado. Tests: `test_task_create_adset_is_always_paused`, `test_task_create_ad_is_always_paused`.
+- [x] `whatsapp_phone_number` en `promoted_object`: **ya estaba correcto desde la Fase 0** (se propaga `context["whatsapp_number"]` al crear el adset) — verificado con el test `test_task_create_adset_includes_whatsapp_number_in_promoted_object` de la Fase 0. No hizo falta código nuevo, solo confirmar que el bug de la reunión no aplica al código actual.
+- [x] Nomenclatura `MARCA_TIPO_PRODUCTO_ZONA_MESAA`: nuevo helper `_brand_code(ad_account)` en [creation_tasks.py](backend/app/workers/creation_tasks.py) deriva la marca del `AdAccount.name` real (ej. "Althea Pack" → `ALTHEAPAC`) en vez del literal `"MTV"` hardcodeado para todos los tenants. Se documentó en [campaign_defaults.py](backend/app/tenant_rules/campaign_defaults.py) que el resto de reglas (geo/placements/objetivo) siguen centralizadas por diseño (v1.0) — mover eso a una tabla por tenant es un refactor más grande, fuera de alcance de esta fase. Test: `test_task_create_campaign_derives_brand_from_ad_account_name_not_hardcoded`.
+- [x] Endpoint devuelve **nivel de riesgo** (`risk_level: "MEDIUM"`, playbook §2: toda creación en PAUSED es riesgo medio) y aplica **tope de 5 campañas nuevas por organización en una ventana móvil de 24h** (`MAX_CAMPAIGNS_PER_SESSION`/`CAMPAIGN_SESSION_WINDOW_HOURS` en [campaigns.py](backend/app/api/v1/campaigns.py)) → 429 al superarlo. Tests: `test_create_campaign_returns_medium_risk_level`, `test_create_campaign_blocks_after_session_cap`, `test_create_campaign_session_cap_scoped_per_organization`.
+- [x] 6 tests nuevos. Suite completa: **87 passed**.
+- **DoD:** ninguna creación produce objetos ACTIVE; WhatsApp correcto; naming por marca real; tope anti-bloqueo activo. ✅
 
 ## Fase 3 — Motor de sugerencia de parámetros (visión de la reunión)
 

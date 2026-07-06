@@ -1,8 +1,13 @@
 from typing import Dict, Any
 
 # TODO: Refactorizar estas reglas a una tabla de base de datos (TenantCampaignRules)
-# para que cada Inquilino (Tenant) pueda tener sus propias reglas configurables.
-# Para la v1.0, las mantenemos como constantes centralizadas.
+# para que cada Inquilino (Tenant) pueda tener sus propias reglas configurables
+# (geo, placements, objetivo). Para la v1.0, las mantenemos como constantes
+# centralizadas.
+#
+# El segmento "MARCA" de la nomenclatura (§8 del playbook, ej. `ALT_MSJ_...`)
+# SÍ es por-tenant ya hoy: se deriva de `AdAccount.name` (ver `_brand_code` en
+# `app/workers/creation_tasks.py`), no de un literal hardcodeado como antes.
 
 TENANT_CAMPAIGN_RULES: Dict[str, Any] = {
     "default_geo_region_key": "2771", # Lima Region

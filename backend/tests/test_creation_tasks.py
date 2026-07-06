@@ -197,6 +197,56 @@ async def test_task_create_adset_includes_whatsapp_number_in_promoted_object(ad_
 
 
 @pytest.mark.asyncio
+async def test_task_create_adset_is_always_paused(ad_account, mocker):
+    """Regla de oro del playbook (#3): todo se crea PAUSED, la activación la
+    hace el humano manualmente en Ads Manager — nunca por API."""
+    org, acc = ad_account
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    run_in_thread(task_create_adset, _base_context(acc, campaign_id="mock_camp_1", campaign_name="X_MSJ_TEST"))
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    assert payload["status"] == "PAUSED"
+
+
+@pytest.mark.asyncio
+async def test_task_create_ad_is_always_paused(ad_account, mocker):
+    org, acc = ad_account
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+    mocker.patch("app.services.notification_service.NotificationService.notify_job_status")
+
+    context = _base_context(acc, adset_id="mock_adset_1", creative_id="mock_creative_1")
+    run_in_thread(task_create_ad, context)
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    assert payload["status"] == "PAUSED"
+
+
+@pytest.mark.asyncio
+async def test_task_create_campaign_derives_brand_from_ad_account_name_not_hardcoded(ad_account, mocker):
+    """La nomenclatura MARCA_TIPO_PRODUCTO_ZONA_MESAA (playbook §8) debe salir del
+    nombre real de la cuenta conectada, no de un literal "MTV" para todos los
+    tenants."""
+    org, acc = ad_account  # acc.name == "Creation Acc"
+    mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+
+    context = run_in_thread(task_create_campaign, _base_context(acc))
+
+    from app.workers.creation_tasks import _brand_code
+    assert context["campaign_name"].startswith(f"{_brand_code(acc)}_MSJ_")
+    assert "MTV" not in context["campaign_name"]
+
+
+@pytest.mark.asyncio
 async def test_task_create_creative_uses_creative_builder_payload(ad_account, mocker):
     import json
     org, acc = ad_account

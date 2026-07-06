@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
 from app.database import get_db
 from app.models.user import User
 from app.models.campaign_snapshot import CampaignSnapshot
@@ -34,6 +34,16 @@ from app.workers.creation_tasks import (
 )
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
+
+# Anti-bloqueo (playbook §2): tope de campañas nuevas por ventana de tiempo,
+# scopeado por organización (no hay un concepto explícito de "sesión").
+MAX_CAMPAIGNS_PER_SESSION = 5
+CAMPAIGN_SESSION_WINDOW_HOURS = 24
+
+# Nivel de riesgo de la creación de campañas según el playbook (§2): toda
+# escritura de creación (campaña/adset/creativo/ad en PAUSED) es riesgo medio
+# — no hay riesgo alto porque nunca se activa por API.
+CAMPAIGN_CREATION_RISK_LEVEL = "MEDIUM"
 
 @router.get("/recent", response_model=List[CampaignSnapshotResponse])
 async def list_recent_campaign_snapshots(
@@ -193,6 +203,26 @@ async def create_campaign(
     if not res_acc.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
+    # Anti-bloqueo (playbook §2: "Máx ~5 campañas nuevas por sesión"). Meta puede
+    # inhabilitar la cuenta si detecta ráfagas de creación. No hay un concepto
+    # explícito de "sesión" en el modelo, así que se aproxima con una ventana
+    # móvil de 24h por organización.
+    window_start = datetime.datetime.utcnow() - datetime.timedelta(hours=CAMPAIGN_SESSION_WINDOW_HOURS)
+    q_recent = select(func.count()).select_from(CampaignDraft).where(
+        CampaignDraft.organization_id == tenant_id,
+        CampaignDraft.created_at >= window_start,
+    )
+    recent_count = (await db.execute(q_recent)).scalar_one()
+    if recent_count >= MAX_CAMPAIGNS_PER_SESSION:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Se alcanzó el límite de {MAX_CAMPAIGNS_PER_SESSION} campañas nuevas en las "
+                f"últimas {CAMPAIGN_SESSION_WINDOW_HOURS}h (protección anti-bloqueo de cuenta "
+                "en Meta, ver playbook §2). Intenta de nuevo más tarde."
+            ),
+        )
+
     meta_client = build_meta_client(tenant_id, db)
     validator = CampaignValidator(tenant_id, meta_client)
 
@@ -241,7 +271,11 @@ async def create_campaign(
     
     creation_chain.apply_async()
 
-    return {"message": "Campaign creation started", "draft_id": draft_id}
+    return {
+        "message": "Campaign creation started",
+        "draft_id": draft_id,
+        "risk_level": CAMPAIGN_CREATION_RISK_LEVEL,
+    }
 
 
 @router.get("/drafts/{draft_id}", response_model=CampaignDraftResponse)
