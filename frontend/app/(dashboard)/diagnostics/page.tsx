@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useWebSocket } from "@/components/providers/WebSocketProvider";
 
 export default function Diagnostics() {
+  const { lastEvent } = useWebSocket();
   const [insights, setInsights] = useState<any[]>([]);
   const [briefData, setBriefData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +39,18 @@ export default function Diagnostics() {
     fetchData();
   }, []);
 
+  // El análisis de IA corre automático encadenado tras cada sync — antes esta
+  // página no tenía forma de enterarse y se quedaba con los insights viejos
+  // hasta recargar a mano.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.event_type !== "analysis_status") return;
+    if (lastEvent.status === "COMPLETED") {
+      setTriggerMessage("Diagnóstico actualizado.");
+      fetchData();
+      setTimeout(() => setTriggerMessage(""), 5000);
+    }
+  }, [lastEvent]);
+
   const handleDismiss = async (id: string) => {
     setDismissingId(id);
     try {
@@ -54,8 +68,7 @@ export default function Diagnostics() {
     setTriggerMessage("");
     try {
       await api.triggerAnalysis();
-      setTriggerMessage("Diagnóstico iniciado en segundo plano. Recarga en unos minutos.");
-      // Opcional: Refrescar después de un rato o dejar que el usuario recargue
+      setTriggerMessage("Diagnóstico iniciado en segundo plano — esta página se actualiza sola al terminar.");
     } catch (error) {
       setTriggerMessage("Error al iniciar el diagnóstico.");
     } finally {

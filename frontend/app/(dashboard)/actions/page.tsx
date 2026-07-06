@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useWebSocket } from "@/components/providers/WebSocketProvider";
 
 export default function Actions() {
+  const { lastEvent } = useWebSocket();
   const [pending, setPending] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -39,6 +41,18 @@ export default function Actions() {
       return () => clearInterval(interval);
     }
   }, [history]);
+
+  // El planner de IA propone acciones nuevas dentro del mismo análisis que
+  // corre automático tras cada sync — sin esto, una acción recién propuesta
+  // no aparecía acá hasta recargar la página a mano.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.event_type !== "analysis_status") return;
+    if (lastEvent.status === "COMPLETED") {
+      setStatusMsg("Nuevas acciones sugeridas disponibles.");
+      fetchData();
+      setTimeout(() => setStatusMsg(""), 5000);
+    }
+  }, [lastEvent]);
 
   const handleApprove = async (id: string) => {
     setProcessingId(id);

@@ -42,11 +42,16 @@ async def list_recent_campaign_snapshots(
     """
     Retorna la captura de métricas más reciente para cada campaña de la organización.
     """
-    # 1. Buscar todas las campañas de los últimos 2 días para la organización
-    two_days_ago = datetime.date.today() - datetime.timedelta(days=2)
+    # Ventana amplia a propósito: "hoy" en el servidor (UTC) no es "hoy" en la
+    # zona horaria de la cuenta de anuncios (ej. Lima, UTC-5), y Meta suele
+    # tardar hasta 24-72h en terminar de procesar las métricas de un día. Con
+    # una ventana de 2 días, ese desfase dejaba esta consulta en 0 resultados
+    # justo después de medianoche UTC aunque el sync hubiera traído datos
+    # recientes. 7 días da margen de sobra sin encarecer la consulta.
+    cutoff_date = datetime.date.today() - datetime.timedelta(days=7)
     q = select(CampaignSnapshot).where(
         CampaignSnapshot.organization_id == current_user.organization_id,
-        CampaignSnapshot.date >= two_days_ago
+        CampaignSnapshot.date >= cutoff_date
     ).order_by(CampaignSnapshot.campaign_id, desc(CampaignSnapshot.date))
     
     res = await db.execute(q)

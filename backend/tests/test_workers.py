@@ -142,10 +142,19 @@ async def test_run_ai_analysis_task(setup_worker_data, mocker):
         autospec=True
     )
     mock_run_analysis.return_value = {"insights_count": 2, "actions_proposed": 1}
-    
+    mock_notify = mocker.patch(
+        "app.services.notification_service.NotificationService.notify_job_status"
+    )
+
     run_in_thread(run_ai_analysis, org_id)
-    
+
     mock_run_analysis.assert_called_once()
+    # Diagnósticos/Acciones dependen de este evento para refrescarse solas
+    # sin que el usuario tenga que recargar la página.
+    mock_notify.assert_called_once_with(
+        org_id, org_id, "COMPLETED", event_type="analysis_status",
+        extra={"insights_count": 2, "actions_proposed": 1},
+    )
 
 @pytest.mark.asyncio
 async def test_execute_action_task(setup_worker_data, mocker):

@@ -134,7 +134,20 @@ def run_ai_analysis(org_id: str):
             logger.info(f"Iniciando análisis de IA para {org.name}...")
             result = await engine.run_analysis(org_id)
             logger.info(f"Análisis completado. Insights creados: {result['insights_count']}. Acciones propuestas: {result['actions_proposed']}")
-            
+
+            # Notificar por WebSocket para que Diagnósticos/Acciones se
+            # refresquen solas (antes no había ningún evento para esto — el
+            # análisis corre automático encadenado tras cada sync, pero el
+            # frontend no tenía forma de enterarse sin recargar la página).
+            try:
+                from app.services.notification_service import NotificationService
+                NotificationService().notify_job_status(
+                    org_id, org_id, "COMPLETED", event_type="analysis_status",
+                    extra={"insights_count": result["insights_count"], "actions_proposed": result["actions_proposed"]},
+                )
+            except Exception:
+                logger.exception("No se pudo publicar la notificación de análisis al WebSocket")
+
     run_async(_impl())
 
 @celery_app.task(name="app.workers.tasks.execute_action_task")

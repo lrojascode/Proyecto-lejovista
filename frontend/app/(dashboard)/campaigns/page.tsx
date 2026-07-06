@@ -2,25 +2,43 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import Link from "next/link";
 
 export default function CampaignsList() {
+  const { lastEvent } = useWebSocket();
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncMessage, setSyncMessage] = useState("");
+
+  const fetchCampaigns = async () => {
+    try {
+      const data = await api.getRecentCampaigns();
+      setCampaigns(data);
+    } catch (e) {
+      console.error("Error fetching campaigns list:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCampaigns = async () => {
-      try {
-        const data = await api.getRecentCampaigns();
-        setCampaigns(data);
-      } catch (e) {
-        console.error("Error fetching campaigns list:", e);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchCampaigns();
   }, []);
+
+  // Antes esta página solo cargaba una vez al entrar — si sincronizabas
+  // estando acá, se quedaba con los datos viejos hasta recargar a mano.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.event_type !== "sync_status") return;
+    if (lastEvent.status === "COMPLETED") {
+      setSyncMessage("Sincronización completada — datos actualizados.");
+      fetchCampaigns();
+    } else if (lastEvent.status === "FAILED") {
+      setSyncMessage("La sincronización falló.");
+    } else {
+      setSyncMessage("Sincronizando datos de Meta Ads...");
+    }
+  }, [lastEvent]);
 
   if (loading) {
     return <div style={{ color: "var(--text-secondary)" }}>Cargando lista de campañas...</div>;
@@ -31,6 +49,9 @@ export default function CampaignsList() {
       <div style={{ marginBottom: "24px" }}>
         <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Todas las Campañas</h2>
         <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Consulta el rendimiento y estado de optimización de todas las campañas de anuncios.</p>
+        {syncMessage && (
+          <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
+        )}
       </div>
 
       <div className="glass-card">

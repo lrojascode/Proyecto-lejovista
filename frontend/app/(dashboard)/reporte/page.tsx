@@ -5,6 +5,7 @@ import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
+import { useWebSocket } from "@/components/providers/WebSocketProvider";
 
 const card: React.CSSProperties = {
   background: "var(--color-carbon)",
@@ -94,21 +95,41 @@ function DistributionBars({ title, data }: { title: string; data: Record<string,
 }
 
 export default function Reporte() {
+  const { lastEvent } = useWebSocket();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
+
+  const fetchReport = async () => {
+    try {
+      setData(await api.getBriefData());
+      setError("");
+    } catch (e: any) {
+      setError(e?.message || "No se pudo cargar el reporte.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      try {
-        setData(await api.getBriefData());
-      } catch (e: any) {
-        setError(e?.message || "No se pudo cargar el reporte.");
-      } finally {
-        setLoading(false);
-      }
-    })();
+    fetchReport();
   }, []);
+
+  // Sin esto la página se quedaba con el reporte de antes de sincronizar: el
+  // sync actualiza KPIs/campañas/segmentación, y el análisis de IA (encadenado
+  // automáticamente después) actualiza la narrativa — hay que refrescar en
+  // ambos, no solo uno.
+  useEffect(() => {
+    if (!lastEvent) return;
+    if (lastEvent.event_type === "sync_status" && lastEvent.status === "COMPLETED") {
+      setSyncMessage("Sincronización completada — actualizando reporte...");
+      fetchReport();
+    } else if (lastEvent.event_type === "analysis_status" && lastEvent.status === "COMPLETED") {
+      setSyncMessage("Diagnóstico de IA actualizado.");
+      fetchReport();
+    }
+  }, [lastEvent]);
 
   if (loading) return <div style={{ color: "var(--text-secondary)" }}>Cargando reporte…</div>;
 
@@ -139,6 +160,9 @@ export default function Reporte() {
           <p style={{ color: "var(--color-fog)", fontSize: "14px", marginTop: "4px" }}>
             {data.ad_account_name} · <span className="mono">{r.account.external_account_id}</span> · últimos {r.window_days} días
           </p>
+          {syncMessage && (
+            <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
+          )}
         </div>
         <button onClick={() => window.print()} className="btn-secondary no-print">
           Exportar PDF
