@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 import datetime
 from app.database import get_db
 from app.models.user import User
@@ -8,31 +7,32 @@ from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.services.ai.engine import AIEngine
 from app.services.report_builder import ReportBuilder
-from app.utils.security import get_current_user
+from app.utils.security import get_current_user, get_active_ad_account_id
+from typing import Optional
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 @router.get("/brief-data")
 async def get_master_brief_data(
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Retorna los datos estructurados del Master Brief en formato JSON.
+    Retorna los datos estructurados del Master Brief en formato JSON, para la
+    cuenta de anuncios activa (ver `get_active_ad_account_id`).
     """
     # 1. Obtener organización
     org = await db.get(Organization, current_user.organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organización no encontrada.")
 
-    # 2. Obtener primera cuenta activa
-    q = select(AdAccount).where(
-        AdAccount.organization_id == current_user.organization_id,
-        AdAccount.status == "ACTIVE"
-    )
-    res = await db.execute(q)
-    acc = res.scalars().first()
-    if not acc:
+    # 2. Obtener la cuenta activa (antes: silenciosamente "la primera ACTIVE" de
+    # la org, que mezclaba datos si había 2+ cuentas — ver plan de aislamiento).
+    if not ad_account_id:
+        raise HTTPException(status_code=400, detail="No se encontró una cuenta de anuncios activa para generar el informe.")
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.status != "ACTIVE":
         raise HTTPException(status_code=400, detail="No se encontró una cuenta de anuncios activa para generar el informe.")
 
     # 3. Compilar datos de los últimos 7 días

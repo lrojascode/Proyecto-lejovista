@@ -48,6 +48,11 @@ async function apiRequest<T = any>(
   if (typeof window !== "undefined") {
     const slug = getTenantSlugFromHostname(window.location.hostname);
     if (slug) headers["X-Tenant-Slug"] = slug;
+
+    // Cuenta de anuncios activa (aislamiento entre varias cuentas de la misma
+    // organización). Único escritor de esta clave: AdAccountProvider.
+    const adAccountId = localStorage.getItem("active_ad_account_id");
+    if (adAccountId) headers["X-Ad-Account-Id"] = adAccountId;
   }
 
   const config: RequestInit = {
@@ -81,7 +86,10 @@ async function apiRequest<T = any>(
       let errorMessage = "Ha ocurrido un error en el servidor.";
       try {
         const errorJson = JSON.parse(errorText);
-        errorMessage = errorJson.detail || errorMessage;
+        const detail = errorJson.detail;
+        // El detail puede ser un string simple o un objeto estructurado
+        // (ej. {code, message} de MULTIPLE_AD_ACCOUNTS_NO_SELECTION).
+        errorMessage = (typeof detail === "string" ? detail : detail?.message) || errorMessage;
       } catch (e) {}
       throw new Error(errorMessage);
     }

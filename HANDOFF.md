@@ -294,7 +294,7 @@ Estado al **2026-07-05**: todos los ítems de esta lista quedaron cerrados salvo
 
 ```bash
 # Tests del backend (Docker, sin Postgres/Redis reales — SQLite en archivo):
-cd backend && ./run_tests.sh -q              # esperado: 55 passed
+cd backend && ./run_tests.sh -q              # esperado: 63 passed
 
 # Tests del frontend:
 cd frontend && npx jest                       # esperado: 3 suites, 7 tests
@@ -384,6 +384,45 @@ con un token de Meta VIGENTE sobre `act_992953052009562` para confirmar en vivo
 presupuesto ya no S/0.00). El token de la cuenta probablemente esté EXPIRED — reconectar
 vía Configuración con Graph API Explorer antes de validar. La calibración exacta del
 "137" del Bug 2 debe confirmarse con los datos reales una vez arreglada la paginación.
+
+## 8. Aislamiento por cuenta publicitaria (2026-07-06)
+
+Problema: una `Organization` puede tener 2+ `AdAccount` (cuentas de Meta) conectadas,
+pero casi todos los endpoints de lectura filtraban solo por `organization_id`,
+agregando datos de TODAS las cuentas de la org en la misma respuesta —
+`/reports/brief-data` además elegía en silencio "la primera cuenta ACTIVE" en vez de
+una elegida por el usuario. Si un usuario conectaba 2+ cuentas a la misma org (ej. dos
+negocios distintos), sus campañas/leads/insights/acciones de IA se mezclaban en
+dashboard, reporte, diagnósticos y acciones sugeridas.
+
+**Fix:** nuevo concepto de "cuenta publicitaria activa", igual que ya existía
+"organización activa" vía `X-Tenant-Slug`:
+
+- Backend: dependencia `get_active_ad_account_id()` en
+  [security.py](backend/app/utils/security.py) — lee el header `X-Ad-Account-Id`,
+  valida que pertenezca a la organización del usuario (403 si no), auto-selecciona si
+  la org tiene exactamente 1 cuenta (retrocompatible, cero cambios de frontend
+  necesarios para el caso de hoy), y devuelve `400
+  MULTIPLE_AD_ACCOUNTS_NO_SELECTION` si hay 2+ cuentas sin header (en vez de elegir
+  "la primera" en silencio, que era el bug). Aplicado a `campaigns.py` (`/recent`,
+  `/{id}/history`, `/api-call-history`), `reports.py` (`/brief-data`), `actions.py` y
+  `insights.py` (list + approve/dismiss con chequeo de cuenta ajena → 404).
+- Frontend: `AdAccountProvider` + hook `useAdAccount()`
+  ([AdAccountProvider.tsx](frontend/components/providers/AdAccountProvider.tsx)),
+  selector global en el sidebar (oculto si la org tiene ≤1 cuenta), tarjetas
+  clickeables en Configuración sincronizadas con el mismo estado. El header se inyecta
+  en `apiRequest()` (`lib/api.ts`) leyendo `localStorage["active_ad_account_id"]`.
+
+**Tests:** 8 nuevos en `test_audit_fixes.py` (aislamiento de campañas/historial/reporte/
+acciones/insights entre 2 cuentas, retrocompatibilidad de 1 sola cuenta, 400 de
+múltiples cuentas sin selección, 403 de cuenta ajena). 63 backend + 7 frontend en
+verde.
+
+**Verificado en navegador real** (no solo tests): con la org de prueba (2 cuentas
+reales + 1 de prueba agregada temporalmente), cambiar de cuenta en el selector muestra
+solo los datos de esa cuenta — probado con los 5 campañas reales y las 30 llamadas de
+historial de `act_992953052009562`, sin mezclar con las otras cuentas de la misma
+organización.
 
 ## 📌 Workflow
 

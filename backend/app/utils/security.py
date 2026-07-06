@@ -170,3 +170,58 @@ async def get_current_user(
         user._active_org_id = active_org_id
 
     return user
+
+
+async def get_active_ad_account_id(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Optional[str]:
+    """Resuelve la cuenta de anuncios activa de la request (aislamiento entre
+    varias cuentas de una misma organización).
+
+    - Header `X-Ad-Account-Id` presente: debe pertenecer a la organización del
+      usuario (403 si no, sin distinguir "no existe" de "es de otra org" para no
+      filtrar qué cuentas existen).
+    - Sin header y la org tiene 0 cuentas: None (los endpoints ya manejan "sin
+      cuentas").
+    - Sin header y la org tiene exactamente 1 cuenta: se auto-selecciona (preserva
+      el comportamiento actual para orgs con una sola cuenta conectada).
+    - Sin header y la org tiene 2+ cuentas: 400 explícito — elegir "la primera" en
+      silencio es el bug que este mecanismo reemplaza.
+    """
+    from sqlalchemy import select
+    from app.models.ad_account import AdAccount
+
+    org_id = current_user.organization_id
+    header_value = request.headers.get("X-Ad-Account-Id")
+
+    if header_value:
+        q = select(AdAccount).where(
+            AdAccount.id == header_value,
+            AdAccount.organization_id == org_id,
+        )
+        res = await db.execute(q)
+        if not res.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="La cuenta de anuncios seleccionada no pertenece a esta organización.",
+            )
+        return header_value
+
+    q = select(AdAccount.id).where(AdAccount.organization_id == org_id)
+    res = await db.execute(q)
+    ids = res.scalars().all()
+
+    if not ids:
+        return None
+    if len(ids) == 1:
+        return ids[0]
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={
+            "code": "MULTIPLE_AD_ACCOUNTS_NO_SELECTION",
+            "message": "Esta organización tiene múltiples cuentas de anuncios; selecciona una.",
+        },
+    )

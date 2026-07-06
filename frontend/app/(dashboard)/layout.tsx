@@ -7,9 +7,41 @@ import { safeRedirect } from "@/lib/navigation";
 import { getTenantSlugFromHostname } from "@/lib/config";
 import { api } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
+import { AdAccountProvider, useAdAccount } from "@/components/providers/AdAccountProvider";
 import {
   GridIcon, TargetIcon, DocIcon, SparkleIcon, BoltIcon, GearIcon, MenuIcon, CloseIcon,
 } from "@/components/icons";
+
+// Selector global de cuenta publicitaria. Oculto si la organización tiene 0 o 1
+// cuenta (caso común hoy) — solo se muestra cuando hay que elegir de verdad.
+function AdAccountSelector() {
+  const { accounts, activeAdAccountId, setActiveAdAccountId } = useAdAccount();
+
+  if (accounts.length <= 1) return null;
+
+  return (
+    <div style={{ marginTop: "8px" }}>
+      <select
+        className="form-input"
+        style={{ background: "var(--color-obsidian)", fontSize: "12px", padding: "6px 8px" }}
+        value={activeAdAccountId || ""}
+        onChange={(e) => {
+          setActiveAdAccountId(e.target.value);
+          window.location.reload();
+        }}
+      >
+        {!activeAdAccountId && (
+          <option value="" disabled>Selecciona una cuenta</option>
+        )}
+        {accounts.map((acc) => (
+          <option key={acc.id} value={acc.id}>
+            {acc.name} ({acc.external_account_id})
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
@@ -60,6 +92,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     localStorage.removeItem("refresh_token");
+    localStorage.removeItem("active_ad_account_id");
     safeRedirect("/login");
   };
 
@@ -88,75 +121,78 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   ];
 
   return (
-    <div className="dashboard-wrapper">
-      {/* Botón de Menú Móvil */}
-      <button 
-        className="menu-toggle-btn"
-        onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-        aria-label="Toggle Menu"
-      >
-        {isSidebarOpen ? <CloseIcon /> : <MenuIcon />}
-      </button>
+    <AdAccountProvider orgId={orgId}>
+      <div className="dashboard-wrapper">
+        {/* Botón de Menú Móvil */}
+        <button
+          className="menu-toggle-btn"
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          aria-label="Toggle Menu"
+        >
+          {isSidebarOpen ? <CloseIcon /> : <MenuIcon />}
+        </button>
 
-      {/* Sidebar */}
-      <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
-        <div>
-          <div style={{ marginBottom: "32px", padding: "0 10px" }}>
-            <h1 style={{ fontSize: "18px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.011em" }}>
-              LejoVista
-            </h1>
-            <span className="mono" style={{ color: "var(--color-ash)" }}>
-              tenant: {orgSlug}
-            </span>
-          </div>
-
-          <nav style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-            {menuItems.map((item) => {
-              const isActive = pathname === item.path;
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.path}
-                  href={item.path}
-                  className={`nav-item ${isActive ? "active" : ""}`}
-                >
-                  <Icon />
-                  {item.name}
-                </Link>
-              );
-            })}
-          </nav>
-        </div>
-
-        {/* User Info & Logout */}
-        <div style={{
-          borderTop: "1px solid var(--color-graphite)",
-          paddingTop: "16px",
-          display: "flex",
-          flexDirection: "column",
-          gap: "12px",
-          padding: "16px 10px 0 10px"
-        }}>
+        {/* Sidebar */}
+        <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
           <div>
-            <p style={{ fontSize: "13px", fontWeight: 510, color: "var(--color-paper)" }}>{userName}</p>
-            <p style={{ fontSize: "12px", color: "var(--color-ash)" }}>Administrador</p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="btn-secondary btn-sm"
-            style={{ width: "100%" }}
-          >
-            Cerrar Sesión
-          </button>
-        </div>
-      </aside>
+            <div style={{ marginBottom: "32px", padding: "0 10px" }}>
+              <h1 style={{ fontSize: "18px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.011em" }}>
+                LejoVista
+              </h1>
+              <span className="mono" style={{ color: "var(--color-ash)" }}>
+                tenant: {orgSlug}
+              </span>
+              <AdAccountSelector />
+            </div>
 
-      {/* Main Content Container */}
-      <main className="main-content">
-        <WebSocketProvider tenantId={orgId}>
-          {children}
-        </WebSocketProvider>
-      </main>
-    </div>
+            <nav style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+              {menuItems.map((item) => {
+                const isActive = pathname === item.path;
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.path}
+                    href={item.path}
+                    className={`nav-item ${isActive ? "active" : ""}`}
+                  >
+                    <Icon />
+                    {item.name}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+
+          {/* User Info & Logout */}
+          <div style={{
+            borderTop: "1px solid var(--color-graphite)",
+            paddingTop: "16px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px",
+            padding: "16px 10px 0 10px"
+          }}>
+            <div>
+              <p style={{ fontSize: "13px", fontWeight: 510, color: "var(--color-paper)" }}>{userName}</p>
+              <p style={{ fontSize: "12px", color: "var(--color-ash)" }}>Administrador</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="btn-secondary btn-sm"
+              style={{ width: "100%" }}
+            >
+              Cerrar Sesión
+            </button>
+          </div>
+        </aside>
+
+        {/* Main Content Container */}
+        <main className="main-content">
+          <WebSocketProvider tenantId={orgId}>
+            {children}
+          </WebSocketProvider>
+        </main>
+      </div>
+    </AdAccountProvider>
   );
 }

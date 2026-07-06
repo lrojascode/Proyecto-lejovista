@@ -930,3 +930,225 @@ async def test_sync_marks_expired_on_190_in_insights(db_session: AsyncSession):
     with pytest.raises(Exception):
         await MetaAdsSyncService(db_session)._sync_real_data(acc, "FULL", _InsightsExpiredLimiter())
     assert acc.status == "EXPIRED"
+
+
+# ---------------------------------------------------------------------------
+# Aislamiento por cuenta publicitaria: una organización con 2+ AdAccount no debe
+# mezclar sus datos (campañas, reportes, acciones, insights) entre cuentas.
+# ---------------------------------------------------------------------------
+async def _make_org_and_two_accounts(db: AsyncSession, slug="multi-org"):
+    """Como `_make_org_and_account` pero crea DOS AdAccount en la misma org."""
+    org = Organization(slug=slug, name="Multi Acc Org", status="ACTIVE")
+    db.add(org)
+    await db.flush()
+    acc1 = AdAccount(
+        organization_id=org.id, platform="META",
+        external_account_id="act_1", name="Cuenta Uno", status="ACTIVE",
+    )
+    acc2 = AdAccount(
+        organization_id=org.id, platform="META",
+        external_account_id="act_2", name="Cuenta Dos", status="ACTIVE",
+    )
+    db.add(acc1)
+    db.add(acc2)
+    await db.flush()
+    return org, acc1, acc2
+
+
+async def _auth_headers_for_org(async_client: AsyncClient, db: AsyncSession, org, email: str):
+    """Registra un usuario nuevo, lo liga a `org` (patrón de
+    test_api_call_history_scoped_to_tenant) y devuelve headers con
+    Authorization + X-Tenant-Slug listos para pegarle a los endpoints de esa org."""
+    from app.models.user import User
+    from sqlalchemy import select as sa_select
+    from app.models.organization_user import OrganizationUser
+
+    signup_res = await async_client.post("/api/v1/auth/signup", json={
+        "email": email, "password": "securepassword123",
+        "full_name": "Test User", "organization_slug": f"{org.slug}-personal-{email}",
+        "organization_name": "Personal Org",
+    })
+    token = signup_res.json()["access_token"]
+
+    user = (await db.execute(sa_select(User).where(User.email == email))).scalar_one()
+    db.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    await db.commit()
+
+    return {"Authorization": f"Bearer {token}", "X-Tenant-Slug": org.slug}
+
+
+@pytest.mark.asyncio
+async def test_recent_campaigns_scoped_to_ad_account(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="rc-multi")
+    today = datetime.date.today()
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc1.id, organization_id=org.id, campaign_id="camp-1",
+        campaign_name="Camp 1", status="ACTIVE", date=today,
+    ))
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc2.id, organization_id=org.id, campaign_id="camp-2",
+        campaign_name="Camp 2", status="ACTIVE", date=today,
+    ))
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "rcmulti@example.com")
+
+    res1 = await async_client.get("/api/v1/campaigns/recent", headers={**headers, "X-Ad-Account-Id": acc1.id})
+    assert res1.status_code == 200
+    assert [c["campaign_id"] for c in res1.json()] == ["camp-1"]
+
+    res2 = await async_client.get("/api/v1/campaigns/recent", headers={**headers, "X-Ad-Account-Id": acc2.id})
+    assert res2.status_code == 200
+    assert [c["campaign_id"] for c in res2.json()] == ["camp-2"]
+
+    res_no_header = await async_client.get("/api/v1/campaigns/recent", headers=headers)
+    assert res_no_header.status_code == 400
+    assert res_no_header.json()["detail"]["code"] == "MULTIPLE_AD_ACCOUNTS_NO_SELECTION"
+
+
+@pytest.mark.asyncio
+async def test_campaign_history_scoped_to_ad_account(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="ch-multi")
+    today = datetime.date.today()
+    # Mismo campaign_id en ambas cuentas (simula colisión/reuso de id de Meta).
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc1.id, organization_id=org.id, campaign_id="shared-id",
+        campaign_name="De la cuenta 1", status="ACTIVE", date=today, spend=10.0,
+    ))
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc2.id, organization_id=org.id, campaign_id="shared-id",
+        campaign_name="De la cuenta 2", status="ACTIVE", date=today, spend=99.0,
+    ))
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "chmulti@example.com")
+
+    res = await async_client.get(
+        "/api/v1/campaigns/shared-id/history", headers={**headers, "X-Ad-Account-Id": acc1.id}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 1
+    assert data[0]["campaign_name"] == "De la cuenta 1"
+
+
+@pytest.mark.asyncio
+async def test_reports_brief_data_respects_explicit_selection(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="rb-multi")
+    acc1.cached_narrative = "Narrativa de la cuenta uno"
+    acc2.cached_narrative = "Narrativa de la cuenta dos"
+    today = datetime.date.today()
+    for acc, name in ((acc1, "C1"), (acc2, "C2")):
+        for d in range(10):
+            db_session.add(CampaignSnapshot(
+                ad_account_id=acc.id, organization_id=org.id, campaign_id=f"camp-{name}",
+                campaign_name=name, status="ACTIVE", date=today - datetime.timedelta(days=d),
+                spend=10.0, impressions=100, clicks=5, conversions=1,
+            ))
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "rbmulti@example.com")
+
+    res1 = await async_client.get("/api/v1/reports/brief-data", headers={**headers, "X-Ad-Account-Id": acc1.id})
+    assert res1.status_code == 200
+    assert res1.json()["narrative"] == "Narrativa de la cuenta uno"
+
+    res2 = await async_client.get("/api/v1/reports/brief-data", headers={**headers, "X-Ad-Account-Id": acc2.id})
+    assert res2.status_code == 200
+    assert res2.json()["narrative"] == "Narrativa de la cuenta dos"
+
+
+@pytest.mark.asyncio
+async def test_reports_brief_data_single_account_no_header_still_works(async_client: AsyncClient, db_session: AsyncSession):
+    """Retrocompatibilidad: una org con UNA sola cuenta sigue funcionando sin
+    mandar el header (regresión guard, ver rollout del plan de aislamiento)."""
+    org, acc = await _make_org_and_account(db_session, slug="rb-single")
+    acc.cached_narrative = "Narrativa única"
+    today = datetime.date.today()
+    for d in range(10):
+        db_session.add(CampaignSnapshot(
+            ad_account_id=acc.id, organization_id=org.id, campaign_id="camp-1",
+            campaign_name="C1", status="ACTIVE", date=today - datetime.timedelta(days=d),
+            spend=10.0, impressions=100, clicks=5, conversions=1,
+        ))
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "rbsingle@example.com")
+    res = await async_client.get("/api/v1/reports/brief-data", headers=headers)
+    assert res.status_code == 200
+    assert res.json()["narrative"] == "Narrativa única"
+
+
+@pytest.mark.asyncio
+async def test_actions_and_insights_scoped_to_ad_account(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="ai-multi")
+    db_session.add(AIAction(
+        ad_account_id=acc1.id, organization_id=org.id, action_type="MODIFY_BUDGET",
+        risk_level="LOW", title="Acción de cuenta 1", description="d", status="PROPOSED",
+    ))
+    db_session.add(AIAction(
+        ad_account_id=acc2.id, organization_id=org.id, action_type="MODIFY_BUDGET",
+        risk_level="LOW", title="Acción de cuenta 2", description="d", status="PROPOSED",
+    ))
+    db_session.add(AIInsight(
+        ad_account_id=acc1.id, organization_id=org.id, level="INFO", category="BUDGET",
+        title="Insight cuenta 1", description="d", is_dismissed=False,
+    ))
+    db_session.add(AIInsight(
+        ad_account_id=acc2.id, organization_id=org.id, level="INFO", category="BUDGET",
+        title="Insight cuenta 2", description="d", is_dismissed=False,
+    ))
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "aimulti@example.com")
+
+    res_actions = await async_client.get("/api/v1/actions", headers={**headers, "X-Ad-Account-Id": acc1.id})
+    assert res_actions.status_code == 200
+    assert [a["title"] for a in res_actions.json()] == ["Acción de cuenta 1"]
+
+    res_insights = await async_client.get("/api/v1/insights", headers={**headers, "X-Ad-Account-Id": acc2.id})
+    assert res_insights.status_code == 200
+    assert [i["title"] for i in res_insights.json()] == ["Insight cuenta 2"]
+
+
+@pytest.mark.asyncio
+async def test_action_approve_rejects_wrong_account(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="approve-multi")
+    action = AIAction(
+        ad_account_id=acc2.id, organization_id=org.id, action_type="MODIFY_BUDGET",
+        risk_level="LOW", title="Acción de cuenta 2", description="d", status="PROPOSED",
+    )
+    db_session.add(action)
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "approvemulti@example.com")
+    res = await async_client.post(
+        f"/api/v1/actions/{action.id}/approve",
+        json={"approve": True},
+        headers={**headers, "X-Ad-Account-Id": acc1.id},
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_multiple_accounts_no_header_returns_400(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="noheader-multi")
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "noheadermulti@example.com")
+    res = await async_client.get("/api/v1/campaigns/recent", headers=headers)
+    assert res.status_code == 400
+    assert res.json()["detail"]["code"] == "MULTIPLE_AD_ACCOUNTS_NO_SELECTION"
+
+
+@pytest.mark.asyncio
+async def test_ad_account_header_rejects_foreign_account(async_client: AsyncClient, db_session: AsyncSession):
+    org_a, acc_a = await _make_org_and_account(db_session, slug="foreign-a")
+    org_b, acc_b = await _make_org_and_account(db_session, slug="foreign-b")
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org_a, "foreignmulti@example.com")
+    res = await async_client.get(
+        "/api/v1/campaigns/recent", headers={**headers, "X-Ad-Account-Id": acc_b.id}
+    )
+    assert res.status_code == 403

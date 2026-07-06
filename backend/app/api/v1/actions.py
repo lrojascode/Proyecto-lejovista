@@ -5,42 +5,52 @@ from app.database import get_db
 from app.models.user import User
 from app.models.ai_action import AIAction
 from app.schemas.schemas import AIActionResponse, ActionApprove
-from app.utils.security import get_current_user
+from app.utils.security import get_current_user, get_active_ad_account_id
 from app.workers.tasks import execute_action_task
 import datetime
-from typing import List
+from typing import List, Optional
 
 router = APIRouter(prefix="/actions", tags=["actions"])
 
 @router.get("", response_model=List[AIActionResponse])
 async def list_pending_actions(
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Retorna la lista de acciones propuestas por la IA que están pendientes de aprobación.
+    Retorna la lista de acciones propuestas por la IA que están pendientes de
+    aprobación, para la cuenta de anuncios activa.
     """
-    q = select(AIAction).where(
+    conditions = [
         AIAction.organization_id == current_user.organization_id,
-        AIAction.status == "PROPOSED"
-    ).order_by(AIAction.proposed_at.desc())
-    
+        AIAction.status == "PROPOSED",
+    ]
+    if ad_account_id is not None:
+        conditions.append(AIAction.ad_account_id == ad_account_id)
+    q = select(AIAction).where(*conditions).order_by(AIAction.proposed_at.desc())
+
     res = await db.execute(q)
     return res.scalars().all()
 
 @router.get("/history", response_model=List[AIActionResponse])
 async def list_action_history(
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Retorna el historial de acciones procesadas (aprobadas, rechazadas, ejecutadas).
+    Retorna el historial de acciones procesadas (aprobadas, rechazadas, ejecutadas),
+    para la cuenta de anuncios activa.
     """
-    q = select(AIAction).where(
+    conditions = [
         AIAction.organization_id == current_user.organization_id,
-        AIAction.status != "PROPOSED"
-    ).order_by(AIAction.proposed_at.desc())
-    
+        AIAction.status != "PROPOSED",
+    ]
+    if ad_account_id is not None:
+        conditions.append(AIAction.ad_account_id == ad_account_id)
+    q = select(AIAction).where(*conditions).order_by(AIAction.proposed_at.desc())
+
     res = await db.execute(q)
     return res.scalars().all()
 
@@ -49,6 +59,7 @@ async def approve_or_reject_action(
     action_id: str,
     payload: ActionApprove,
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -57,6 +68,8 @@ async def approve_or_reject_action(
     """
     action = await db.get(AIAction, action_id)
     if not action or action.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Acción propuesta no encontrada.")
+    if ad_account_id is not None and action.ad_account_id != ad_account_id:
         raise HTTPException(status_code=404, detail="Acción propuesta no encontrada.")
         
     if action.status != "PROPOSED":
@@ -87,6 +100,7 @@ async def approve_or_reject_action(
 async def get_action_status(
     action_id: str,
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -95,5 +109,7 @@ async def get_action_status(
     action = await db.get(AIAction, action_id)
     if not action or action.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Acción no encontrada.")
-        
+    if ad_account_id is not None and action.ad_account_id != ad_account_id:
+        raise HTTPException(status_code=404, detail="Acción no encontrada.")
+
     return action

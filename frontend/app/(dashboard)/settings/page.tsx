@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAdAccount } from "@/components/providers/AdAccountProvider";
 
 export default function Settings() {
+  const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
   const [org, setOrg] = useState<any>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,36 +168,50 @@ export default function Settings() {
               <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No tienes ninguna cuenta conectada.</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                {accounts.map((acc) => (
-                  <div 
-                    key={acc.id}
-                    className="card-subtle"
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center"
-                    }}
-                  >
-                    <div>
-                      <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{acc.name}</strong>
-                      <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                        Meta Ads ID: <code>{acc.external_account_id}</code>
-                      </p>
-                      {acc.status === "EXPIRED" && (
-                        <p style={{ fontSize: "12px", color: "var(--color-coral-red)", marginTop: "0.35rem" }}>
-                          El token expiró. Reconecta la cuenta abajo con un token nuevo.
+                {accounts.map((acc) => {
+                  const isActive = acc.id === activeAdAccountId;
+                  return (
+                    <div
+                      key={acc.id}
+                      className="card-subtle"
+                      onClick={() => setActiveAdAccountId(acc.id)}
+                      title="Establecer como cuenta activa"
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        cursor: "pointer",
+                        borderColor: isActive ? "var(--color-signal-teal)" : undefined,
+                      }}
+                    >
+                      <div>
+                        <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>
+                          {acc.name}
+                          {isActive && (
+                            <span style={{ color: "var(--color-signal-teal)", fontSize: "12px", marginLeft: "8px", fontWeight: 510 }}>
+                              ✓ Activa
+                            </span>
+                          )}
+                        </strong>
+                        <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                          Meta Ads ID: <code>{acc.external_account_id}</code>
                         </p>
+                        {acc.status === "EXPIRED" && (
+                          <p style={{ fontSize: "12px", color: "var(--color-coral-red)", marginTop: "0.35rem" }}>
+                            El token expiró. Reconecta la cuenta abajo con un token nuevo.
+                          </p>
+                        )}
+                      </div>
+                      {acc.status === "EXPIRED" ? (
+                        <span className="badge badge-danger">Token expirado</span>
+                      ) : acc.status === "SUSPENDED" ? (
+                        <span className="badge badge-warning">Suspendida</span>
+                      ) : (
+                        <span className="badge badge-success">Activo</span>
                       )}
                     </div>
-                    {acc.status === "EXPIRED" ? (
-                      <span className="badge badge-danger">Token expirado</span>
-                    ) : acc.status === "SUSPENDED" ? (
-                      <span className="badge badge-warning">Suspendida</span>
-                    ) : (
-                      <span className="badge badge-success">Activo</span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

@@ -7,17 +7,18 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ad_account import AdAccount
 from app.models.api_call_log import APICallLog
 from app.schemas.schemas import CampaignSnapshotResponse
-from app.utils.security import get_current_user
+from app.utils.security import get_current_user, get_active_ad_account_id
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
-from typing import List
+from typing import List, Optional
 import datetime
-import uuid
 from fastapi import status
 from celery import chain
 
 from app.config import settings
+from app.models.campaign_draft import CampaignDraft
 from app.schemas.campaign_schemas import CampaignCreateRequest
+from app.schemas.schemas import CampaignDraftResponse
 from app.services.campaign_validator import CampaignValidator
 from app.services.meta_api_client import MetaApiClient
 from app.services.meta_credential_service import MetaCredentialService
@@ -37,10 +38,12 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 @router.get("/recent", response_model=List[CampaignSnapshotResponse])
 async def list_recent_campaign_snapshots(
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Retorna la captura de métricas más reciente para cada campaña de la organización.
+    Retorna la captura de métricas más reciente para cada campaña de la cuenta de
+    anuncios activa (ver `get_active_ad_account_id`).
     """
     # Ventana amplia a propósito: "hoy" en el servidor (UTC) no es "hoy" en la
     # zona horaria de la cuenta de anuncios (ej. Lima, UTC-5), y Meta suele
@@ -49,11 +52,16 @@ async def list_recent_campaign_snapshots(
     # justo después de medianoche UTC aunque el sync hubiera traído datos
     # recientes. 7 días da margen de sobra sin encarecer la consulta.
     cutoff_date = datetime.date.today() - datetime.timedelta(days=7)
-    q = select(CampaignSnapshot).where(
+    conditions = [
         CampaignSnapshot.organization_id == current_user.organization_id,
-        CampaignSnapshot.date >= cutoff_date
-    ).order_by(CampaignSnapshot.campaign_id, desc(CampaignSnapshot.date))
-    
+        CampaignSnapshot.date >= cutoff_date,
+    ]
+    if ad_account_id is not None:
+        conditions.append(CampaignSnapshot.ad_account_id == ad_account_id)
+    q = select(CampaignSnapshot).where(*conditions).order_by(
+        CampaignSnapshot.campaign_id, desc(CampaignSnapshot.date)
+    )
+
     res = await db.execute(q)
     all_snapshots = res.scalars().all()
     
@@ -72,16 +80,20 @@ async def list_recent_campaign_snapshots(
 async def list_api_call_history(
     limit: int = 10,
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Últimas llamadas a la API de Meta hechas por las cuentas del tenant (auditoría
+    Últimas llamadas a la API de Meta hechas por la cuenta activa (auditoría
     visible en el dashboard: cuándo se sincronizó, qué se pidió, si falló).
     """
+    conditions = [AdAccount.organization_id == current_user.organization_id]
+    if ad_account_id is not None:
+        conditions.append(AdAccount.id == ad_account_id)
     q = (
         select(APICallLog, AdAccount.name)
         .join(AdAccount, APICallLog.ad_account_id == AdAccount.id)
-        .where(AdAccount.organization_id == current_user.organization_id)
+        .where(*conditions)
         .order_by(desc(APICallLog.timestamp))
         .limit(min(limit, 50))
     )
@@ -102,16 +114,22 @@ async def list_api_call_history(
 async def get_campaign_history(
     campaign_id: str,
     current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Retorna el historial de snapshots diarios de una campaña específica para dibujar gráficos.
+    Retorna el historial de snapshots diarios de una campaña específica para dibujar
+    gráficos, acotado a la cuenta de anuncios activa (evita mezclar campañas con el
+    mismo id entre dos cuentas de la misma organización).
     """
-    q = select(CampaignSnapshot).where(
+    conditions = [
         CampaignSnapshot.organization_id == current_user.organization_id,
-        CampaignSnapshot.campaign_id == campaign_id
-    ).order_by(CampaignSnapshot.date.asc())
-    
+        CampaignSnapshot.campaign_id == campaign_id,
+    ]
+    if ad_account_id is not None:
+        conditions.append(CampaignSnapshot.ad_account_id == ad_account_id)
+    q = select(CampaignSnapshot).where(*conditions).order_by(CampaignSnapshot.date.asc())
+
     res = await db.execute(q)
     return res.scalars().all()
 
@@ -180,11 +198,21 @@ async def create_campaign(
 
     # 1. Validación síncrona
     await validator.validate(request)
-    
-    # 2. Registrar el intento (CampaignDraft)
-    # En un entorno real guardaríamos un CampaignDraft en BD.
-    draft_id = str(uuid.uuid4())
-    
+
+    # 2. Registrar el intento (CampaignDraft real en BD — antes se generaba un
+    # uuid suelto que no se persistía en ningún lado, así que el estado de la
+    # Saga no se podía consultar de verdad).
+    draft = CampaignDraft(
+        organization_id=tenant_id,
+        created_by_user_id=current_user.id,
+        name=f"{request.product_name}_{request.zone}",
+        payload=request.model_dump(),
+        status="PENDING_CREATION",
+    )
+    db.add(draft)
+    await db.commit()
+    draft_id = draft.id
+
     # 3. Preparar el contexto inicial
     initial_context = {
         "draft_id": draft_id,
@@ -212,6 +240,24 @@ async def create_campaign(
     ).on_error(task_handle_chain_error.s(draft_id, tenant_id))
     
     creation_chain.apply_async()
-    
+
     return {"message": "Campaign creation started", "draft_id": draft_id}
+
+
+@router.get("/drafts/{draft_id}", response_model=CampaignDraftResponse)
+async def get_campaign_draft_status(
+    draft_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Estado real de una Saga de creación de campaña (antes el frontend solo
+    simulaba el polling con un setInterval falso que siempre terminaba en éxito).
+    `payload["result"]` se va llenando con los IDs de Meta conforme avanza cada
+    paso del chain (campaign_id, adset_id, creative_id, ad_id).
+    """
+    draft = await db.get(CampaignDraft, draft_id)
+    if not draft or draft.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Draft de campaña no encontrado.")
+    return draft
 
