@@ -188,6 +188,7 @@ async def create_campaign(
     # 3. Preparar el contexto inicial
     initial_context = {
         "draft_id": draft_id,
+        "tenant_id": tenant_id,
         "ad_account_id": request.ad_account_id,
         "page_id": request.page_id,
         "product_name": request.product_name,
@@ -208,7 +209,7 @@ async def create_campaign(
         task_create_adset.s().set(countdown=40),
         task_create_creative.s().set(countdown=40),
         task_create_ad.s().set(countdown=40)
-    ).on_error(task_handle_chain_error.s(draft_id))
+    ).on_error(task_handle_chain_error.s(draft_id, tenant_id))
     
     creation_chain.apply_async()
     

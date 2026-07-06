@@ -157,6 +157,50 @@ class MetaAPIRateLimiter:
 
             return {"error": "failed_after_retries", "detalle": "Llamada fallida tras reintentos"}
 
+    async def call_api_multipart(
+        self,
+        endpoint: str,
+        data: Dict[str, Any],
+        file_bytes: bytes,
+        filename: str,
+        access_token: str = "",
+    ) -> Dict[str, Any]:
+        """POST multipart/form-data (subida de imágenes a `/adimages`).
+
+        Es una escritura: gateada por `SIMULATE_META_WRITES` igual que `call_api`
+        con `method="POST"`, con el mismo logging/delay, pero usando `files=`
+        en vez de `data=` porque Meta espera el archivo como parte multipart
+        (un JSON o form-urlencoded normal no sirve para subir binarios).
+        """
+        await self._apply_delay(True)
+
+        if settings.SIMULATE_META_WRITES:
+            logger.info(f"[MOCK] API CALL (multipart) - POST - {endpoint} - file={filename}")
+            await self._log_api_call("POST", endpoint, data, 200, "MOCK RESPONSE OK")
+            return {"mock": True, "images": {filename: {"hash": f"mock_hash_{filename}"}}}
+
+        url = f"https://graph.facebook.com/v19.0/{endpoint}"
+        all_data = {**data}
+        if access_token:
+            all_data["access_token"] = access_token
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                files = {filename: (filename, file_bytes, "application/octet-stream")}
+                response = await client.post(url, data=all_data, files=files, headers=self.headers)
+                status_code = response.status_code
+                resp_data = response.json()
+
+                await self._log_api_call("POST", endpoint, all_data, status_code, response.text)
+                return resp_data
+            except httpx.RequestError as exc:
+                logger.error(f"Error de red al subir imagen a {url}: {exc}")
+                return {"error": "network", "detalle": str(exc)}
+            except Exception as exc:
+                logger.error(f"Excepción inesperada subiendo imagen: {exc}")
+                await self._log_api_call("POST", endpoint, all_data, 500, str(exc))
+                return {"error": "excepcion", "detalle": str(exc)}
+
     async def call_api_paginated(
         self,
         endpoint: str,
