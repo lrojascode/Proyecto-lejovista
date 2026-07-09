@@ -509,6 +509,50 @@ momento. UI en Configuración: tarjeta atenuada con badge "Archivada" + botón "
 las activas piden confirmación inline ("¿Archivar X?") antes de archivar. 7 tests nuevos
 (`test_ad_account_archive.py`).
 
+## 11. Riesgo previo, IA explicable + aprendizaje, y contador de tokens (2026-07-09)
+
+Tres ajustes pedidos por el usuario sobre el flujo de creación de campañas:
+
+### 11.1 — Nivel de riesgo ANTES de crear (Ajuste 1)
+El riesgo dejó de ser la constante fija `CAMPAIGN_CREATION_RISK_LEVEL="MEDIUM"` y ahora
+se calcula dinámicamente en `app/services/campaign_risk.py::assess_campaign_risk`
+(presupuesto vs. lo sugerido por el histórico, presupuesto absoluto, estado de la cuenta,
+y términos que Meta suele rechazar en el copy → LOW/MEDIUM/HIGH + `reasons[]`). Nuevo
+endpoint `POST /campaigns/risk-preview` recalcula el riesgo con los valores actuales del
+formulario. En el frontend (`campaigns/new`) el botón ahora dice "Revisar riesgo y crear
+campaña": al pulsarlo se muestra el nivel de riesgo + razones y recién ahí aparece el
+botón de confirmación "Entiendo el riesgo — Crear Campaña (PAUSADA)". El riesgo también
+se muestra a modo informativo en el panel de sugerencia. Tests: `test_campaign_risk.py`.
+
+### 11.2 — IA explicable + historial de entrenamiento (Ajuste 2, Fase A)
+`app/services/campaign_learning.py` añade dos piezas deterministas (sin LLM, sin inventar
+cifras): `assess_maturity` (mira el histórico y decide modo EXPLORACIÓN vs. OPTIMIZADO —
+cuando el CPL de ≥3 campañas ganadoras es estable, la IA "convergió" y replica lo que
+funciona sin experimentar) y `build_analysis` (arma el objeto explicable: summary,
+fortalezas, debilidades, cambios propuestos con su porqué, fallos pasados aprendidos, días
+de evaluación, confianza). `CampaignSuggester.suggest` ahora devuelve `maturity` +
+`analysis`; se muestran en un panel "🧠 Qué está haciendo la IA" en `campaigns/new`. Cada
+creación persiste una fila en `campaign_learning_logs` (modelo nuevo) con params + análisis
++ madurez + riesgo → es la memoria de entrenamiento. Endpoint `GET /campaigns/learning-history`.
+**Fase B pendiente** (no hecha): job de Celery Beat que, pasados los días de evaluación,
+re-lea las métricas reales de la campaña y rellene `outcome_json` para cerrar el ciclo.
+Tests: `test_campaign_learning.py`.
+
+### 11.3 — Contador de tokens por funcionalidad + costo (Ajuste 3)
+`app/services/ai/token_tracking.py` captura el bloque `usage` de cada llamada REAL al LLM
+(antes se descartaba) y lo persiste en `ai_token_usage` (modelo nuevo), etiquetado por
+`feature` (`master_brief`, `campaign_copy`, `campaign_copy_action`). Registra
+prompt/completion/reasoning/total tokens, `used_cot` (True si `reasoning_tokens>0`) y
+`estimated_cost_usd` (tabla de precios `MODEL_PRICING` por modelo). Usa su propia sesión de
+BD y traga excepciones — medir jamás rompe la llamada real. Los tres call-sites del LLM
+(`engine.analyze_campaigns`, `campaigns.get_campaign_suggestion`,
+`planner.suggest_campaign_copy`) pasan un `UsageContext`. Endpoint `GET /ai-usage?days=N`
+agrega por funcionalidad. Nueva página frontend `/ai-usage` (nav "Uso de IA") con totales +
+tabla por funcionalidad. En MOCK/sin API key no se registra nada. Tests: `test_token_tracking.py`.
+
+Migraciones: `a3b8c1d4e7f2` (ai_token_usage) y `b4c9d2e5f8a3` (campaign_learning_logs).
+153 tests del backend en verde. Rebuild completo del stack aplicado.
+
 ## 📌 Workflow
 
 Commits directos a `main`, sin PRs (`gh` no está instalado en el entorno).

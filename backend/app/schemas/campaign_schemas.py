@@ -1,6 +1,15 @@
 from pydantic import BaseModel, Field
 from typing import Optional
 
+
+class CampaignRiskPreviewRequest(BaseModel):
+    """Valores actuales del formulario para calcular el nivel de riesgo ANTES de
+    confirmar la creación (Ajuste 1)."""
+    ad_account_id: str
+    budget: float = Field(..., gt=0)
+    copy_text: str = ""
+
+
 class CampaignCreateRequest(BaseModel):
     ad_account_id: str
     page_id: str

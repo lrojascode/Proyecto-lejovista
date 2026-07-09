@@ -12,9 +12,26 @@ type MetaPage = {
   whatsapp_number: string | null;
 };
 
+type Change = { change: string; why: string };
+type Analysis = {
+  summary: string;
+  mode: string;
+  converged: boolean;
+  maturity_reason: string;
+  strengths: string[];
+  weaknesses: string[];
+  changes_proposed: Change[];
+  past_failures: string[];
+  evaluation_window_days: number;
+  confidence: string;
+};
+
 type Suggestion = {
   risk_level: string;
+  risk_reasons: string[];
   has_history: boolean;
+  maturity: { converged: boolean; mode: string; reason: string };
+  analysis: Analysis;
   suggested_budget: number;
   suggested_days: number;
   excluded_placements: string[];
@@ -23,6 +40,13 @@ type Suggestion = {
   winning_campaign: { name: string; cost_per_conv: number; ctr: number } | null;
   evidence: string[];
   copy: { headline: string; primary_text: string; description: string; welcome_message: string };
+};
+
+// Colores por nivel de riesgo (paleta del design system "midnight").
+const RISK_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
+  LOW: { bg: "rgba(39, 174, 96, 0.1)", border: "rgba(39, 174, 96, 0.25)", color: "var(--color-pulse-green)", label: "BAJO" },
+  MEDIUM: { bg: "rgba(242, 201, 76, 0.1)", border: "rgba(242, 201, 76, 0.25)", color: "#f2c94c", label: "MEDIO" },
+  HIGH: { bg: "rgba(235, 87, 87, 0.1)", border: "rgba(235, 87, 87, 0.25)", color: "var(--color-coral-red)", label: "ALTO" },
 };
 
 type DraftStatus = "idle" | "submitting" | "polling" | "success" | "error";
@@ -58,6 +82,11 @@ export default function NewCampaignPage() {
   const [status, setStatus] = useState<DraftStatus>("idle");
   const [draftId, setDraftId] = useState<string | null>(null);
   const [riskLevel, setRiskLevel] = useState<string | null>(null);
+  // Confirmación de riesgo ANTES de crear (Ajuste 1): al pedir crear, primero
+  // calculamos el riesgo con los valores actuales y lo mostramos; el usuario
+  // debe confirmar explícitamente.
+  const [pendingRisk, setPendingRisk] = useState<{ level: string; reasons: string[] } | null>(null);
+  const [riskChecking, setRiskChecking] = useState(false);
   const [resultCampaignId, setResultCampaignId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const pollAttempts = useRef(0);
@@ -151,6 +180,8 @@ export default function NewCampaignPage() {
       });
   };
 
+  // Paso 1 (Ajuste 1): valida el formulario y calcula el nivel de riesgo con
+  // los valores ACTUALES, sin crear todavía. Muestra la confirmación de riesgo.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeAdAccountId) {
@@ -174,6 +205,24 @@ export default function NewCampaignPage() {
       return;
     }
 
+    setRiskChecking(true);
+    setErrorMessage("");
+    try {
+      const risk = await api.previewCampaignRisk(activeAdAccountId, formData.budget, formData.copy_text);
+      setPendingRisk({ level: risk.risk_level, reasons: risk.risk_reasons });
+    } catch (err: any) {
+      // Si falla el cálculo de riesgo no bloqueamos la creación: mostramos el
+      // riesgo como desconocido y dejamos confirmar igual.
+      setPendingRisk({ level: "MEDIUM", reasons: ["No se pudo calcular el riesgo con precisión; revisa los parámetros antes de confirmar."] });
+    } finally {
+      setRiskChecking(false);
+    }
+  };
+
+  // Paso 2 (Ajuste 1): el usuario confirmó el riesgo → se crea de verdad.
+  const doCreate = async () => {
+    if (!activeAdAccountId || !selectedPage || !selectedPage.whatsapp_number) return;
+    setPendingRisk(null);
     setStatus("submitting");
     setErrorMessage("");
 
@@ -387,6 +436,62 @@ export default function NewCampaignPage() {
                   Placements a excluir: <strong>{suggestion.excluded_placements.join(", ")}</strong>
                 </p>
               )}
+              {suggestion.risk_level && (
+                <p style={{ marginTop: "8px" }}>
+                  Nivel de riesgo estimado:{" "}
+                  <strong style={{ color: (RISK_STYLES[suggestion.risk_level] || RISK_STYLES.MEDIUM).color }}>
+                    {(RISK_STYLES[suggestion.risk_level] || RISK_STYLES.MEDIUM).label}
+                  </strong>{" "}
+                  <span style={{ color: "var(--color-fog)" }}>
+                    (se recalcula con tu presupuesto final antes de confirmar)
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+
+          {suggestion?.analysis && (
+            <div style={{
+              background: "rgba(139, 92, 246, 0.07)", border: "1px solid rgba(139, 92, 246, 0.2)",
+              borderRadius: "8px", padding: "16px", fontSize: "13px",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "8px", flexWrap: "wrap" }}>
+                <p style={{ fontWeight: 590, margin: 0 }}>🧠 Qué está haciendo la IA</p>
+                <span style={{
+                  fontSize: "11px", fontWeight: 600, padding: "2px 8px", borderRadius: "9999px",
+                  background: suggestion.analysis.converged ? "rgba(39, 174, 96, 0.15)" : "rgba(2, 184, 204, 0.15)",
+                  color: suggestion.analysis.converged ? "var(--color-pulse-green)" : "var(--color-mist)",
+                }}>
+                  {suggestion.analysis.converged ? "MODO OPTIMIZADO" : "MODO EXPLORACIÓN"} · confianza {suggestion.analysis.confidence}
+                </span>
+              </div>
+
+              <p style={{ color: "var(--color-fog)", marginBottom: "10px" }}>{suggestion.analysis.summary}</p>
+              <p style={{ color: "var(--color-fog)", marginBottom: "10px", fontStyle: "italic" }}>{suggestion.analysis.maturity_reason}</p>
+
+              {suggestion.analysis.changes_proposed.length > 0 && (
+                <div style={{ marginBottom: "10px" }}>
+                  <p style={{ fontWeight: 590, marginBottom: "4px" }}>Cambios que propone:</p>
+                  <ul style={{ paddingLeft: "18px", color: "var(--color-fog)", display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {suggestion.analysis.changes_proposed.map((c, i) => (
+                      <li key={i}><strong>{c.change}</strong> — {c.why}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {suggestion.analysis.past_failures.length > 0 && (
+                <div style={{ marginBottom: "10px" }}>
+                  <p style={{ fontWeight: 590, marginBottom: "4px" }}>Aprendizajes de fallos pasados:</p>
+                  <ul style={{ paddingLeft: "18px", color: "var(--color-fog)", display: "flex", flexDirection: "column", gap: "4px" }}>
+                    {suggestion.analysis.past_failures.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              <p style={{ color: "var(--color-fog)" }}>
+                📆 Días de evaluación recomendados: <strong>{suggestion.analysis.evaluation_window_days}</strong> — deja correr la campaña ese tiempo antes de juzgar su rendimiento.
+              </p>
             </div>
           )}
 
@@ -395,14 +500,39 @@ export default function NewCampaignPage() {
             <textarea name="copy_text" required value={formData.copy_text} onChange={handleChange} rows={6} className="form-input" placeholder="¡Hook, beneficios y llamada a la acción!"></textarea>
           </div>
 
-          <button
-            type="submit"
-            disabled={!activeAdAccountId}
-            className="btn-primary"
-            style={{ width: "100%" }}
-          >
-            Aprobar y Crear Campaña (PAUSADA)
-          </button>
+          {pendingRisk ? (
+            (() => {
+              const rs = RISK_STYLES[pendingRisk.level] || RISK_STYLES.MEDIUM;
+              return (
+                <div style={{ background: rs.bg, border: `1px solid ${rs.border}`, borderRadius: "8px", padding: "16px" }}>
+                  <p style={{ fontWeight: 590, marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    Nivel de riesgo de esta campaña:
+                    <span style={{ color: rs.color, fontWeight: 700 }}>{rs.label}</span>
+                  </p>
+                  <ul style={{ paddingLeft: "18px", color: "var(--color-fog)", fontSize: "13px", display: "flex", flexDirection: "column", gap: "4px", marginBottom: "12px" }}>
+                    {pendingRisk.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                  </ul>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    <button type="button" onClick={doCreate} className="btn-primary" style={{ flex: 1, minWidth: "180px" }}>
+                      Entiendo el riesgo — Crear Campaña (PAUSADA)
+                    </button>
+                    <button type="button" onClick={() => setPendingRisk(null)} className="btn-secondary">
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              );
+            })()
+          ) : (
+            <button
+              type="submit"
+              disabled={!activeAdAccountId || riskChecking}
+              className="btn-primary"
+              style={{ width: "100%" }}
+            >
+              {riskChecking ? "Calculando nivel de riesgo..." : "Revisar riesgo y crear campaña"}
+            </button>
+          )}
         </form>
       )}
     </div>

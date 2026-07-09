@@ -137,3 +137,12 @@ export function ArrowRightIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function GaugeIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 20a8 8 0 1 1 16 0" />
+      <path d="M12 20v-4M12 16l4-4" />
+    </svg>
+  );
+}

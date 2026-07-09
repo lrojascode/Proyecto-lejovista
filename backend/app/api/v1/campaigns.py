@@ -16,12 +16,15 @@ from fastapi import status
 from celery import chain
 
 from app.models.campaign_draft import CampaignDraft
+from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.organization import Organization
-from app.schemas.campaign_schemas import CampaignCreateRequest
+from app.schemas.campaign_schemas import CampaignCreateRequest, CampaignRiskPreviewRequest
 from app.schemas.schemas import CampaignDraftResponse
 from app.services.campaign_validator import CampaignValidator
 from app.services.campaign_suggester import CampaignSuggester
+from app.services.campaign_risk import assess_campaign_risk
 from app.services.ai.llm import OpenRouterClient
+from app.services.ai.token_tracking import UsageContext
 from app.workers.creation_tasks import (
     task_upload_image,
     task_create_campaign,
@@ -38,9 +41,9 @@ router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 MAX_CAMPAIGNS_PER_SESSION = 5
 CAMPAIGN_SESSION_WINDOW_HOURS = 24
 
-# Nivel de riesgo de la creación de campañas según el playbook (§2): toda
-# escritura de creación (campaña/adset/creativo/ad en PAUSED) es riesgo medio
-# — no hay riesgo alto porque nunca se activa por API.
+# Nivel de riesgo base de la creación (playbook §2). Ya NO es el valor que se
+# devuelve: el riesgo se calcula dinámicamente en `assess_campaign_risk`
+# (Ajuste 1). Se conserva como piso conceptual de referencia.
 CAMPAIGN_CREATION_RISK_LEVEL = "MEDIUM"
 
 @router.get("/recent", response_model=List[CampaignSnapshotResponse])
@@ -201,11 +204,25 @@ async def get_campaign_suggestion(
         org, ad_account, product_name=product_name, zone=zone,
         winning_context=suggestion.get("winning_campaign"),
         winning_ad_copy=suggestion.get("winning_ad_copy"),
+        usage_ctx=UsageContext(
+            feature="campaign_copy",
+            organization_id=current_user.organization_id,
+            ad_account_id=ad_account.id,
+        ),
+    )
+
+    risk = assess_campaign_risk(
+        budget=suggestion["suggested_budget"],
+        copy_text=copy.get("primary_text", ""),
+        suggestion=suggestion,
     )
 
     return {
-        "risk_level": CAMPAIGN_CREATION_RISK_LEVEL,
+        "risk_level": risk["level"],
+        "risk_reasons": risk["reasons"],
         "has_history": suggestion["has_history"],
+        "maturity": suggestion["maturity"],
+        "analysis": suggestion["analysis"],
         "objective": suggestion["objective"],
         "optimization_goal": suggestion["optimization_goal"],
         "destination_type": suggestion["destination_type"],
@@ -219,6 +236,35 @@ async def get_campaign_suggestion(
         "evidence": suggestion["evidence"],
         "copy": copy,
     }
+
+
+@router.post("/risk-preview")
+async def preview_campaign_risk(
+    request: CampaignRiskPreviewRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ajuste 1: calcula el nivel de riesgo con los valores ACTUALES del
+    formulario (presupuesto/copy editados por el usuario) para mostrarlo ANTES
+    de confirmar la creación. No escribe nada."""
+    q_acc = select(AdAccount).where(
+        AdAccount.id == request.ad_account_id,
+        AdAccount.organization_id == current_user.organization_id,
+        AdAccount.status != "ARCHIVED",
+    )
+    ad_account = (await db.execute(q_acc)).scalar_one_or_none()
+    if not ad_account:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+
+    # Sugerencia determinista (sin LLM) solo para tener `suggested_budget` /
+    # `has_history` con qué comparar el presupuesto que puso el usuario.
+    suggestion = await CampaignSuggester(db).suggest(ad_account)
+    risk = assess_campaign_risk(
+        budget=request.budget,
+        copy_text=request.copy_text,
+        suggestion=suggestion,
+    )
+    return {"risk_level": risk["level"], "risk_reasons": risk["reasons"]}
 
 
 @router.post("/", status_code=status.HTTP_202_ACCEPTED)
@@ -268,6 +314,16 @@ async def create_campaign(
     # 1. Validación síncrona
     await validator.validate(request)
 
+    # 1b. Razonamiento + riesgo dinámico (deterministas). La sugerencia se
+    # recalcula del histórico real (sin LLM) para tener madurez/análisis con qué
+    # documentar la decisión y comparar el presupuesto que envió el usuario.
+    suggestion = await CampaignSuggester(db).suggest(ad_account)
+    risk = assess_campaign_risk(
+        budget=request.budget,
+        copy_text=request.copy_text,
+        suggestion=suggestion,
+    )
+
     # 2. Registrar el intento (CampaignDraft real en BD — antes se generaba un
     # uuid suelto que no se persistía en ningún lado, así que el estado de la
     # Saga no se podía consultar de verdad).
@@ -281,6 +337,31 @@ async def create_campaign(
     db.add(draft)
     await db.commit()
     draft_id = draft.id
+
+    # 2b. Historial de entrenamiento (Ajuste 2A): guarda qué propuso la IA y por
+    # qué, para que futuras creaciones aprendan de esto y detecten convergencia.
+    learning_log = CampaignLearningLog(
+        organization_id=tenant_id,
+        ad_account_id=ad_account.id,
+        draft_id=draft_id,
+        product=request.product_name,
+        zone=request.zone,
+        params_json={
+            "budget": request.budget,
+            "days": request.days,
+            "objective": suggestion["objective"],
+            "excluded_placements": suggestion["excluded_placements"],
+            "best_device": suggestion["best_device"],
+            "best_age_range": suggestion["best_age_range"],
+            "suggested_budget": suggestion["suggested_budget"],
+        },
+        analysis_json=suggestion["analysis"],
+        maturity_json=suggestion["maturity"],
+        risk_level=risk["level"],
+        status="CREATED",
+    )
+    db.add(learning_log)
+    await db.commit()
 
     # 3. Preparar el contexto inicial
     initial_context = {
@@ -315,7 +396,9 @@ async def create_campaign(
     return {
         "message": "Campaign creation started",
         "draft_id": draft_id,
-        "risk_level": CAMPAIGN_CREATION_RISK_LEVEL,
+        "risk_level": risk["level"],
+        "risk_reasons": risk["reasons"],
+        "analysis": suggestion["analysis"],
     }
 
 
@@ -335,4 +418,38 @@ async def get_campaign_draft_status(
     if not draft or draft.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Draft de campaña no encontrado.")
     return draft
+
+
+@router.get("/learning-history")
+async def get_learning_history(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Historial de entrenamiento de la IA (Ajuste 2A): qué propuso y por qué en
+    cada creación, con su madurez y riesgo. Scopeado a la cuenta activa."""
+    q = select(CampaignLearningLog).where(
+        CampaignLearningLog.organization_id == current_user.organization_id,
+    )
+    if ad_account_id:
+        q = q.where(CampaignLearningLog.ad_account_id == ad_account_id)
+    q = q.order_by(desc(CampaignLearningLog.created_at)).limit(max(1, min(limit, 100)))
+
+    rows = (await db.execute(q)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "product": r.product,
+            "zone": r.zone,
+            "risk_level": r.risk_level,
+            "status": r.status,
+            "params": r.params_json,
+            "analysis": r.analysis_json,
+            "maturity": r.maturity_json,
+            "outcome": r.outcome_json,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
 

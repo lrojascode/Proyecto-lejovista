@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
 from app.services.report_builder import ReportBuilder
+from app.services.campaign_learning import assess_maturity, build_analysis
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 
 logger = logging.getLogger("lejovista.suggester")
@@ -91,8 +92,23 @@ class CampaignSuggester:
                 f"(S/.{winning_ad['cost_per_conv']:.2f} por conversación) — disponible como inspiración."
             )
 
+        # Ajuste 2A: madurez/convergencia + razonamiento explicable de la IA,
+        # derivados del mismo histórico real (deterministas, sin LLM).
+        maturity = assess_maturity(campaigns)
+        analysis = build_analysis(
+            report,
+            best=best,
+            excluded_placements=excluded_placements,
+            best_device=best_device,
+            best_age_range=best_age_range,
+            suggested_budget=suggested_budget,
+            maturity=maturity,
+        )
+
         return {
             "has_history": best is not None,
+            "maturity": maturity,
+            "analysis": analysis,
             "objective": TENANT_CAMPAIGN_RULES["objective"],
             "optimization_goal": TENANT_CAMPAIGN_RULES["optimization_goal"],
             "destination_type": TENANT_CAMPAIGN_RULES["destination_type"],

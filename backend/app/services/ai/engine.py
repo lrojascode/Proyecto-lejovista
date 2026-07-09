@@ -10,6 +10,7 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.services.ai.rules import Capa1Rules
 from app.services.ai.statistics import Capa2Statistics
 from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
+from app.services.ai.token_tracking import UsageContext
 from app.services.ai.planner import AIPlanner
 
 logger = logging.getLogger("lejovista.ai_engine")
@@ -73,7 +74,14 @@ class AIEngine:
 
             # Cliente OpenRouter para la narrativa
             llm_client = OpenRouterClient()
-            narrative = await llm_client.analyze_campaigns(org, acc, insights_summary, raw_data)
+            narrative = await llm_client.analyze_campaigns(
+                org, acc, insights_summary, raw_data,
+                usage_ctx=UsageContext(
+                    feature="master_brief",
+                    organization_id=org.id,
+                    ad_account_id=acc.id,
+                ),
+            )
 
             # Generar HTML del Master Brief
             html_brief = await llm_client.generate_html_brief(org, acc, narrative, raw_data)

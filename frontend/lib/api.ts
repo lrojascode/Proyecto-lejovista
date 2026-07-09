@@ -139,6 +139,15 @@ export const api = {
     ),
   createCampaign: (data: any) => apiRequest("/api/v1/campaigns/", "POST", data),
   getCampaignDraft: (draftId: string) => apiRequest(`/api/v1/campaigns/drafts/${draftId}`, "GET"),
+  previewCampaignRisk: (adAccountId: string, budget: number, copyText: string) =>
+    apiRequest("/api/v1/campaigns/risk-preview", "POST", {
+      ad_account_id: adAccountId, budget, copy_text: copyText,
+    }),
+  getLearningHistory: (limit: number = 20) =>
+    apiRequest(`/api/v1/campaigns/learning-history?limit=${limit}`, "GET"),
+
+  // --- AI USAGE (contador de tokens) ---
+  getAiUsage: (days: number = 30) => apiRequest(`/api/v1/ai-usage?days=${days}`, "GET"),
 
   // --- INSIGHTS ---
   getInsights: () => apiRequest("/api/v1/insights", "GET"),

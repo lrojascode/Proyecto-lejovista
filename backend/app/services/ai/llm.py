@@ -6,6 +6,7 @@ import httpx
 from app.config import settings
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
+from app.services.ai.token_tracking import UsageContext, record_token_usage
 
 logger = logging.getLogger("lejovista.llm")
 
@@ -67,10 +68,11 @@ class OpenRouterClient:
 
     async def analyze_campaigns(
         self, 
-        org: Organization, 
+        org: Organization,
         ad_account: AdAccount,
-        insights_summary: str, 
-        raw_data_summary: Dict[str, Any]
+        insights_summary: str,
+        raw_data_summary: Dict[str, Any],
+        usage_ctx: Optional[UsageContext] = None,
     ) -> str:
         """
         Envía los insights crudos de Capa 1 y 2 al LLM y recibe un análisis ejecutivo narrativo.
@@ -134,6 +136,7 @@ class OpenRouterClient:
                 response = await client.post(self.base_url, json=payload, headers=headers)
                 if response.status_code == 200:
                     result = response.json()
+                    await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
                     return result["choices"][0]["message"]["content"]
                 else:
                     logger.error(f"OpenRouter API returned error {response.status_code}: {response.text}")
@@ -468,6 +471,7 @@ class OpenRouterClient:
         zone: str,
         winning_context: Optional[Dict[str, Any]] = None,
         winning_ad_copy: Optional[Dict[str, Any]] = None,
+        usage_ctx: Optional[UsageContext] = None,
     ) -> Dict[str, str]:
         """
         Fase 3B del plan de creación de campañas: genera el copy de una campaña
@@ -554,6 +558,7 @@ class OpenRouterClient:
                 response = await client.post(self.base_url, json=payload, headers=headers)
                 if response.status_code == 200:
                     result = response.json()
+                    await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
                     content = result["choices"][0]["message"]["content"]
                     parsed = self._parse_copy_json(content)
                     if parsed:

@@ -9,7 +9,7 @@ import { api } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 import { AdAccountProvider, useAdAccount } from "@/components/providers/AdAccountProvider";
 import {
-  GridIcon, TargetIcon, DocIcon, SparkleIcon, BoltIcon, GearIcon, MenuIcon, CloseIcon,
+  GridIcon, TargetIcon, DocIcon, SparkleIcon, BoltIcon, GearIcon, MenuIcon, CloseIcon, GaugeIcon,
 } from "@/components/icons";
 
 // Selector global de cuenta publicitaria. Oculto si la organización tiene 0 o 1
@@ -117,6 +117,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { name: "Reporte", path: "/reporte", icon: DocIcon },
     { name: "Diagnósticos IA", path: "/diagnostics", icon: SparkleIcon },
     { name: "Acciones Sugeridas", path: "/actions", icon: BoltIcon },
+    { name: "Uso de IA", path: "/ai-usage", icon: GaugeIcon },
     { name: "Configuración", path: "/settings", icon: GearIcon },
   ];
 

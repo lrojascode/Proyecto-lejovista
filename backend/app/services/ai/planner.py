@@ -12,6 +12,7 @@ from app.models.organization import Organization
 from app.services.brand_code import derive_brand_code
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.ai.llm import OpenRouterClient
+from app.services.ai.token_tracking import UsageContext
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 
 logger = logging.getLogger("lejovista.planner")
@@ -216,6 +217,11 @@ class AIPlanner:
                 org, ad_account, product_name=product_name, zone=zone,
                 winning_context=suggestion.get("winning_campaign"),
                 winning_ad_copy=suggestion.get("winning_ad_copy"),
+                usage_ctx=UsageContext(
+                    feature="campaign_copy_action",
+                    organization_id=ad_account.organization_id,
+                    ad_account_id=ad_account.id,
+                ),
             )
 
             brand = derive_brand_code(ad_account)
