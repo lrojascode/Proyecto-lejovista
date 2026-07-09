@@ -11,6 +11,7 @@ from app.models.ad_account import AdAccount
 from app.models.campaign_draft import CampaignDraft
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 from app.services.brand_code import derive_brand_code as _brand_code
+from app.services.campaign_targeting import build_targeting
 from app.services.creative_builder import CreativeBuilder
 from app.services.meta_asset_repository import MetaAssetRepository
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
@@ -207,14 +208,14 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 # Regla de oro del playbook (#3): todo se crea PAUSED. La activación
                 # la hace el humano manualmente en Ads Manager — nunca por API.
                 "status": TENANT_CAMPAIGN_RULES["default_status"],
-                "targeting": json.dumps({
-                    "geo_locations": {"regions": [{"key": TENANT_CAMPAIGN_RULES["default_geo_region_key"]}]},
-                    "age_min": 25,
-                    "age_max": 65,
-                    "publisher_platforms": ["facebook"],
-                    "facebook_positions": ["feed", "story"] + TENANT_CAMPAIGN_RULES["required_placements"],
-                    "targeting_automation": {"advantage_audience": 1},
-                }),
+                # Targeting optimizado desde el histórico ganador (Ajuste 2):
+                # edad/dispositivo/placements salen del `CampaignSuggester`, no
+                # hardcodeados. Fallback a defaults si la cuenta no tiene histórico.
+                "targeting": json.dumps(build_targeting(
+                    best_age_range=context.get("best_age_range"),
+                    best_device=context.get("best_device"),
+                    excluded_placements=context.get("excluded_placements") or [],
+                )),
                 "promoted_object": json.dumps({
                     "page_id": context["page_id"],
                     "whatsapp_phone_number": context["whatsapp_number"],

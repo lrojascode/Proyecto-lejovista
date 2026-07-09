@@ -538,6 +538,21 @@ creación persiste una fila en `campaign_learning_logs` (modelo nuevo) con param
 re-lea las métricas reales de la campaña y rellene `outcome_json` para cerrar el ciclo.
 Tests: `test_campaign_learning.py`.
 
+**Conexión IA→creación (targeting optimizado)**: antes `task_create_adset` hardcodeaba el
+público (edad 25‑65, sin dispositivo, placements fijos), así que las optimizaciones que la
+IA muestra NO se aplicaban a la campaña real. Nuevo `app/services/campaign_targeting.py::
+build_targeting` traduce `best_age_range`/`best_device`/`excluded_placements` del suggester
+al `targeting` de Meta (edad del bucket ganador; dispositivo → user_os/device_platforms a
+nivel OS, no modelo exacto, para no matar alcance; placements = allowlist menos los
+excluidos, sin quitar los requeridos). `POST /campaigns/` inyecta estas señales en el
+`initial_context` de la Saga, y el path de acción sugerida (`planner.py`) usa el mismo
+helper. Fallback a defaults (25‑65, sin device) si no hay histórico. Verificado E2E: el
+adset enviado a `/adsets` para la cuenta ITS IN sale con age_min 18/age_max 24 +
+user_os Android + destination_type WHATSAPP + promoted_object con el WhatsApp. **La GEO se
+deja aparte**: mapear "zona" de texto a región/radio de Meta es decisión de producto (hoy
+la zona solo va en el nombre; el geo real es la región del tenant). Tests:
+`test_campaign_targeting.py` (9).
+
 ### 11.3 — Contador de tokens por funcionalidad + costo (Ajuste 3)
 `app/services/ai/token_tracking.py` captura el bloque `usage` de cada llamada REAL al LLM
 (antes se descartaba) y lo persiste en `ai_token_usage` (modelo nuevo), etiquetado por

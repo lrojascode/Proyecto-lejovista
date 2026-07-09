@@ -378,7 +378,13 @@ async def create_campaign(
         "image_hash": request.image_hash,
         "video_id": request.video_id,
         "thumbnail_url": request.thumbnail_url,
-        "copy_text": request.copy_text
+        "copy_text": request.copy_text,
+        # Señales de optimización derivadas del histórico ganador (Ajuste 2):
+        # el AdSet las aplica en su `targeting` en vez de hardcodear edad/
+        # dispositivo/placements. Fallback a defaults si no hay histórico.
+        "best_age_range": suggestion.get("best_age_range"),
+        "best_device": suggestion.get("best_device"),
+        "excluded_placements": suggestion.get("excluded_placements") or [],
     }
     
     # 4. Despachar la Saga (Chain)

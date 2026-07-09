@@ -11,6 +11,7 @@ from app.models.adset_snapshot import AdsetSnapshot
 from app.models.organization import Organization
 from app.services.brand_code import derive_brand_code
 from app.services.campaign_suggester import CampaignSuggester
+from app.services.campaign_targeting import build_targeting
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
@@ -239,12 +240,13 @@ class AIPlanner:
                 "daily_budget": suggestion["suggested_budget"],
                 "duration_days": suggestion["suggested_days"],
                 "excluded_placements": suggestion["excluded_placements"],
-                "targeting": {
-                    "geo_locations": {"regions": [{"key": TENANT_CAMPAIGN_RULES["default_geo_region_key"], "name": "Lima Region"}]},
-                    "age_min": 25,
-                    "age_max": 65,
-                    "publisher_platforms": ["facebook", "facebook_reels"]
-                },
+                # Targeting optimizado desde el histórico ganador (Ajuste 2):
+                # edad/dispositivo/placements reales, no hardcodeados.
+                "targeting": build_targeting(
+                    best_age_range=suggestion.get("best_age_range"),
+                    best_device=suggestion.get("best_device"),
+                    excluded_placements=suggestion.get("excluded_placements") or [],
+                ),
                 "creative": {
                     "headline": copy["headline"],
                     "body": copy["primary_text"],
