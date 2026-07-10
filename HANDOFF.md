@@ -751,3 +751,39 @@ cambios (backend + 3 workers healthy).
 Siguiente: **Fase 3** (clasificador único de campañas + prompt v2, C-2/C-3,
 puede ir en paralelo si hay dos personas) o **Fase 4** (rendimiento de datos,
 recomendado antes de sumar más cuentas reales).
+
+## Fase 3 del plan de auditoría — COMPLETA (2026-07-10)
+
+Un solo clasificador de campañas para todo el producto, el Master Brief
+enriquecido con contexto real y comparativas, y el copy generado por IA con
+variantes que el usuario elige (en vez de un texto único sin alternativa).
+
+- `3d1744e` **3.1-3.3 Clasificador único + Master Brief v2 (C-2, A-6, C-3)**:
+  `thresholds.classify_campaign` reemplaza los 3 umbrales hardcodeados que
+  existían (report_builder.py, narrativa mock, HTML brief) por uno relativo
+  al target_cpl dinámico de la cuenta. Se elimina `generate_html_brief`
+  (~300 líneas muertas). El prompt real y la plantilla mock del Master Brief
+  comparten contrato de salida (5 secciones fijas) y contexto enriquecido:
+  target_cpl, KPIs 7d vs 7d previos con Δ%, top/bottom campañas, pacing.
+- `9b067f9`… ya cerrado en Fase 2.
+- `4795507` **3.4 Copy v2 (anexo 6.2)**: el LLM genera 2 variantes de
+  headline/primary_text; el usuario elige en `/campaigns/new`. Límites de
+  Meta (headline ≤40, description ≤30) instruidos al LLM y validados en
+  `CampaignValidator`. `response_format: json_object` para reducir fallback
+  por JSON mal formado. Rubro de la organización (`industry`) inyectado en
+  el prompt.
+
+**Nota de alcance** (transparencia, como A-3 en la Fase 0): la clasificación
+de campañas de `campaigns/page.tsx` (tabla del dashboard) sigue con su
+propio criterio client-side independiente — quedó fuera de este alcance y
+se señalizó como tarea de seguimiento (chip de sesión) en vez de ampliarse
+aquí sin que el usuario lo pidiera.
+
+Estado: 251 tests backend + 14 frontend en verde. Verificado en vivo: el
+selector de variantes de copy funciona end-to-end contra el stack real
+(requirió reconstruir la imagen de `frontend`, que no tiene hot-reload).
+
+Siguiente: **Fase 4** (rendimiento de datos: agregaciones SQL, cache del
+ReportBuilder, KPIs agregados en el dashboard — recomendada antes de sumar
+más cuentas reales) o **Fase 5** (producto premium: dashboard rejerarquizado,
+comparativa temporal, PDF real, pulido UX, tipado de frontend).
