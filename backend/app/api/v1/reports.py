@@ -8,7 +8,7 @@ from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.services.ai.engine import AIEngine
-from app.services.report_builder import ReportBuilder
+from app.services.report_cache import get_report
 from app.utils.security import get_current_user, get_active_ad_account_id
 from typing import Optional
 
@@ -50,7 +50,7 @@ async def get_master_brief_data(
 
     # P-2.4/2.5: reporte estructurado completo (KPIs, adsets, ads, segmentación,
     # audiencias, creativos, alertas, parámetros óptimos) calculado desde la DB.
-    report = await ReportBuilder(db).build(acc)
+    report = await get_report(db, acc)
 
     return {
         "organization_name": org.name,

@@ -171,6 +171,13 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
             # organización — con debounce (D-1): si otra cuenta de la misma org
             # ya lo agendó, no se encola otro.
             if job.status == "COMPLETED":
+                # 4.2: invalidar el cache del ReportBuilder de esta cuenta — los
+                # snapshots cambiaron, el reporte cacheado ya no refleja la realidad.
+                try:
+                    from app.services.report_cache import invalidate as invalidate_report_cache
+                    await invalidate_report_cache(acc.id)
+                except Exception:
+                    logger.exception("No se pudo invalidar el cache de reporte tras el sync")
                 _schedule_org_analysis_debounced(acc.organization_id)
                 
     run_async(_impl())

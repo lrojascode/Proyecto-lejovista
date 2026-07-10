@@ -1,6 +1,6 @@
 import datetime
 from typing import List
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
@@ -82,15 +82,15 @@ class Capa1Rules:
             if s.date > campaign_data[c_id]["latest_snapshot"].date:
                 campaign_data[c_id]["latest_snapshot"] = s
 
-        # CPL objetivo de referencia dinámico basado en el promedio histórico de los snapshots de la cuenta
-        q_avg = select(CampaignSnapshot).where(
-            CampaignSnapshot.ad_account_id == ad_account.id
-        )
+        # CPL objetivo de referencia dinámico basado en el promedio histórico de los
+        # snapshots de la cuenta. Se agrega en SQL en vez de cargar cada fila a
+        # Python (B-2): la cuenta puede acumular miles de snapshots con el tiempo.
+        q_avg = select(
+            func.coalesce(func.sum(CampaignSnapshot.spend), 0.0),
+            func.coalesce(func.sum(CampaignSnapshot.conversions), 0),
+        ).where(CampaignSnapshot.ad_account_id == ad_account.id)
         res_avg = await self.db.execute(q_avg)
-        all_snapshots = res_avg.scalars().all()
-        
-        total_spend = sum(s.spend for s in all_snapshots)
-        total_conversions = sum(s.conversions for s in all_snapshots)
+        total_spend, total_conversions = res_avg.one()
         target_cpl = compute_target_cpl(total_spend, total_conversions, t)
 
         for c_id, data in campaign_data.items():

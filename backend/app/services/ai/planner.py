@@ -40,10 +40,16 @@ class AIPlanner:
         # También capturamos el nombre real de la campaña (name_map), usado por
         # CREATE_CAMPAIGN para dar contexto de producto al generador de copy
         # (Fase 3B) en vez del literal "THHN" hardcodeado para cualquier cuenta.
+        # B-2: acotar a los últimos 30 días — solo el snapshot más reciente por
+        # campaña/adset importa aquí, no hace falta cargar el historial completo
+        # de la cuenta (que crece sin límite con el tiempo).
+        history_cutoff = datetime.date.today() - datetime.timedelta(days=30)
+
         budget_map = {}
         name_map: Dict[str, str] = {}
         q_snaps = select(CampaignSnapshot).where(
-            CampaignSnapshot.ad_account_id == ad_account.id
+            CampaignSnapshot.ad_account_id == ad_account.id,
+            CampaignSnapshot.date >= history_cutoff,
         ).order_by(CampaignSnapshot.date.desc())
         res_snaps = await self.db.execute(q_snaps)
         for s in res_snaps.scalars().all():
@@ -61,7 +67,8 @@ class AIPlanner:
         # de una lista hardcodeada en MODIFY_PLACEMENTS.
         adset_targeting_map: Dict[str, dict] = {}
         q_adsets = select(AdsetSnapshot).where(
-            AdsetSnapshot.ad_account_id == ad_account.id
+            AdsetSnapshot.ad_account_id == ad_account.id,
+            AdsetSnapshot.date >= history_cutoff,
         ).order_by(AdsetSnapshot.date.desc())
         res_adsets = await self.db.execute(q_adsets)
         for a in res_adsets.scalars().all():

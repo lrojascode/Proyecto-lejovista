@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
 from app.models.campaign_learning_log import CampaignLearningLog
-from app.services.report_builder import ReportBuilder
+from app.services.report_cache import get_report
 from app.services.campaign_learning import assess_maturity, build_analysis
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 
@@ -33,7 +33,7 @@ class CampaignSuggester:
         self.db = db
 
     async def suggest(self, ad_account: AdAccount, budget_hint: Optional[float] = None) -> Dict[str, Any]:
-        report = await ReportBuilder(self.db).build(ad_account)
+        report = await get_report(self.db, ad_account)
 
         campaigns = report["campaigns"]
         ads = report["ads"]

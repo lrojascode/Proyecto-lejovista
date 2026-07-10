@@ -13,7 +13,7 @@ from app.services.ai.statistics import Capa2Statistics
 from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
 from app.services.ai.token_tracking import UsageContext
 from app.services.ai.planner import AIPlanner
-from app.services.report_builder import ReportBuilder
+from app.services.report_cache import get_report
 
 logger = logging.getLogger("lejovista.ai_engine")
 
@@ -131,7 +131,7 @@ class AIEngine:
         """C-3: contexto enriquecido del Master Brief v2, derivado de
         ReportBuilder (misma fuente que /reporte — no se recalculan
         breakdowns ni clasificaciones aquí, solo se reutilizan)."""
-        report = await ReportBuilder(self.db).build(ad_account, window_days=7)
+        report = await get_report(self.db, ad_account, window_days=7)
         campaigns = report["campaigns"]
 
         spend = report["kpis"]["total_spend"]
