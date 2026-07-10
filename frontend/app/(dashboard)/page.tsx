@@ -20,10 +20,44 @@ const chartTooltipStyle = {
   fontSize: 13,
 };
 
+// 5.1 (E-3): flecha + color de un Δ%. `goodWhen` indica qué dirección es
+// una buena noticia para esa métrica (costo/conv: bajar es bueno; conversa-
+// ciones: subir es bueno; gasto: no hay "bueno/malo" objetivo, es neutral).
+function DeltaBadge({ pct, goodWhen }: { pct: number | null | undefined; goodWhen: "up" | "down" | "neutral" }) {
+  if (pct === null || pct === undefined) return null;
+  const isUp = pct > 0;
+  const isFlat = pct === 0;
+  let color = "var(--color-fog)";
+  if (!isFlat && goodWhen !== "neutral") {
+    const isGood = (goodWhen === "up") === isUp;
+    color = isGood ? "var(--color-pulse-green)" : "var(--color-coral-red)";
+  }
+  const arrow = isFlat ? "→" : isUp ? "↑" : "↓";
+  return (
+    <span style={{ color, fontSize: 13, fontWeight: 510, marginLeft: 8 }}>
+      {arrow} {Math.abs(pct).toFixed(1)}%
+    </span>
+  );
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "nunca";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "hace instantes";
+  if (mins < 60) return `hace ${mins} min`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `hace ${hours} h`;
+  const days = Math.floor(hours / 24);
+  return `hace ${days} d`;
+}
+
+const ALERT_LEVEL_ORDER: Record<string, number> = { CRITICAL: 0, WARNING: 1, INFO: 2 };
+
 export default function DashboardPage() {
   const { lastEvent, isConnected } = useWebSocket();
   const [notifications, setNotifications] = useState<string[]>([]);
-  
+
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -31,6 +65,8 @@ export default function DashboardPage() {
   const [apiCallHistory, setApiCallHistory] = useState<any[]>([]);
   const [spendHistory, setSpendHistory] = useState<any[]>([]);
   const [businessPolicies, setBusinessPolicies] = useState<{ industry: string | null; policies: { title: string; description: string }[] } | null>(null);
+  const [kpisSummary, setKpisSummary] = useState<any | null>(null);
+  const [topAlerts, setTopAlerts] = useState<any[]>([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -59,6 +95,21 @@ export default function DashboardPage() {
       setBusinessPolicies(policies);
     } catch (e) {
       console.error("Error fetching business policies:", e);
+    }
+    try {
+      const kpis = await api.getKpisSummary();
+      setKpisSummary(kpis);
+    } catch (e) {
+      console.error("Error fetching KPIs summary:", e);
+    }
+    try {
+      const insights = await api.getInsights();
+      const sorted = (insights || []).slice().sort(
+        (a: any, b: any) => (ALERT_LEVEL_ORDER[a.level] ?? 9) - (ALERT_LEVEL_ORDER[b.level] ?? 9)
+      );
+      setTopAlerts(sorted.slice(0, 3));
+    } catch (e) {
+      console.error("Error fetching insights:", e);
     }
   };
 
@@ -145,6 +196,11 @@ export default function DashboardPage() {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 590, letterSpacing: "-0.012em" }}>Dashboard de Insights</h1>
           <p style={{ color: "var(--color-fog)", marginTop: 8, fontSize: 15 }}>Visión general del rendimiento de tus cuentas publicitarias conectadas.</p>
+          {kpisSummary && (
+            <p style={{ color: "var(--color-fog)", marginTop: 4, fontSize: 13 }}>
+              Última sincronización: {timeAgo(kpisSummary.last_sync_at)}
+            </p>
+          )}
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -169,6 +225,60 @@ export default function DashboardPage() {
           <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
             {notifications.map((n, i) => <li key={i} className="mono" style={{ color: "var(--color-fog)" }}>{n}</li>)}
           </ul>
+        </div>
+      )}
+
+      {hasData && kpisSummary && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+          <div className="glass-card" style={{ padding: 20 }}>
+            <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Gasto (7d)</p>
+            <p style={{ fontSize: 22, fontWeight: 590 }}>
+              S/. {kpisSummary.kpis_7d.spend.toFixed(2)}
+              <DeltaBadge pct={kpisSummary.deltas_pct.spend} goodWhen="neutral" />
+            </p>
+          </div>
+          <div className="glass-card" style={{ padding: 20 }}>
+            <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Conversaciones (7d)</p>
+            <p style={{ fontSize: 22, fontWeight: 590 }}>
+              {kpisSummary.kpis_7d.conversations}
+              <DeltaBadge pct={kpisSummary.deltas_pct.conversations} goodWhen="up" />
+            </p>
+          </div>
+          <div className="glass-card" style={{ padding: 20 }}>
+            <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Costo/Conv. (7d)</p>
+            <p style={{ fontSize: 22, fontWeight: 590 }}>
+              S/. {kpisSummary.kpis_7d.cost_per_conv.toFixed(2)}
+              <DeltaBadge pct={kpisSummary.deltas_pct.cost_per_conv} goodWhen="down" />
+            </p>
+          </div>
+          <Link href="/diagnostics" className="glass-card" style={{
+            padding: 20, textDecoration: "none", color: "inherit", display: "block",
+          }}>
+            <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Alertas Críticas</p>
+            <p style={{
+              fontSize: 22, fontWeight: 590,
+              color: kpisSummary.critical_alerts_count > 0 ? "var(--color-coral-red)" : "var(--color-paper)",
+            }}>
+              {kpisSummary.critical_alerts_count}
+            </p>
+          </Link>
+        </div>
+      )}
+
+      {hasData && topAlerts.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+          {topAlerts.map((a) => (
+            <Link key={a.id} href="/diagnostics" className="glass-card" style={{
+              padding: 16, textDecoration: "none", color: "inherit", display: "block",
+              borderLeft: `3px solid ${a.level === "CRITICAL" ? "var(--color-coral-red)" : a.level === "WARNING" ? "var(--color-signal-teal)" : "var(--color-graphite)"}`,
+            }}>
+              <span className={`badge ${a.level === "CRITICAL" ? "badge-danger" : a.level === "WARNING" ? "badge-warning" : "badge-success"}`} style={{ marginBottom: 8, display: "inline-block" }}>
+                {a.level}
+              </span>
+              <p style={{ fontSize: 14, fontWeight: 510, marginBottom: 4 }}>{a.title}</p>
+              <p style={{ fontSize: 13, color: "var(--color-fog)" }}>{a.description.slice(0, 90)}{a.description.length > 90 ? "…" : ""}</p>
+            </Link>
+          ))}
         </div>
       )}
 
@@ -315,48 +425,56 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
-        <div style={{
-          padding: "16px 24px", borderBottom: "1px solid var(--color-graphite)",
+      {/* 5.1 (E-3): antes era una tabla siempre abierta compitiendo por atención
+          con las métricas de negocio — ahora vive colapsada como "Actividad
+          técnica", un detalle de auditoría, no el foco del dashboard. */}
+      <details className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
+        <summary style={{
+          padding: "16px 24px", cursor: "pointer", listStyle: "none",
+          display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
-          <h2 style={{ fontSize: 16, fontWeight: 510 }}>Historial de Llamadas a la API de Meta</h2>
-          <p style={{ color: "var(--color-fog)", fontSize: 13, marginTop: 4 }}>Últimas {apiCallHistory.length} solicitudes registradas, para auditar cuándo y qué se sincronizó.</p>
-        </div>
-        {apiCallHistory.length === 0 ? (
-          <p style={{ padding: 24, color: "var(--color-fog)", fontSize: 14 }}>Todavía no hay llamadas registradas.</p>
-        ) : (
-          <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: 460 }}>
-            <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
-              <thead style={{ position: "sticky", top: 0, background: "var(--color-carbon)", zIndex: 1 }}>
-                <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
-                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Fecha/Hora</th>
-                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Cuenta</th>
-                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Método</th>
-                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Endpoint</th>
-                  <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "center" }}>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {apiCallHistory.map((call) => (
-                  <tr key={call.id} style={{ borderBottom: "1px solid var(--color-graphite)" }}>
-                    <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-fog)" }}>
-                      {new Date(call.timestamp).toLocaleString()}
-                    </td>
-                    <td style={{ padding: "12px 24px", fontSize: 14, color: "var(--color-mist)" }}>{call.ad_account_name}</td>
-                    <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-fog)" }}>{call.method}</td>
-                    <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-mist)" }}>{call.endpoint}</td>
-                    <td style={{ padding: "12px 24px", textAlign: "center" }}>
-                      <span className={`badge ${call.status_code >= 200 && call.status_code < 300 ? 'badge-success' : 'badge-danger'}`}>
-                        {call.status_code}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 510, display: "inline" }}>Actividad técnica</h2>
+            <p style={{ color: "var(--color-fog)", fontSize: 13, marginTop: 4 }}>Historial de llamadas a la API de Meta — últimas {apiCallHistory.length} solicitudes, para auditar cuándo y qué se sincronizó.</p>
           </div>
-        )}
-      </div>
+        </summary>
+        <div style={{ borderTop: "1px solid var(--color-graphite)" }}>
+          {apiCallHistory.length === 0 ? (
+            <p style={{ padding: 24, color: "var(--color-fog)", fontSize: 14 }}>Todavía no hay llamadas registradas.</p>
+          ) : (
+            <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: 460 }}>
+              <table style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
+                <thead style={{ position: "sticky", top: 0, background: "var(--color-carbon)", zIndex: 1 }}>
+                  <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Fecha/Hora</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Cuenta</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Método</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Endpoint</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "center" }}>Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {apiCallHistory.map((call) => (
+                    <tr key={call.id} style={{ borderBottom: "1px solid var(--color-graphite)" }}>
+                      <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-fog)" }}>
+                        {new Date(call.timestamp).toLocaleString()}
+                      </td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, color: "var(--color-mist)" }}>{call.ad_account_name}</td>
+                      <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-fog)" }}>{call.method}</td>
+                      <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-mist)" }}>{call.endpoint}</td>
+                      <td style={{ padding: "12px 24px", textAlign: "center" }}>
+                        <span className={`badge ${call.status_code >= 200 && call.status_code < 300 ? 'badge-success' : 'badge-danger'}`}>
+                          {call.status_code}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </details>
     </div>
   );
 }

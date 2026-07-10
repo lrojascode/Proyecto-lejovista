@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime
 from app.database import get_db
@@ -7,8 +7,11 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
+from app.models.ai_insight import AIInsight
+from app.models.sync_job import SyncJob
 from app.services.ai.engine import AIEngine
 from app.services.report_cache import get_report
+from app.services.kpi_period import get_kpis_with_deltas
 from app.utils.security import get_current_user, get_active_ad_account_id
 from typing import Optional
 
@@ -65,6 +68,46 @@ async def get_master_brief_data(
         "narrative_prompt_version": acc.narrative_prompt_version,
         "report": report,
         "campaigns_data": raw_data
+    }
+
+
+@router.get("/kpis-summary")
+async def get_kpis_summary(
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """5.1 (E-3): resumen liviano para la fila de KPIs del dashboard —
+    gasto/conversaciones/costo por conversación de 7d con Δ% vs los 7d
+    previos, conteo de alertas críticas activas y la fecha del último sync
+    completado. No recorre snapshots por campaña (eso lo hace ReportBuilder,
+    cacheado en 4.2) — aquí solo se necesitan los totales de la cuenta."""
+    if not ad_account_id:
+        raise HTTPException(status_code=400, detail="No se encontró una cuenta de anuncios activa.")
+
+    kpis = await get_kpis_with_deltas(db, ad_account_id, window_days=7)
+
+    critical_count = (await db.execute(
+        select(func.count()).select_from(AIInsight).where(
+            AIInsight.ad_account_id == ad_account_id,
+            AIInsight.is_dismissed == False,  # noqa: E712
+            AIInsight.level == "CRITICAL",
+        )
+    )).scalar_one()
+
+    last_sync = (await db.execute(
+        select(SyncJob.completed_at)
+        .where(SyncJob.ad_account_id == ad_account_id, SyncJob.status == "COMPLETED")
+        .order_by(desc(SyncJob.completed_at))
+        .limit(1)
+    )).scalar_one_or_none()
+
+    return {
+        "kpis_7d": kpis["current"],
+        "kpis_prev_7d": kpis["previous"],
+        "deltas_pct": kpis["deltas_pct"],
+        "critical_alerts_count": critical_count,
+        "last_sync_at": last_sync.isoformat() if last_sync else None,
     }
 
 

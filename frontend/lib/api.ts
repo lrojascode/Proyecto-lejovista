@@ -197,5 +197,6 @@ export const api = {
 
   // --- REPORTS ---
   getBriefData: () => apiRequest("/api/v1/reports/brief-data", "GET"),
-  getSpendHistory: () => apiRequest("/api/v1/reports/spend-history", "GET")
+  getSpendHistory: () => apiRequest("/api/v1/reports/spend-history", "GET"),
+  getKpisSummary: () => apiRequest("/api/v1/reports/kpis-summary", "GET"),
 };

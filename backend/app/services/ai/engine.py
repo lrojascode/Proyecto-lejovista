@@ -14,6 +14,7 @@ from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
 from app.services.ai.token_tracking import UsageContext
 from app.services.ai.planner import AIPlanner
 from app.services.report_cache import get_report
+from app.services.kpi_period import get_window_kpis, pct_change
 
 logger = logging.getLogger("lejovista.ai_engine")
 
@@ -139,17 +140,16 @@ class AIEngine:
         cost_per_conv = round(spend / conversations, 2) if conversations > 0 else spend
         kpis_7d = {"spend": spend, "conversations": conversations, "cost_per_conv": cost_per_conv}
 
-        kpis_prev = await self._get_previous_period_kpis(ad_account.id)
-
-        def _pct_change(old: float, new: float) -> Any:
-            if not old:
-                return None
-            return round((new - old) / old * 100, 1)
+        kpis_prev = await get_window_kpis(
+            self.db, ad_account.id,
+            datetime.date.today() - datetime.timedelta(days=14),
+            datetime.date.today() - datetime.timedelta(days=7),
+        )
 
         deltas_pct = {
-            "spend": _pct_change(kpis_prev["spend"], kpis_7d["spend"]),
-            "conversations": _pct_change(kpis_prev["conversations"], kpis_7d["conversations"]),
-            "cost_per_conv": _pct_change(kpis_prev["cost_per_conv"], kpis_7d["cost_per_conv"]),
+            "spend": pct_change(kpis_prev["spend"], kpis_7d["spend"]),
+            "conversations": pct_change(kpis_prev["conversations"], kpis_7d["conversations"]),
+            "cost_per_conv": pct_change(kpis_prev["cost_per_conv"], kpis_7d["cost_per_conv"]),
         }
 
         winners = [c for c in campaigns if c["conversations"] > 0]  # ya ordenados por costo asc
@@ -182,25 +182,6 @@ class AIEngine:
             "pacing": pacing,
             "segmentation": report["segmentation"],
         }
-
-    async def _get_previous_period_kpis(self, ad_account_id: str) -> Dict[str, float]:
-        """KPIs agregados de los 7 días ANTERIORES a la ventana actual (días
-        8-14), para la comparativa Δ% del Master Brief v2 (C-3)."""
-        today = datetime.date.today()
-        start = today - datetime.timedelta(days=14)
-        end = today - datetime.timedelta(days=7)
-
-        q = select(CampaignSnapshot).where(
-            CampaignSnapshot.ad_account_id == ad_account_id,
-            CampaignSnapshot.date >= start,
-            CampaignSnapshot.date < end,
-        )
-        snapshots = (await self.db.execute(q)).scalars().all()
-
-        spend = sum(s.spend for s in snapshots)
-        conversations = sum((s.conversations or s.conversions) for s in snapshots)
-        cost_per_conv = round(spend / conversations, 2) if conversations > 0 else spend
-        return {"spend": round(spend, 2), "conversations": conversations, "cost_per_conv": cost_per_conv}
 
     async def _get_recent_campaigns_summary(self, ad_account_id: str) -> dict:
         """
