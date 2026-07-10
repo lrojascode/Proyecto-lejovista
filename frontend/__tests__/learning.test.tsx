@@ -83,6 +83,51 @@ describe('Learning History Page', () => {
     expect(screen.getByText(/S\/\.1\.80 por conversación/i)).toBeInTheDocument()
   })
 
+  it('renders the full outcome with figures and reason (Fase 1)', async () => {
+    ;(api.getLearningHistory as jest.Mock).mockResolvedValueOnce([
+      entry({
+        status: 'EVALUATED',
+        outcome: {
+          verdict: 'LOSS',
+          cost_per_conv: 11.0,
+          expected_cost_per_conv: 5.0,
+          spend: 220.0,
+          conversations: 20,
+          reason: 'S/.11.00 por conversación: más del doble del costo esperado (~S/.5.00).',
+        },
+      }),
+    ])
+    render(<LearningHistoryPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/No funcionó/i)).toBeInTheDocument()
+    })
+    expect(screen.getAllByText(/S\/\.11\.00 por conversación/i).length).toBeGreaterThan(0)
+    expect(screen.getByText(/esperado ~S\/\.5\.00/i)).toBeInTheDocument()
+    expect(screen.getByText(/20 conversación\(es\) con S\/\.220\.00 de gasto/i)).toBeInTheDocument()
+    expect(screen.getByText(/más del doble del costo esperado/i)).toBeInTheDocument()
+  })
+
+  it('renders NOT_ACTIVATED with its own label, not as neutral', async () => {
+    ;(api.getLearningHistory as jest.Mock).mockResolvedValueOnce([
+      entry({
+        status: 'EVALUATED',
+        outcome: {
+          verdict: 'NOT_ACTIVATED',
+          cost_per_conv: null,
+          reason: 'La creación de la campaña falló en Meta.',
+        },
+      }),
+    ])
+    render(<LearningHistoryPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/No llegó a activarse/i)).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/Neutral/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/falló en Meta/i)).toBeInTheDocument()
+  })
+
   it('shows the error message when the API fails', async () => {
     ;(api.getLearningHistory as jest.Mock).mockRejectedValueOnce(new Error('falló la red'))
     render(<LearningHistoryPage />)

@@ -65,16 +65,35 @@ function OutcomeBlock({ outcome, windowDays }: { outcome: Record<string, any> | 
     );
   }
   const verdict = String(outcome.verdict || "").toUpperCase();
-  const badge = verdict === "WIN" ? "badge-success" : verdict === "LOSS" ? "badge-danger" : "badge-warning";
-  const label = verdict === "WIN" ? "✓ Funcionó" : verdict === "LOSS" ? "✗ No funcionó" : "≈ Neutral";
+  const badge =
+    verdict === "WIN" ? "badge-success"
+    : verdict === "LOSS" ? "badge-danger"
+    : "badge-warning";
+  const label =
+    verdict === "WIN" ? "✓ Funcionó"
+    : verdict === "LOSS" ? "✗ No funcionó"
+    : verdict === "NOT_ACTIVATED" ? "⚠ No llegó a activarse"
+    : "≈ Neutral";
   return (
     <div className="card-subtle" style={{ marginTop: "0.75rem" }}>
-      <span className={`badge ${badge}`}>{label}</span>
-      {outcome.cost_per_conv != null && (
-        <span style={{ fontSize: "13px", color: "var(--color-mist)", marginLeft: 8 }}>
-          S/.{Number(outcome.cost_per_conv).toFixed(2)} por conversación
-          {outcome.expected_cost_per_conv != null && ` (esperado ~S/.${Number(outcome.expected_cost_per_conv).toFixed(2)})`}
-        </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span className={`badge ${badge}`}>{label}</span>
+        {outcome.cost_per_conv != null && (
+          <span style={{ fontSize: "13px", color: "var(--color-mist)" }}>
+            S/.{Number(outcome.cost_per_conv).toFixed(2)} por conversación
+            {outcome.expected_cost_per_conv != null && ` (esperado ~S/.${Number(outcome.expected_cost_per_conv).toFixed(2)})`}
+          </span>
+        )}
+        {outcome.conversations != null && outcome.spend != null && (
+          <span style={{ fontSize: "13px", color: "var(--color-fog)" }}>
+            · {outcome.conversations} conversación(es) con S/.{Number(outcome.spend).toFixed(2)} de gasto
+          </span>
+        )}
+      </div>
+      {outcome.reason && (
+        <p style={{ fontSize: "13px", color: "var(--color-fog)", lineHeight: 1.5, marginTop: "0.4rem" }}>
+          {outcome.reason}
+        </p>
       )}
     </div>
   );
