@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import Link from "next/link";
+import { badgeIcon } from "@/lib/badge";
 
 export default function CampaignsList() {
   const { lastEvent } = useWebSocket();
@@ -111,7 +112,7 @@ export default function CampaignsList() {
                       <td style={{ padding: "12px 8px", fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.frequency.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px" }}>
-                        <span className={`badge ${badgeClass}`}>{badgeLabel}</span>
+                        <span className={`badge ${badgeClass}`}>{badgeIcon(badgeClass)} {badgeLabel}</span>
                       </td>
                       <td style={{ padding: "12px 8px" }}>
                         <Link href={`/campaigns/${c.campaign_id}`} className="btn-secondary btn-sm">

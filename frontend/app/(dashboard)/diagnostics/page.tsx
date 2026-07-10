@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
+import { badgeIcon } from "@/lib/badge";
 
 export default function Diagnostics() {
   const { lastEvent } = useWebSocket();
@@ -154,7 +155,7 @@ export default function Diagnostics() {
               >
                 <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", alignItems: "center" }}>
                   <span className={`badge ${ins.level === "CRITICAL" ? "badge-danger" : "badge-warning"}`}>
-                    {ins.level}
+                    {badgeIcon(ins.level === "CRITICAL" ? "badge-danger" : "badge-warning")} {ins.level}
                   </span>
                   <button
                     onClick={() => handleDismiss(ins.id)}
@@ -235,7 +236,7 @@ export default function Diagnostics() {
                         plantilla local como análisis de la IA. */}
                     {briefData.narrative_provider === "fallback_template" && (
                       <span className="badge badge-warning" title="El servicio de IA no estuvo disponible; este es un informe básico generado con los datos reales de la cuenta.">
-                        Informe básico — IA no disponible
+                        {badgeIcon("badge-warning")} Informe básico — IA no disponible
                       </span>
                     )}
                   </h3>

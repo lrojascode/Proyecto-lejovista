@@ -6,6 +6,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
+import { badgeIcon } from "@/lib/badge";
 
 const card: React.CSSProperties = {
   background: "var(--color-carbon)",
@@ -54,6 +55,29 @@ function Kpi({ label, value, highlight, deltaPct, goodWhen }: {
         {value}
         {goodWhen && <DeltaBadge pct={deltaPct} goodWhen={goodWhen} />}
       </div>
+    </div>
+  );
+}
+
+function CreativeThumb({ url, name }: { url?: string; name: string }) {
+  const [failed, setFailed] = useState(false);
+  const thumbStyle: React.CSSProperties = {
+    width: "48px", height: "48px", borderRadius: "6px", flexShrink: 0,
+    background: "var(--color-obsidian)", display: "flex", alignItems: "center",
+    justifyContent: "center", fontSize: "18px", color: "var(--color-ash)",
+    overflow: "hidden",
+  };
+  if (!url || failed) {
+    return <div style={thumbStyle} title="Sin vista previa disponible">🖼️</div>;
+  }
+  return (
+    <div style={thumbStyle}>
+      <img
+        src={url}
+        alt={name}
+        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        onError={() => setFailed(true)}
+      />
     </div>
   );
 }
@@ -303,7 +327,14 @@ export default function Reporte() {
           <tbody>
             {r.campaigns.map((c: any) => (
               <tr key={c.campaign_id}>
-                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{c.name}</td>
+                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>
+                  {c.name}
+                  {c.created_by_ai && (
+                    <span className="badge badge-ai" style={{ marginLeft: "6px", fontSize: "0.68rem" }} title="Esta campaña la propuso y creó la IA de forma autónoma.">
+                      {badgeIcon("badge-ai")} Creada por IA
+                    </span>
+                  )}
+                </td>
                 <td style={td}>{money(c.spend)}</td>
                 <td style={td}>{num(c.reach)}</td>
                 <td style={td}>{c.frequency}</td>
@@ -313,7 +344,7 @@ export default function Reporte() {
                   {money(c.cost_per_conv)}
                   <DeltaBadge pct={c.cost_per_conv_delta_pct} goodWhen="down" />
                 </td>
-                <td style={td}><span className={`badge ${labelBadge(c.label)}`}>{c.label}</span></td>
+                <td style={td}><span className={`badge ${labelBadge(c.label)}`}>{badgeIcon(labelBadge(c.label))} {c.label}</span></td>
               </tr>
             ))}
           </tbody>
@@ -398,7 +429,7 @@ export default function Reporte() {
             r.audiences.map((a: any, i: number) => (
               <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)" }}>
                 <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{a.name}</strong>{" "}
-                <span className="badge badge-success">{a.subtype}</span>
+                <span className="badge badge-success">{badgeIcon("badge-success")} {a.subtype}</span>
                 <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{a.description} · ~{num(a.approximate_count)}</p>
               </div>
             ))}
@@ -407,9 +438,15 @@ export default function Reporte() {
           <h2 style={{ ...h2, fontSize: "15px" }}>Inventario de creativos</h2>
           {r.creatives.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin creativos.</p> :
             r.creatives.map((c: any, i: number) => (
-              <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)", fontSize: "0.85rem" }}>
-                <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{c.name || c.image_hash}</strong>
-                <span style={{ color: "var(--text-secondary)" }}> · {c.width}×{c.height}</span>
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)", fontSize: "0.85rem" }}>
+                {/* 5.4(c): thumbnail real del creativo — la `url` ya venía del
+                    reporte pero no se mostraba, solo texto. Fallback a un
+                    placeholder si la imagen no carga (URL vencida/mock). */}
+                <CreativeThumb url={c.url} name={c.name || c.image_hash} />
+                <div>
+                  <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{c.name || c.image_hash}</strong>
+                  <span style={{ color: "var(--text-secondary)" }}> · {c.width}×{c.height}</span>
+                </div>
               </div>
             ))}
         </div>
@@ -441,10 +478,10 @@ export default function Reporte() {
                 plantilla local — no se presenta como "Procesado por IA". */}
             {data.narrative_provider === "fallback_template" ? (
               <span className="badge badge-warning" title="El servicio de IA no estuvo disponible; este es un informe básico generado con los datos reales de la cuenta, sin análisis del modelo.">
-                Informe básico — IA no disponible
+                {badgeIcon("badge-warning")} Informe básico — IA no disponible
               </span>
             ) : (
-              <span className="badge badge-ai">Procesado por IA</span>
+              <span className="badge badge-ai">{badgeIcon("badge-ai")} Procesado por IA</span>
             )}
           </div>
           <div className="narrative-content">

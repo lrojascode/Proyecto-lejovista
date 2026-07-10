@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
+import { badgeIcon } from "@/lib/badge";
 
 export default function Settings() {
   const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
@@ -276,11 +277,11 @@ export default function Settings() {
                         {isArchived ? (
                           <span className="badge">Archivada</span>
                         ) : acc.status === "EXPIRED" ? (
-                          <span className="badge badge-danger">Token expirado</span>
+                          <span className="badge badge-danger">{badgeIcon("badge-danger")} Token expirado</span>
                         ) : acc.status === "SUSPENDED" ? (
-                          <span className="badge badge-warning">Suspendida</span>
+                          <span className="badge badge-warning">{badgeIcon("badge-warning")} Suspendida</span>
                         ) : (
-                          <span className="badge badge-success">Activo</span>
+                          <span className="badge badge-success">{badgeIcon("badge-success")} Activo</span>
                         )}
 
                         {isArchived ? (

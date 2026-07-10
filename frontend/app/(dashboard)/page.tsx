@@ -8,6 +8,7 @@ import {
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { api } from "@/lib/api";
 import Link from "next/link";
+import { badgeIcon } from "@/lib/badge";
 
 // Acentos de apoyo del design system — nunca acid-lime (reservado para acciones)
 const COLORS = ['#6366f1', '#02b8cc', '#27a644', '#8b5cf6', '#f2994a'];
@@ -202,7 +203,7 @@ export default function DashboardPage() {
             </p>
           )}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
+        <div className="no-print" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{
               width: 8, height: 8, borderRadius: 9999,
@@ -273,7 +274,7 @@ export default function DashboardPage() {
               borderLeft: `3px solid ${a.level === "CRITICAL" ? "var(--color-coral-red)" : a.level === "WARNING" ? "var(--color-signal-teal)" : "var(--color-graphite)"}`,
             }}>
               <span className={`badge ${a.level === "CRITICAL" ? "badge-danger" : a.level === "WARNING" ? "badge-warning" : "badge-success"}`} style={{ marginBottom: 8, display: "inline-block" }}>
-                {a.level}
+                {badgeIcon(a.level === "CRITICAL" ? "badge-danger" : a.level === "WARNING" ? "badge-warning" : "badge-success")} {a.level}
               </span>
               <p style={{ fontSize: 14, fontWeight: 510, marginBottom: 4 }}>{a.title}</p>
               <p style={{ fontSize: 13, color: "var(--color-fog)" }}>{a.description.slice(0, 90)}{a.description.length > 90 ? "…" : ""}</p>
@@ -385,7 +386,7 @@ export default function DashboardPage() {
                       <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{(campaign.spend_7d ?? campaign.spend).toFixed(2)}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>
                         <span className={`badge ${campaign.status === 'ACTIVE' ? 'badge-success' : 'badge-warning'}`}>
-                          {campaign.status}
+                          {badgeIcon(campaign.status === 'ACTIVE' ? 'badge-success' : 'badge-warning')} {campaign.status}
                         </span>
                       </td>
                     </tr>
@@ -464,7 +465,7 @@ export default function DashboardPage() {
                       <td className="mono" style={{ padding: "12px 24px", fontSize: 13, color: "var(--color-mist)" }}>{call.endpoint}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>
                         <span className={`badge ${call.status_code >= 200 && call.status_code < 300 ? 'badge-success' : 'badge-danger'}`}>
-                          {call.status_code}
+                          {badgeIcon(call.status_code >= 200 && call.status_code < 300 ? 'badge-success' : 'badge-danger')} {call.status_code}
                         </span>
                       </td>
                     </tr>

@@ -17,6 +17,8 @@ from app.models.adset_snapshot import AdsetSnapshot
 from app.models.ad_snapshot import AdSnapshot
 from app.models.meta_creative import MetaCreative
 from app.models.custom_audience import CustomAudience
+from app.models.campaign_learning_log import CampaignLearningLog
+from app.models.campaign_draft import CampaignDraft
 from app.services.ai.thresholds import classify_campaign, compute_target_cpl
 from app.services.kpi_period import get_window_kpis, pct_change
 
@@ -89,6 +91,14 @@ class ReportBuilder:
                 c["spend_delta_pct"] = None
                 c["cost_per_conv_delta_pct"] = None
 
+        # 5.4(d): marcar campañas creadas por la IA (cruzando con el historial
+        # de aprendizaje de creación, Ajuste 2A) — antes el reporte no
+        # distinguía una campaña que el usuario armó a mano de una que la IA
+        # propuso y creó sola.
+        ai_campaign_ids = await self._get_ai_created_campaign_ids(ad_account.id)
+        for c in campaigns:
+            c["created_by_ai"] = c["campaign_id"] in ai_campaign_ids
+
         return {
             "window_days": window_days,
             "generated_at": datetime.datetime.utcnow().isoformat(),
@@ -125,6 +135,26 @@ class ReportBuilder:
             "findings": self._findings(campaigns, adsets, segmentation),
             "recommendations": self._recommendations(campaigns, adsets, segmentation),
         }
+
+    async def _get_ai_created_campaign_ids(self, ad_account_id: str) -> set:
+        """5.4(d): campaign_id reales de Meta que se originaron en una
+        propuesta de la IA — el resultado (`outcome_json.campaign_id`) si ya
+        se evaluó, o si no `draft.payload.result.campaign_id` (mismo campo
+        que usa `campaign_outcome.py` para localizar la campaña creada)."""
+        q = (
+            select(CampaignLearningLog.outcome_json, CampaignDraft.payload)
+            .outerjoin(CampaignDraft, CampaignLearningLog.draft_id == CampaignDraft.id)
+            .where(CampaignLearningLog.ad_account_id == ad_account_id)
+        )
+        rows = (await self.db.execute(q)).all()
+        ids = set()
+        for outcome_json, draft_payload in rows:
+            cid = (outcome_json or {}).get("campaign_id")
+            if not cid:
+                cid = ((draft_payload or {}).get("result") or {}).get("campaign_id")
+            if cid:
+                ids.add(cid)
+        return ids
 
     # --- agregaciones ---
     def _agg_campaigns(self, snaps, target_cpl: float) -> List[Dict[str, Any]]:

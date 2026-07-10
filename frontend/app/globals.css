@@ -558,7 +558,10 @@ select:focus-visible {
   font-weight: var(--font-weight-w510);
 }
 
-/* Exportar a PDF vía "Imprimir" del navegador (ver botón en /reporte).
+/* 5.4(e): impresión genérica de cualquier pantalla del dashboard con
+   Ctrl/Cmd+P (el botón "Exportar PDF" de /reporte ya no depende de esto —
+   usa un PDF real renderizado en el servidor, ver pdf_report.py — pero el
+   navegador sigue pudiendo imprimir cualquier página directamente).
    Redefine los tokens de color base (no los acentos semánticos: verde/rojo/
    ámbar/violeta se mantienen igual, ya se leen bien sobre blanco) para que
    todo el texto/fondo que use var(--color-*) o var(--text-*) pase a modo

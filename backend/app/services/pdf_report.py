@@ -64,7 +64,7 @@ _TEMPLATE = Template("""
     <tbody>
     {% for c in report.campaigns %}
       <tr>
-        <td>{{ c.name }}</td>
+        <td>{{ c.name }}{% if c.created_by_ai %} <span style="color:#6a4bd6;font-size:8px;">(creada por IA)</span>{% endif %}</td>
         <td>S/.{{ "%.2f"|format(c.spend) }}</td>
         <td>{{ c.conversations }}</td>
         <td>S/.{{ "%.2f"|format(c.cost_per_conv) }}</td>
