@@ -18,6 +18,7 @@ from app.models.ad_snapshot import AdSnapshot
 from app.models.meta_creative import MetaCreative
 from app.models.custom_audience import CustomAudience
 from app.services.ai.thresholds import classify_campaign, compute_target_cpl
+from app.services.kpi_period import get_window_kpis, pct_change
 
 
 class ReportBuilder:
@@ -61,6 +62,33 @@ class ReportBuilder:
 
         best_cost = min([c["cost_per_conv"] for c in campaigns if c["conversations"] > 0], default=0)
 
+        # 5.2 (F-3.1): comparativa temporal — la ventana anterior del MISMO
+        # tamaño (ej. 30d actuales vs los 30d previos a esos), para que el Δ%
+        # sea comparable sin importar qué ventana eligió el usuario (7/30/90).
+        prev_since = since - datetime.timedelta(days=window_days)
+        kpis_prev = await get_window_kpis(self.db, ad_account.id, prev_since, since)
+        cost_per_conv = round(total_spend / total_conv, 2) if total_conv > 0 else round(total_spend, 2)
+        deltas_pct = {
+            "spend": pct_change(kpis_prev["spend"], total_spend),
+            "conversations": pct_change(kpis_prev["conversations"], total_conv),
+            "cost_per_conv": pct_change(kpis_prev["cost_per_conv"], cost_per_conv),
+        }
+
+        q_prev_camp = select(CampaignSnapshot).where(
+            CampaignSnapshot.ad_account_id == ad_account.id,
+            CampaignSnapshot.date >= prev_since, CampaignSnapshot.date < since,
+        )
+        prev_camp_snaps = (await self.db.execute(q_prev_camp)).scalars().all()
+        prev_by_id = {c["campaign_id"]: c for c in self._agg_campaigns(prev_camp_snaps, target_cpl)}
+        for c in campaigns:
+            prev = prev_by_id.get(c["campaign_id"])
+            if prev and prev["spend"] > 0:
+                c["spend_delta_pct"] = pct_change(prev["spend"], c["spend"])
+                c["cost_per_conv_delta_pct"] = pct_change(prev["cost_per_conv"], c["cost_per_conv"])
+            else:
+                c["spend_delta_pct"] = None
+                c["cost_per_conv_delta_pct"] = None
+
         return {
             "window_days": window_days,
             "generated_at": datetime.datetime.utcnow().isoformat(),
@@ -78,6 +106,7 @@ class ReportBuilder:
                 "avg_ctr": round(avg_ctr, 2),
                 "best_cost_per_conv": round(best_cost, 2),
                 "target_cpl": round(target_cpl, 2),
+                "deltas_pct": deltas_pct,
             },
             "campaigns": campaigns,
             "adsets": adsets,

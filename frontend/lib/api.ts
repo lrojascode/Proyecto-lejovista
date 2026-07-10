@@ -196,7 +196,7 @@ export const api = {
   getActionStatus: (actionId: string) => apiRequest(`/api/v1/actions/${actionId}/status`, "GET"),
 
   // --- REPORTS ---
-  getBriefData: () => apiRequest("/api/v1/reports/brief-data", "GET"),
+  getBriefData: (windowDays: number = 30) => apiRequest(`/api/v1/reports/brief-data?window_days=${windowDays}`, "GET"),
   getSpendHistory: () => apiRequest("/api/v1/reports/spend-history", "GET"),
   getKpisSummary: () => apiRequest("/api/v1/reports/kpis-summary", "GET"),
 };

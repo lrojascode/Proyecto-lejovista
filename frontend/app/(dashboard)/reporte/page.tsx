@@ -23,11 +23,37 @@ const labelBadge = (label: string) =>
 function money(n: number) { return `S/.${(n ?? 0).toFixed(2)}`; }
 function num(n: number) { return (n ?? 0).toLocaleString(); }
 
-function Kpi({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+// 5.2 (F-3.1): flecha + color de un Δ% vs el período previo del mismo
+// tamaño. `goodWhen` indica qué dirección es una buena noticia (costo:
+// bajar es bueno; conversaciones: subir es bueno; gasto: neutral).
+function DeltaBadge({ pct, goodWhen }: { pct: number | null | undefined; goodWhen: "up" | "down" | "neutral" }) {
+  if (pct === null || pct === undefined) return null;
+  const isUp = pct > 0;
+  const isFlat = pct === 0;
+  let color = "var(--color-fog)";
+  if (!isFlat && goodWhen !== "neutral") {
+    const isGood = (goodWhen === "up") === isUp;
+    color = isGood ? "var(--color-pulse-green)" : "var(--color-coral-red)";
+  }
+  const arrow = isFlat ? "→" : isUp ? "↑" : "↓";
+  return (
+    <span style={{ color, fontSize: "12px", fontWeight: 510, marginLeft: "6px" }}>
+      {arrow} {Math.abs(pct).toFixed(1)}%
+    </span>
+  );
+}
+
+function Kpi({ label, value, highlight, deltaPct, goodWhen }: {
+  label: string; value: string; highlight?: boolean;
+  deltaPct?: number | null; goodWhen?: "up" | "down" | "neutral";
+}) {
   return (
     <div className="card-subtle" style={{ textAlign: "center" }}>
       <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>{label}</div>
-      <div style={{ fontSize: "20px", fontWeight: 590, marginTop: "0.35rem", letterSpacing: "-0.012em", color: highlight ? "var(--color-pulse-green)" : "var(--color-paper)" }}>{value}</div>
+      <div style={{ fontSize: "20px", fontWeight: 590, marginTop: "0.35rem", letterSpacing: "-0.012em", color: highlight ? "var(--color-pulse-green)" : "var(--color-paper)" }}>
+        {value}
+        {goodWhen && <DeltaBadge pct={deltaPct} goodWhen={goodWhen} />}
+      </div>
     </div>
   );
 }
@@ -94,16 +120,19 @@ function DistributionBars({ title, data }: { title: string; data: Record<string,
   );
 }
 
+const WINDOW_OPTIONS = [7, 30, 90] as const;
+
 export default function Reporte() {
   const { lastEvent } = useWebSocket();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
+  const [windowDays, setWindowDays] = useState<number>(30);
 
-  const fetchReport = async () => {
+  const fetchReport = async (days: number = windowDays) => {
     try {
-      setData(await api.getBriefData());
+      setData(await api.getBriefData(days));
       setError("");
     } catch (e: any) {
       setError(e?.message || "No se pudo cargar el reporte.");
@@ -113,8 +142,9 @@ export default function Reporte() {
   };
 
   useEffect(() => {
-    fetchReport();
-  }, []);
+    fetchReport(windowDays);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowDays]);
 
   // Sin esto la página se quedaba con el reporte de antes de sincronizar: el
   // sync actualiza KPIs/campañas/segmentación, y el análisis de IA (encadenado
@@ -164,9 +194,23 @@ export default function Reporte() {
             <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
           )}
         </div>
-        <button onClick={() => window.print()} className="btn-secondary no-print">
-          Exportar PDF
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }} className="no-print">
+          <div style={{ display: "flex", background: "var(--color-carbon)", borderRadius: "8px", padding: "3px", gap: "2px" }}>
+            {WINDOW_OPTIONS.map((d) => (
+              <button
+                key={d}
+                onClick={() => setWindowDays(d)}
+                className={windowDays === d ? "btn-primary" : "btn-secondary"}
+                style={{ padding: "6px 14px", fontSize: "13px", borderRadius: "6px" }}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+          <button onClick={() => window.print()} className="btn-secondary">
+            Exportar PDF
+          </button>
+        </div>
       </div>
 
       {/* KPIs */}
@@ -175,9 +219,9 @@ export default function Reporte() {
             reporte 30; sin el rótulo, los totales parecían contradecirse. */}
         <h2 style={h2}>Resumen Ejecutivo <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 400 }}>· últimos {r.window_days} días</span></h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "1rem" }}>
-          <Kpi label="Total invertido" value={money(k.total_spend)} />
+          <Kpi label="Total invertido" value={money(k.total_spend)} deltaPct={k.deltas_pct?.spend} goodWhen="neutral" />
           <Kpi label="Personas alcanzadas" value={num(k.total_reach)} />
-          <Kpi label="Conversaciones" value={num(k.total_conversations)} />
+          <Kpi label="Conversaciones" value={num(k.total_conversations)} deltaPct={k.deltas_pct?.conversations} goodWhen="up" />
           <Kpi label="Mejor costo/conv." value={money(k.best_cost_per_conv)} highlight />
           <Kpi label="CTR promedio" value={`${(k.avg_ctr ?? 0).toFixed(2)}%`} />
         </div>
@@ -248,7 +292,10 @@ export default function Reporte() {
                 <td style={td}>{c.frequency}</td>
                 <td style={td}>{c.ctr}%</td>
                 <td style={td}>{c.conversations}</td>
-                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(c.cost_per_conv)}</td>
+                <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>
+                  {money(c.cost_per_conv)}
+                  <DeltaBadge pct={c.cost_per_conv_delta_pct} goodWhen="down" />
+                </td>
                 <td style={td}><span className={`badge ${labelBadge(c.label)}`}>{c.label}</span></td>
               </tr>
             ))}

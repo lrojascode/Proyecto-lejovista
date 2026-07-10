@@ -19,6 +19,7 @@ router = APIRouter(prefix="/reports", tags=["reports"])
 
 @router.get("/brief-data")
 async def get_master_brief_data(
+    window_days: int = 30,
     current_user: User = Depends(get_current_user),
     ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
@@ -26,7 +27,13 @@ async def get_master_brief_data(
     """
     Retorna los datos estructurados del Master Brief en formato JSON, para la
     cuenta de anuncios activa (ver `get_active_ad_account_id`).
+
+    5.2 (F-3.1): `window_days` (7/30/90) controla la ventana del reporte —
+    cada ventana trae también su comparativa Δ% vs el período previo del
+    mismo tamaño (`report.kpis.deltas_pct` y `campaign.*_delta_pct`).
     """
+    if window_days not in (7, 30, 90):
+        raise HTTPException(status_code=400, detail="window_days debe ser 7, 30 o 90.")
     # 1. Obtener organización
     org = await db.get(Organization, current_user.organization_id)
     if not org:
@@ -53,7 +60,7 @@ async def get_master_brief_data(
 
     # P-2.4/2.5: reporte estructurado completo (KPIs, adsets, ads, segmentación,
     # audiencias, creativos, alertas, parámetros óptimos) calculado desde la DB.
-    report = await get_report(db, acc)
+    report = await get_report(db, acc, window_days=window_days)
 
     return {
         "organization_name": org.name,
