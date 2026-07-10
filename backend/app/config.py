@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # --- API credentials ---
     META_APP_ID: str = Field(default="mock_app_id")
     META_APP_SECRET: str = Field(default="mock_app_secret")
+    # Versión de la Graph/Marketing API. Antes estaba hardcodeada en v19.0, que
+    # EXPIRÓ (Meta retira cada versión a los ~2 años y las llamadas devuelven
+    # error). Mantener al día con el changelog:
+    # https://developers.facebook.com/docs/graph-api/changelog
+    META_API_VERSION: str = Field(default="v25.0")
     OPENROUTER_API_KEY: str = Field(default="")
     GEMINI_API_KEY: str = Field(default="")
     OPENAI_API_KEY: str = Field(default="")

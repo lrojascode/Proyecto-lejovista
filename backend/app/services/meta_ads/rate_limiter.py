@@ -83,7 +83,7 @@ class MetaAPIRateLimiter:
             return {"mock": True}
 
         # ---- PRODUCCIÓN: Llamada real ----
-        url = f"https://graph.facebook.com/v19.0/{endpoint}"
+        url = f"https://graph.facebook.com/{settings.META_API_VERSION}/{endpoint}"
         
         # Asegurar token en params
         all_params = {**params}
@@ -179,7 +179,7 @@ class MetaAPIRateLimiter:
             await self._log_api_call("POST", endpoint, data, 200, "MOCK RESPONSE OK")
             return {"mock": True, "images": {filename: {"hash": f"mock_hash_{filename}"}}}
 
-        url = f"https://graph.facebook.com/v19.0/{endpoint}"
+        url = f"https://graph.facebook.com/{settings.META_API_VERSION}/{endpoint}"
         all_data = {**data}
         if access_token:
             all_data["access_token"] = access_token

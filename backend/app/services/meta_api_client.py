@@ -2,6 +2,7 @@ import httpx
 import logging
 from typing import Dict, Any, Optional
 from fastapi import HTTPException
+from app.config import settings
 from app.services.rate_limiter import RateLimiter
 from app.services.meta_credential_service import MetaCredentialService
 from app.services.audit_log_service import AuditLogService
@@ -13,7 +14,7 @@ class MetaApiClient:
     Cliente HTTP para la API de Meta Ads (Graph API).
     Aplica rate limiting dinámico y registra todas las llamadas a nivel HTTP.
     """
-    BASE_URL = "https://graph.facebook.com/v19.0"
+    BASE_URL = f"https://graph.facebook.com/{settings.META_API_VERSION}"
     USER_AGENT = "LejoVista/1.0 (+https://lejovista.com)"
 
     def __init__(
