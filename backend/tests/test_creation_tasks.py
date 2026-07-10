@@ -355,6 +355,64 @@ async def test_task_create_ad_marks_draft_created(campaign_draft, mocker, db_ses
 
 
 @pytest.mark.asyncio
+async def test_task_create_ad_completes_ai_action_when_action_id_present(campaign_draft, mocker, db_session):
+    """A-1: cuando la Saga viene de una AIAction (CREATE_CAMPAIGN aprobada),
+    task_create_ad debe cerrar el ciclo también sobre esa acción, no solo
+    sobre el CampaignDraft."""
+    org, acc, draft = campaign_draft
+    mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True, return_value={"mock": True},
+    )
+    mocker.patch("app.services.notification_service.NotificationService.notify_job_status")
+
+    from app.models.ai_action import AIAction
+    action = AIAction(
+        organization_id=org.id, ad_account_id=acc.id, action_type="CREATE_CAMPAIGN",
+        risk_level="HIGH", title="Crear campaña", description="test",
+        platform="META", parameters={}, planned_api_calls=[], status="EXECUTING",
+    )
+    db_session.add(action)
+    await db_session.commit()
+
+    context = _base_context(
+        acc, draft_id=draft.id, campaign_id="mock_camp_1",
+        adset_id="mock_adset_1", creative_id="mock_creative_1",
+        action_id=action.id,
+    )
+    run_in_thread(task_create_ad, context)
+
+    await db_session.refresh(action)
+    assert action.status == "COMPLETED"
+    assert action.execution_result["ad_id"].startswith("mock_ad_")
+    assert action.execution_result["simulated"] is True
+
+
+@pytest.mark.asyncio
+async def test_task_handle_chain_error_fails_ai_action_when_action_id_present(campaign_draft, mocker, db_session):
+    org, acc, draft = campaign_draft
+    mocker.patch("app.services.notification_service.NotificationService.notify_job_status")
+
+    from app.models.ai_action import AIAction
+    action = AIAction(
+        organization_id=org.id, ad_account_id=acc.id, action_type="CREATE_CAMPAIGN",
+        risk_level="HIGH", title="Crear campaña", description="test",
+        platform="META", parameters={}, planned_api_calls=[], status="EXECUTING",
+    )
+    db_session.add(action)
+    await db_session.commit()
+
+    run_in_thread(
+        task_handle_chain_error, None, Exception("Meta rechazó el creativo"), None,
+        draft.id, "real-tenant-id", action.id,
+    )
+
+    await db_session.refresh(action)
+    assert action.status == "FAILED"
+    assert action.execution_result["error"] == "Meta rechazó el creativo"
+
+
+@pytest.mark.asyncio
 async def test_task_handle_chain_error_marks_draft_failed_with_message(campaign_draft, mocker, db_session):
     org, acc, draft = campaign_draft
     mocker.patch("app.services.notification_service.NotificationService.notify_job_status")

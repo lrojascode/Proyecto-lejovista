@@ -333,6 +333,25 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
             context["status"] = "COMPLETED"
             await _merge_draft_result(db, context["draft_id"], status="CREATED", ad_id=ad_id)
 
+            # A-1: si la Saga fue despachada por una AIAction (creación
+            # aprobada por la IA, no el formulario manual), cerrar el ciclo de
+            # esa acción también — antes solo el CampaignDraft se enteraba.
+            action_id = context.get("action_id")
+            if action_id:
+                from app.models.ai_action import AIAction
+                action = await db.get(AIAction, action_id)
+                if action:
+                    action.status = "COMPLETED"
+                    action.execution_result = {
+                        "campaign_id": context["campaign_id"],
+                        "adset_id": context["adset_id"],
+                        "creative_id": context["creative_id"],
+                        "ad_id": ad_id,
+                        "simulated": settings.SIMULATE_META_WRITES,
+                    }
+                    db.add(action)
+                    await db.commit()
+
             logger.info(f"Campaign creation Saga completed successfully: {context}")
 
             from app.services.notification_service import NotificationService
@@ -350,7 +369,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @celery_app.task
-def task_handle_chain_error(request, exc, traceback, draft_id, tenant_id: str = "unknown-tenant"):
+def task_handle_chain_error(request, exc, traceback, draft_id, tenant_id: str = "unknown-tenant", action_id: str | None = None):
     """
     Callback de error para el chain. Si alguna tarea falla, cae aquí.
     Marca el CampaignDraft como FAILED con el mensaje real (antes no se
@@ -361,6 +380,20 @@ def task_handle_chain_error(request, exc, traceback, draft_id, tenant_id: str = 
     async def _impl():
         async with async_session() as db:
             await _merge_draft_result(db, draft_id, status="FAILED", error_message=str(exc))
+
+            # A-1: si la Saga venía de una AIAction, también cerrarla como FAILED
+            # (antes la acción se quedaba EXECUTING para siempre).
+            if action_id:
+                from app.models.ai_action import AIAction
+                action = await db.get(AIAction, action_id)
+                if action:
+                    action.status = "FAILED"
+                    action.execution_result = {
+                        "error": str(exc),
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    db.add(action)
+                    await db.commit()
 
     run_async(_impl())
 

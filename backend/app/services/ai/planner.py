@@ -235,10 +235,20 @@ class AIPlanner:
             )
             parameters = {
                 "campaign_name": new_camp_name,
+                # A-1: nombre real del producto, para que el executor pueda
+                # despachar la misma Saga de creation_tasks (que recalcula el
+                # nombre de campaña a partir de product_name + marca + mes)
+                # sin tener que volver a consultar el suggester.
+                "product_name": product_name,
                 "objective": suggestion["objective"],
                 "daily_budget": suggestion["suggested_budget"],
                 "duration_days": suggestion["suggested_days"],
                 "excluded_placements": suggestion["excluded_placements"],
+                # Señales crudas (además del targeting ya construido abajo, que
+                # queda como preview/documentación): la Saga real recalcula el
+                # targeting desde estas señales, no desde el dict ya armado.
+                "best_age_range": suggestion.get("best_age_range"),
+                "best_device": suggestion.get("best_device"),
                 # Targeting optimizado desde el histórico ganador (Ajuste 2):
                 # edad/dispositivo/placements reales, no hardcodeados.
                 "targeting": build_targeting(
