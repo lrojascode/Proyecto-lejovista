@@ -235,6 +235,21 @@ def execute_action_task(action_id: str):
 
     run_async(_impl())
 
+@celery_app.task(name="app.workers.tasks.evaluate_campaign_outcomes")
+def evaluate_campaign_outcomes():
+    """Fase 1 (C-1): cierra el ciclo de aprendizaje. Corre diario vía Beat
+    (8:00 Lima, después del sync de las 6:00 que trae los snapshots frescos):
+    evalúa cada CampaignLearningLog CREATED cuya ventana ya venció y persiste
+    el veredicto real (WIN/LOSS/NEUTRAL/NOT_ACTIVATED) en outcome_json."""
+    async def _impl():
+        from app.services.campaign_outcome import evaluate_pending_outcomes
+        async with async_session() as db:
+            counts = await evaluate_pending_outcomes(db)
+            logger.info(f"Evaluación de outcomes completada: {counts}")
+
+    run_async(_impl())
+
+
 @celery_app.task(name="app.workers.tasks.archive_old_snapshots_task")
 def archive_old_snapshots_task():
     """D-3: mueve a las tablas de archivo los snapshots más viejos que

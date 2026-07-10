@@ -34,6 +34,8 @@ _TASK_ROUTES = {
     "app.workers.tasks.schedule_all_analyses": {"queue": "ai"},
     "app.workers.tasks.run_ai_analysis": {"queue": "ai"},
     "app.workers.tasks.execute_action_task": {"queue": "ai"},
+    # Outcome loop del aprendizaje (Fase 1, C-1): evalúa resultados reales.
+    "app.workers.tasks.evaluate_campaign_outcomes": {"queue": "ai"},
     # Creación de campañas/adsets/creativos/anuncios (flujo de escritura por pasos).
     "app.workers.creation_tasks.*": {"queue": "creation"},
     # Mantenimiento de datos (D-3): sin apuro, va a la cola por defecto.
@@ -64,6 +66,13 @@ celery_app.conf.update(
         "daily-ai-analysis": {
             "task": "app.workers.tasks.schedule_all_analyses",
             "schedule": crontab(hour=7, minute=0),
+            "args": ()
+        },
+        # Outcome loop (C-1): evalúa a las 8:00 (tras el sync de las 6:00, que
+        # deja los snapshots frescos con los que se mide cada campaña creada).
+        "daily-campaign-outcomes": {
+            "task": "app.workers.tasks.evaluate_campaign_outcomes",
+            "schedule": crontab(hour=8, minute=0),
             "args": ()
         },
         # D-3: archivado semanal de snapshots viejos (domingo 3:00 AM, hora Lima).
