@@ -371,7 +371,15 @@ export default function Reporte() {
         <div style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "0.75rem" }}>
             <h2 style={{ ...h2, marginBottom: 0 }}>Diagnóstico de la IA</h2>
-            <span className="badge badge-ai">Procesado por IA</span>
+            {/* C-4: si el LLM no estuvo disponible, la narrativa salió de una
+                plantilla local — no se presenta como "Procesado por IA". */}
+            {data.narrative_provider === "fallback_template" ? (
+              <span className="badge badge-warning" title="El servicio de IA no estuvo disponible; este es un informe básico generado con los datos reales de la cuenta, sin análisis del modelo.">
+                Informe básico — IA no disponible
+              </span>
+            ) : (
+              <span className="badge badge-ai">Procesado por IA</span>
+            )}
           </div>
           <div className="narrative-content">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.narrative}</ReactMarkdown>

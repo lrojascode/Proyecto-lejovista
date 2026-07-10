@@ -88,7 +88,7 @@ class AIEngine:
 
             # Cliente OpenRouter para la narrativa
             llm_client = OpenRouterClient()
-            narrative = await llm_client.analyze_campaigns(
+            narrative, used_fallback = await llm_client.analyze_campaigns(
                 org, acc, insights_summary, raw_data,
                 usage_ctx=UsageContext(
                     feature="master_brief",
@@ -107,10 +107,13 @@ class AIEngine:
 
             # Guardamos la narrativa en el AdAccount para fácil acceso posterior,
             # junto con metadatos de trazabilidad (modelo, versión de prompt, timestamp).
+            # C-4: si el LLM cayó a la plantilla local, se registra tal cual —
+            # antes se estampaba el modelo/proveedor como si el LLM hubiera
+            # respondido, y la UI mostraba un template como "Procesado por IA".
             acc.cached_narrative = narrative
             acc.narrative_generated_at = datetime.datetime.utcnow()
-            acc.narrative_model = org.ai_model or None
-            acc.narrative_provider = llm_client.provider
+            acc.narrative_model = None if used_fallback else (org.ai_model or None)
+            acc.narrative_provider = "fallback_template" if used_fallback else llm_client.provider
             acc.narrative_prompt_version = PROMPT_VERSION
             self.db.add(acc)
 

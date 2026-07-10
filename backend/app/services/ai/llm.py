@@ -73,13 +73,17 @@ class OpenRouterClient:
         insights_summary: str,
         raw_data_summary: Dict[str, Any],
         usage_ctx: Optional[UsageContext] = None,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """
         Envía los insights crudos de Capa 1 y 2 al LLM y recibe un análisis ejecutivo narrativo.
         Si MOCK_SERVICES está activo o no hay API key, utiliza el motor de simulación local.
+
+        Devuelve (narrativa, used_fallback). `used_fallback=True` significa que la
+        narrativa NO la generó el LLM sino la plantilla local (C-4): el caller debe
+        persistirlo para que la UI no presente un template como "Procesado por IA".
         """
         if settings.MOCK_SERVICES or not self.api_key:
-            return self._generate_mock_narrative(org, ad_account, raw_data_summary)
+            return self._generate_mock_narrative(org, ad_account, raw_data_summary), True
 
         # ---- LLAMADA REAL A OPENROUTER ----
         headers = {
@@ -137,13 +141,13 @@ class OpenRouterClient:
                 if response.status_code == 200:
                     result = response.json()
                     await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
-                    return result["choices"][0]["message"]["content"]
+                    return result["choices"][0]["message"]["content"], False
                 else:
                     logger.error(f"OpenRouter API returned error {response.status_code}: {response.text}")
-                    return self._generate_mock_narrative(org, ad_account, raw_data_summary)
+                    return self._generate_mock_narrative(org, ad_account, raw_data_summary), True
         except Exception as e:
             logger.exception("Error calling OpenRouter API. Falling back to mock narrative.")
-            return self._generate_mock_narrative(org, ad_account, raw_data_summary)
+            return self._generate_mock_narrative(org, ad_account, raw_data_summary), True
 
     async def generate_html_brief(
         self, 

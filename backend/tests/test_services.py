@@ -134,9 +134,12 @@ async def test_ai_engine_analysis_and_planning(setup_test_data, db_session: Asyn
     actions = res_actions.scalars().all()
     assert len(actions) > 0
 
-    # AI-4: junto al modelo, se registra qué proveedor real sirvió la narrativa.
+    # AI-4/C-4: se registra qué sirvió la narrativa DE VERDAD. Bajo
+    # MOCK_SERVICES=true el LLM no se llama, así que el proveedor honesto es la
+    # plantilla local — no el proveedor configurado.
     await db_session.refresh(ad_acc)
-    assert ad_acc.narrative_provider in ("openai", "gemini_direct", "openrouter")
+    assert ad_acc.narrative_provider == "fallback_template"
+    assert ad_acc.narrative_model is None
 
 @pytest.mark.asyncio
 async def test_ai_executor_and_modifier(setup_test_data, db_session: AsyncSession):

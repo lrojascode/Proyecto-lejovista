@@ -227,8 +227,15 @@ export default function Diagnostics() {
               <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: "1.5rem" }}>
                 {/* Column 1: Narrative */}
                 <div className="glass-card">
-                  <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem", color: "var(--color-paper)", borderBottom: "1px solid var(--color-graphite)", paddingBottom: "0.5rem" }}>
+                  <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1rem", color: "var(--color-paper)", borderBottom: "1px solid var(--color-graphite)", paddingBottom: "0.5rem", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
                     Diagnóstico Narrativo de la IA
+                    {/* C-4: si el LLM no estuvo disponible, no se presenta la
+                        plantilla local como análisis de la IA. */}
+                    {briefData.narrative_provider === "fallback_template" && (
+                      <span className="badge badge-warning" title="El servicio de IA no estuvo disponible; este es un informe básico generado con los datos reales de la cuenta.">
+                        Informe básico — IA no disponible
+                      </span>
+                    )}
                   </h3>
                   <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.7", whiteSpace: "pre-line" }}>
                     {briefData.narrative ? briefData.narrative : (
