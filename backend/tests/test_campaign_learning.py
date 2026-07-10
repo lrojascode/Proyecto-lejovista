@@ -13,11 +13,61 @@ def test_maturity_exploration_when_few_winners():
     assert m["mode"] == "exploration"
 
 
-def test_maturity_converged_when_stable_cpl():
+def test_maturity_converged_when_stable_cpl_and_own_wins():
+    # Fase 1 (1.2): la convergencia exige, además del CPL estable, ≥2 campañas
+    # PROPIAS de la IA verificadas como WIN por el outcome loop.
     camps = [_camp("a", 5, 2.0), _camp("b", 4, 2.1), _camp("c", 6, 1.9)]
-    m = assess_maturity(camps)
+    outcomes = [{"verdict": "WIN"}, {"verdict": "NEUTRAL"}, {"verdict": "WIN"}]
+    m = assess_maturity(camps, outcomes)
     assert m["converged"] is True
     assert m["mode"] == "optimized"
+
+
+def test_maturity_stable_cpl_without_own_wins_stays_exploring():
+    # CPL estable pero la IA no tiene resultados propios verificados: el CPL
+    # puede venir de campañas creadas a mano, no prueba el criterio de la IA.
+    camps = [_camp("a", 5, 2.0), _camp("b", 4, 2.1), _camp("c", 6, 1.9)]
+    m = assess_maturity(camps)  # sin outcomes
+    assert m["converged"] is False
+    assert m["mode"] == "exploration"
+    assert "propia" in m["reason"]
+
+    m1 = assess_maturity(camps, [{"verdict": "WIN"}])  # solo 1 WIN: no alcanza
+    assert m1["converged"] is False
+
+
+def test_maturity_two_recent_losses_force_exploration():
+    # Cuenta convergida por CV, pero las últimas 2 creaciones de la IA fueron
+    # LOSS → se fuerza exploración con razón explícita. NOT_ACTIVATED no cuenta
+    # como veredicto (fallo de infraestructura, no de criterio).
+    camps = [_camp("a", 5, 2.0), _camp("b", 4, 2.1), _camp("c", 6, 1.9)]
+    outcomes = [
+        {"verdict": "NOT_ACTIVATED"},
+        {"verdict": "LOSS"},
+        {"verdict": "LOSS"},
+        {"verdict": "WIN"},
+        {"verdict": "WIN"},
+    ]
+    m = assess_maturity(camps, outcomes)
+    assert m["converged"] is False
+    assert m["mode"] == "exploration"
+    assert "no rindieron" in m["reason"]
+
+
+def test_build_analysis_mentions_own_track_record():
+    report = {"window_days": 7, "campaigns": [_camp("winner", 10, 1.5)]}
+    maturity = {"converged": False, "mode": "exploration", "reason": "..."}
+    analysis = build_analysis(
+        report, best=_camp("winner", 10, 1.5), excluded_placements=[],
+        best_device=None, best_age_range=None, suggested_budget=120.0,
+        maturity=maturity,
+        evaluated_outcomes=[{"verdict": "WIN"}, {"verdict": "LOSS"}, {"verdict": "NEUTRAL"}],
+    )
+    assert analysis["track_record"] == (
+        "De las 3 campañas que la IA creó y ya evaluó, 1 funcionaron, "
+        "1 no funcionaron y 1 quedaron neutrales."
+    )
+    assert analysis["track_record"] in analysis["summary"]
 
 
 def test_maturity_exploration_when_cpl_volatile():

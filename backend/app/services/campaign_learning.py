@@ -23,16 +23,54 @@ from typing import Any, Dict, List, Optional
 _STABLE_CV_THRESHOLD = 0.25
 # Mínimo de campañas ganadoras (con conversaciones) para hablar de convergencia.
 _MIN_WINNERS_FOR_CONVERGENCE = 3
+# Fase 1 (1.2): mínimo de WIN propios (campañas creadas por la IA y evaluadas
+# como exitosas por el outcome loop) para declarar convergencia. Un CPL estable
+# en campañas ajenas no prueba que las decisiones de la IA funcionen.
+_MIN_OWN_WINS_FOR_CONVERGENCE = 2
 # Días de evaluación por defecto antes de juzgar una campaña nueva.
 _DEFAULT_EVALUATION_DAYS = 7
 
 
-def assess_maturity(campaigns: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Decide el modo de la IA a partir del histórico de campañas de la cuenta.
+def _own_verdicts(outcomes: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Veredictos de las campañas creadas por la IA, del más reciente al más
+    viejo, ignorando NOT_ACTIVATED (una Saga fallida no dice nada del criterio
+    de la IA, solo de la infraestructura)."""
+    if not outcomes:
+        return []
+    return [
+        str(o.get("verdict", "")).upper()
+        for o in outcomes
+        if o and str(o.get("verdict", "")).upper() in ("WIN", "LOSS", "NEUTRAL")
+    ]
+
+
+def assess_maturity(
+    campaigns: List[Dict[str, Any]],
+    evaluated_outcomes: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Decide el modo de la IA a partir del histórico de campañas de la cuenta
+    Y de los resultados reales de sus propias creaciones (outcome loop, Fase 1).
 
     `campaigns` es la lista de `ReportBuilder` (cada una con `conversations` y
-    `cost_per_conv`). Devuelve {converged, mode, reason}.
+    `cost_per_conv`). `evaluated_outcomes` son los `outcome_json` de los
+    `CampaignLearningLog` EVALUATED de la cuenta, del más reciente al más
+    viejo. Devuelve {converged, mode, reason}.
     """
+    verdicts = _own_verdicts(evaluated_outcomes)
+
+    # Los resultados propios mandan sobre el CV: si las últimas 2 creaciones de
+    # la IA no funcionaron, se vuelve a explorar aunque el CPL histórico de la
+    # cuenta (que puede venir de campañas creadas a mano) luzca estable.
+    if len(verdicts) >= 2 and verdicts[0] == "LOSS" and verdicts[1] == "LOSS":
+        return {
+            "converged": False,
+            "mode": "exploration",
+            "reason": (
+                "Las últimas 2 campañas creadas por la IA no rindieron (resultado: no funcionó). "
+                "Se descarta esa configuración y se vuelve a explorar."
+            ),
+        }
+
     winners = [c for c in campaigns if c.get("conversations", 0) > 0]
 
     if len(winners) < _MIN_WINNERS_FOR_CONVERGENCE:
@@ -50,12 +88,27 @@ def assess_maturity(campaigns: List[Dict[str, Any]]) -> Dict[str, Any]:
     cv = (statistics.pstdev(costs) / mean) if mean > 0 else 1.0
 
     if cv <= _STABLE_CV_THRESHOLD:
+        # CPL estable, pero la convergencia exige además evidencia PROPIA: al
+        # menos 2 campañas creadas por la IA con resultado WIN verificado.
+        own_wins = verdicts.count("WIN")
+        if own_wins < _MIN_OWN_WINS_FOR_CONVERGENCE:
+            return {
+                "converged": False,
+                "mode": "exploration",
+                "reason": (
+                    f"El costo por conversación de la cuenta es estable (variación {cv * 100:.0f}%), "
+                    f"pero la IA solo tiene {own_wins} campaña(s) propia(s) con resultado verificado "
+                    f"como exitoso; necesita {_MIN_OWN_WINS_FOR_CONVERGENCE} para confiar en su propia "
+                    "configuración. Sigue explorando con lo aprendido."
+                ),
+            }
         return {
             "converged": True,
             "mode": "optimized",
             "reason": (
                 f"{len(winners)} campañas ganadoras con costo por conversación estable "
-                f"(variación {cv * 100:.0f}%). La IA replica la configuración ganadora sin experimentar."
+                f"(variación {cv * 100:.0f}%) y {own_wins} creaciones propias de la IA verificadas "
+                "como exitosas. La IA replica la configuración ganadora sin experimentar."
             ),
         }
 
@@ -78,6 +131,7 @@ def build_analysis(
     best_age_range: Optional[str],
     suggested_budget: float,
     maturity: Dict[str, Any],
+    evaluated_outcomes: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Construye el objeto de razonamiento explicable de la IA."""
     campaigns = report.get("campaigns", [])
@@ -87,6 +141,23 @@ def build_analysis(
     weaknesses: List[str] = []
     changes: List[Dict[str, str]] = []
     past_failures: List[str] = []
+
+    # Fase 1 (1.2): track record propio — qué pasó de verdad con las campañas
+    # que la IA ya creó y el outcome loop evaluó.
+    verdicts = _own_verdicts(evaluated_outcomes)
+    own_wins = verdicts.count("WIN")
+    own_losses = verdicts.count("LOSS")
+    track_record = None
+    if verdicts:
+        track_record = (
+            f"De las {len(verdicts)} campañas que la IA creó y ya evaluó, "
+            f"{own_wins} funcionaron, {own_losses} no funcionaron y "
+            f"{len(verdicts) - own_wins - own_losses} quedaron neutrales."
+        )
+        if own_wins:
+            strengths.append(track_record)
+        else:
+            weaknesses.append(track_record)
 
     if best:
         strengths.append(
@@ -156,9 +227,13 @@ def build_analysis(
             "en evaluación para aprender de sus resultados."
         )
 
+    if track_record:
+        summary = f"{summary} {track_record}"
+
     return {
         "summary": summary,
         "mode": maturity.get("mode"),
+        "track_record": track_record,
         "converged": maturity.get("converged", False),
         "maturity_reason": maturity.get("reason"),
         "strengths": strengths,

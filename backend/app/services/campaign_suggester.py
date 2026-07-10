@@ -1,8 +1,10 @@
 import logging
 from typing import Any, Dict, List, Optional
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
+from app.models.campaign_learning_log import CampaignLearningLog
 from app.services.report_builder import ReportBuilder
 from app.services.campaign_learning import assess_maturity, build_analysis
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
@@ -94,7 +96,10 @@ class CampaignSuggester:
 
         # Ajuste 2A: madurez/convergencia + razonamiento explicable de la IA,
         # derivados del mismo histórico real (deterministas, sin LLM).
-        maturity = assess_maturity(campaigns)
+        # Fase 1 (1.2): la madurez pesa además los resultados REALES de las
+        # campañas que la propia IA creó (outcome loop).
+        evaluated_outcomes = await self._own_evaluated_outcomes(ad_account)
+        maturity = assess_maturity(campaigns, evaluated_outcomes)
         analysis = build_analysis(
             report,
             best=best,
@@ -103,6 +108,7 @@ class CampaignSuggester:
             best_age_range=best_age_range,
             suggested_budget=suggested_budget,
             maturity=maturity,
+            evaluated_outcomes=evaluated_outcomes,
         )
 
         return {
@@ -130,6 +136,21 @@ class CampaignSuggester:
             } if winning_ad else None,
             "evidence": evidence,
         }
+
+    async def _own_evaluated_outcomes(self, ad_account: AdAccount, limit: int = 10) -> List[Dict[str, Any]]:
+        """Outcomes reales (outcome_json) de las campañas que la IA creó en esta
+        cuenta y el outcome loop ya evaluó, del más reciente al más viejo."""
+        rows = (await self.db.execute(
+            select(CampaignLearningLog.outcome_json)
+            .where(
+                CampaignLearningLog.ad_account_id == ad_account.id,
+                CampaignLearningLog.status == "EVALUATED",
+                CampaignLearningLog.outcome_json.is_not(None),
+            )
+            .order_by(desc(CampaignLearningLog.created_at))
+            .limit(limit)
+        )).scalars().all()
+        return list(rows)
 
     @staticmethod
     def _best_key(bucket: Dict[str, Any]) -> Optional[str]:
