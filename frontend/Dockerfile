@@ -1,22 +1,22 @@
-FROM node:20-alpine
+# syntax=docker/dockerfile:1
 
-WORKDIR /app
-
-# Instalar dependencias necesarias para compilar ciertos módulos de node
+# ── Etapa 1: deps ───────────────────────────────────────────────────────────
+# Instala node_modules (incluye devDependencies, necesarias para el build).
+FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
 
-# Copiar archivos de paquete
-COPY package*.json ./
-
-# Instalar dependencias
-RUN npm install
-
-# Copiar el resto del código del frontend
+# ── Etapa 2: builder ────────────────────────────────────────────────────────
+# Compila la app. Las NEXT_PUBLIC_* se inlinean en el bundle del cliente durante
+# el build, por eso llegan como build args (ver docker-compose / build-push.sh)
+# y no como variables de entorno de runtime.
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Las variables NEXT_PUBLIC_* se inlinean en el bundle del cliente durante el
-# build, por eso llegan como build args (ver docker-compose.yml) y no sirven
-# como variables de entorno en runtime.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ARG NEXT_PUBLIC_BASE_DOMAIN=localhost
 ARG NEXT_PUBLIC_WS_URL=ws://localhost:8000
@@ -27,12 +27,31 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_SINGLE_HOST_MODE=$NEXT_PUBLIC_SINGLE_HOST_MODE \
     NEXT_TELEMETRY_DISABLED=1
 
-# Build de producción: el modo dev compilaba cada ruta bajo demanda dentro del
-# contenedor (512 MB / 1 CPU) y el proceso moría por memoria.
+# Genera .next/standalone (server.js + node_modules mínimos) gracias a
+# output: "standalone" en next.config.ts.
 RUN npm run build
 
-ENV NODE_ENV=production
+# ── Etapa 3: runner ─────────────────────────────────────────────────────────
+# Imagen final mínima: solo el output standalone + assets estáticos. Sin el
+# node_modules completo ni el código fuente. ~250 MB en lugar de ~1.17 GB.
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
 
+# Usuario sin privilegios.
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+
+# El servidor standalone NO copia public/ ni .next/static por defecto: se
+# añaden a mano (ver docs de output).
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
 EXPOSE 3000
 
-CMD ["npm", "start"]
+# server.js lo genera el output standalone; reemplaza a `next start`.
+CMD ["node", "server.js"]

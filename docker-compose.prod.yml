@@ -1,3 +1,9 @@
+# Producción (VPS): NO se construye nada aquí. Las imágenes se compilan en tu
+# máquina (./build-push.sh) y se publican en el registry; el VPS solo hace pull.
+#   docker compose -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# IMAGE_PREFIX / IMAGE_TAG se leen del .env (o del entorno). Por defecto GHCR.
 services:
   db:
     image: postgres:16-alpine
@@ -22,7 +28,9 @@ services:
       - redis_data:/data
 
   backend:
-    build: ./backend
+    # Imagen única construida y publicada con ./build-push.sh. Los workers y beat
+    # reutilizan exactamente esta misma imagen (solo cambia el command).
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       db:
@@ -37,7 +45,7 @@ services:
   # I-2: colas dedicadas (sync/ai/creation) — ver app/workers/celery_app.py (task_routes)
   # y la nota equivalente en docker-compose.yml.
   celery-worker-sync:
-    build: ./backend
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
     command: celery -A app.workers worker -Q sync --loglevel=info --concurrency=2 --hostname=sync@%h
     restart: unless-stopped
     depends_on:
@@ -45,7 +53,7 @@ services:
     env_file: .env
 
   celery-worker-ai:
-    build: ./backend
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
     command: celery -A app.workers worker -Q ai --loglevel=info --concurrency=1 --hostname=ai@%h
     restart: unless-stopped
     depends_on:
@@ -53,7 +61,7 @@ services:
     env_file: .env
 
   celery-worker-creation:
-    build: ./backend
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
     command: celery -A app.workers worker -Q creation,celery --loglevel=info --concurrency=1 --hostname=creation@%h
     restart: unless-stopped
     depends_on:
@@ -61,7 +69,7 @@ services:
     env_file: .env
 
   celery-beat:
-    build: ./backend
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
     command: celery -A app.workers beat --loglevel=info --schedule=/tmp/celerybeat-schedule
     restart: unless-stopped
     depends_on:
@@ -71,12 +79,13 @@ services:
     env_file: .env
 
   frontend:
-    build: ./frontend
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-frontend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       - backend
+    # OJO: las NEXT_PUBLIC_* del cliente se inlinean en build (con el BASE_DOMAIN
+    # de prod, ver build-push.sh). Esta env solo cubre lectura server-side.
     environment:
-      NEXT_PUBLIC_API_URL: https://api.${BASE_DOMAIN}
       NEXT_PUBLIC_BASE_DOMAIN: ${BASE_DOMAIN}
     expose:
       - "3000"
