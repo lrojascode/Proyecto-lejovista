@@ -42,6 +42,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# Imágenes subidas para crear campañas (POST /campaigns/upload-image) — en
+# dev caen dentro del bind mount ./backend:/app, no deben commitearse.
+backend/media/
+
 # Python / backend dependencies and cache
 **/__pycache__/
 **/*.py[cod]

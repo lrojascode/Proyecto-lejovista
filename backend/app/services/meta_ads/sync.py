@@ -3,7 +3,7 @@ import random
 import logging
 from collections import defaultdict
 from typing import List, Dict, Any
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.ad_account import AdAccount
@@ -14,6 +14,7 @@ from app.models.meta_creative import MetaCreative
 from app.models.custom_audience import CustomAudience
 from app.models.meta_page import MetaPage
 from app.models.sync_job import SyncJob
+from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
 
@@ -293,6 +294,7 @@ class MetaAdsSyncService:
 
         # --- Inventario de creativos y audiencias (una vez por cuenta) ---
         await self._ensure_mock_inventory(ad_account)
+        await self._sync_mock_spend_history(ad_account)
 
         await self.db.flush()
         return records_created
@@ -485,6 +487,9 @@ class MetaAdsSyncService:
 
         # 4. Desgloses por placement/edad/género/dispositivo/geografía (P-2.7).
         await self._sync_real_breakdowns(ad_account, token, limiter, date_preset)
+
+        # 5. Histórico de inversión mensual (backfill una vez, luego solo mes en curso).
+        await self._sync_spend_history(ad_account, token, limiter)
 
         return records_synced
 
@@ -877,3 +882,104 @@ class MetaAdsSyncService:
             snap.extra_breakdowns = {
                 "gender": buckets["gender"], "device": buckets["device"], "region": buckets["region"],
             }
+
+    # ------------------------------------------------------------- histórico mensual
+
+    async def _sync_spend_history(self, ad_account: AdAccount, token: str, limiter: MetaAPIRateLimiter) -> None:
+        """Gasto total por mes calendario, sin desglose por campaña.
+
+        Backfill de una sola vez por cuenta con `time_increment=monthly` (una
+        fila por mes, no por día — barato incluso para cuentas de varios años).
+        En syncs siguientes solo se pide el mes en curso (`date_preset=this_month`,
+        una fila) — el histórico completo nunca se vuelve a bajar.
+        """
+        current_ym = datetime.date.today().strftime("%Y-%m")
+
+        has_history = (await self.db.execute(
+            select(AdAccountSpendMonthly.id)
+            .where(AdAccountSpendMonthly.ad_account_id == ad_account.id)
+            .limit(1)
+        )).scalar_one_or_none()
+
+        if not has_history:
+            res = await limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/insights",
+                {"fields": "spend", "time_increment": "monthly", "date_preset": "maximum", "limit": 100},
+                access_token=token,
+            )
+            if self._has_error(res):
+                logger.warning("No se pudo obtener el histórico mensual de gasto (cuenta %s): %s",
+                               ad_account.id, res)
+                self._maybe_mark_expired(ad_account, res)
+                return
+            for row in res.get("data", []):
+                sync_date = self._parse_date(row.get("date_start"))
+                if not sync_date:
+                    continue
+                ym = sync_date.strftime("%Y-%m")
+                spend = float(row.get("spend", 0) or 0)
+                await self._upsert_spend_month(ad_account, ym, spend, closed=(ym != current_ym))
+            return
+
+        # Backfill ya hecho: cerrar perezosamente meses viejos y refrescar solo el actual.
+        await self.db.execute(
+            update(AdAccountSpendMonthly)
+            .where(
+                AdAccountSpendMonthly.ad_account_id == ad_account.id,
+                AdAccountSpendMonthly.year_month < current_ym,
+                AdAccountSpendMonthly.closed.is_(False),
+            )
+            .values(closed=True)
+        )
+
+        res = await limiter.call_api(
+            f"{ad_account.external_account_id}/insights",
+            {"fields": "spend", "date_preset": "this_month"},
+            access_token=token,
+        )
+        if self._has_error(res):
+            logger.warning("No se pudo actualizar el gasto del mes en curso (cuenta %s): %s",
+                           ad_account.id, res)
+            self._maybe_mark_expired(ad_account, res)
+            return
+        data = res.get("data", [])
+        spend = float(data[0].get("spend", 0) or 0) if data else 0.0
+        await self._upsert_spend_month(ad_account, current_ym, spend, closed=False)
+
+    async def _upsert_spend_month(self, ad_account: AdAccount, year_month: str, spend: float, closed: bool) -> None:
+        row = (await self.db.execute(select(AdAccountSpendMonthly).where(
+            AdAccountSpendMonthly.ad_account_id == ad_account.id,
+            AdAccountSpendMonthly.year_month == year_month,
+        ))).scalar_one_or_none()
+        if row is None:
+            row = AdAccountSpendMonthly(
+                ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                year_month=year_month,
+            )
+            self.db.add(row)
+        row.spend = spend
+        row.closed = closed
+
+    async def _sync_mock_spend_history(self, ad_account: AdAccount) -> None:
+        """Genera 18 meses de histórico ficticio (una sola vez por cuenta) para
+        poder probar la línea de tiempo del dashboard en modo mock."""
+        has_history = (await self.db.execute(
+            select(AdAccountSpendMonthly.id)
+            .where(AdAccountSpendMonthly.ad_account_id == ad_account.id)
+            .limit(1)
+        )).scalar_one_or_none()
+        if has_history:
+            return
+
+        today = datetime.date.today()
+        current_ym = today.strftime("%Y-%m")
+        for i in range(17, -1, -1):
+            year, month = today.year, today.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+            ym = f"{year:04d}-{month:02d}"
+            self.db.add(AdAccountSpendMonthly(
+                ad_account_id=ad_account.id, organization_id=ad_account.organization_id,
+                year_month=ym, spend=round(random.uniform(800, 2500), 2), closed=(ym != current_ym),
+            ))

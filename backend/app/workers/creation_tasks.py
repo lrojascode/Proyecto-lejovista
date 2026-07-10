@@ -119,6 +119,7 @@ def task_upload_image(self, context: Dict[str, Any]) -> Dict[str, Any]:
                     ad_account_external_id=acc.external_account_id,
                     access_token=acc.get_access_token(),
                     image_url=context.get("image_url"),
+                    image_path=context.get("image_path"),
                     image_hash=None,
                 )
             context["image_hash"] = image_hash

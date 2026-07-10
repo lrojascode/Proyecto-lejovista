@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     # archivarlos (ver app/services/snapshot_archiver.py).
     SNAPSHOT_RETENTION_DAYS: int = Field(default=180)
 
+    # Carpeta donde se guardan las imágenes subidas para crear campañas (ver
+    # POST /campaigns/upload-image). Compartida entre `backend` y
+    # `celery-worker-creation` — en dev por el bind mount ./backend:/app, en
+    # prod por el volumen nombrado `media_data` (docker-compose.prod.yml).
+    MEDIA_ROOT: str = Field(default="/app/media")
+
     # /docs, /redoc y /openapi.json exponen el mapa completo de la API sin
     # auth (default de FastAPI). Se apaga al exponer la app públicamente
     # (ej. detrás de un túnel) — default True para no romper el uso local.

@@ -106,6 +106,34 @@ async function apiRequest<T = any>(
   }
 }
 
+// Subida de archivos (multipart/form-data) — no puede reusar apiRequest porque
+// esa siempre serializa el body a JSON y fija Content-Type: application/json.
+// El navegador debe fijar el boundary del multipart él mismo.
+async function apiUploadRequest<T = any>(endpoint: string, formData: FormData): Promise<T> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const url = `${getApiUrl()}${endpoint}`;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (typeof window !== "undefined") {
+    const slug = getTenantSlugFromHostname(window.location.hostname);
+    if (slug) headers["X-Tenant-Slug"] = slug;
+    const adAccountId = localStorage.getItem("active_ad_account_id");
+    if (adAccountId) headers["X-Ad-Account-Id"] = adAccountId;
+  }
+
+  const response = await fetch(url, { method: "POST", headers, body: formData });
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage = "No se pudo subir el archivo.";
+    try {
+      const detail = JSON.parse(errorText).detail;
+      errorMessage = (typeof detail === "string" ? detail : detail?.message) || errorMessage;
+    } catch {}
+    throw new Error(errorMessage);
+  }
+  return await response.json();
+}
+
 export const api = {
   // --- AUTH ---
   login: (data: any) => apiRequest("/api/v1/auth/login", "POST", data),
@@ -117,6 +145,7 @@ export const api = {
   getOrg: () => apiRequest("/api/v1/organizations/my", "GET"),
   updateOrg: (data: any) => apiRequest("/api/v1/organizations/my", "PUT", data),
   getAiModels: () => apiRequest("/api/v1/organizations/ai-models", "GET"),
+  getBusinessPolicies: () => apiRequest("/api/v1/organizations/my/policies", "GET"),
   getAdAccounts: (includeArchived: boolean = false) =>
     apiRequest(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),
   connectAdAccount: (data: any) => apiRequest("/api/v1/organizations/my/ad-accounts", "POST", data),
@@ -138,6 +167,11 @@ export const api = {
       "GET"
     ),
   createCampaign: (data: any) => apiRequest("/api/v1/campaigns/", "POST", data),
+  uploadCampaignImage: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiUploadRequest("/api/v1/campaigns/upload-image", formData);
+  },
   getCampaignDraft: (draftId: string) => apiRequest(`/api/v1/campaigns/drafts/${draftId}`, "GET"),
   previewCampaignRisk: (adAccountId: string, budget: number, copyText: string) =>
     apiRequest("/api/v1/campaigns/risk-preview", "POST", {
@@ -162,5 +196,6 @@ export const api = {
   getActionStatus: (actionId: string) => apiRequest(`/api/v1/actions/${actionId}/status`, "GET"),
 
   // --- REPORTS ---
-  getBriefData: () => apiRequest("/api/v1/reports/brief-data", "GET")
+  getBriefData: () => apiRequest("/api/v1/reports/brief-data", "GET"),
+  getSpendHistory: () => apiRequest("/api/v1/reports/spend-history", "GET")
 };

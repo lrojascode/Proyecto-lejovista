@@ -41,6 +41,7 @@ class OrganizationResponse(BaseModel):
     ai_model: str
     max_budget: float
     status: str
+    industry: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -49,6 +50,7 @@ class OrganizationUpdate(BaseModel):
     name: Optional[str] = None
     ai_model: Optional[str] = None
     max_budget: Optional[float] = None
+    industry: Optional[str] = None
 
 # --- AD ACCOUNT SCHEMAS ---
 class AdAccountCreate(BaseModel):

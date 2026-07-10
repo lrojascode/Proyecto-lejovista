@@ -1,5 +1,7 @@
 import logging
+import os
 import httpx
+from app.config import settings
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -17,10 +19,14 @@ class MetaAssetRepository:
         access_token: str,
         image_url: str | None = None,
         image_hash: str | None = None,
+        image_path: str | None = None,
     ) -> str:
         """
         Retorna un image_hash válido.
         Si se pasa un image_hash, lo usa directamente (no se re-sube).
+        Si se pasa un image_path (foto subida a la app, ver POST
+        /campaigns/upload-image), se lee del disco compartido (MEDIA_ROOT) —
+        sin round-trip HTTP, `backend` y este worker comparten el mismo volumen.
         Si se pasa una image_url, descarga la imagen y la sube a Meta vía
         POST multipart a `/{act}/adimages` (real si ENABLE_META_WRITEBACK,
         simulado si no — ver MetaAPIRateLimiter.call_api_multipart).
@@ -29,16 +35,25 @@ class MetaAssetRepository:
             logger.info(f"Reusing existing image_hash: {image_hash}")
             return image_hash
 
-        if not image_url:
-            raise ValueError("Must provide either image_hash or image_url")
+        if image_path:
+            full_path = os.path.realpath(os.path.join(settings.MEDIA_ROOT, image_path))
+            media_root = os.path.realpath(settings.MEDIA_ROOT)
+            if not full_path.startswith(media_root + os.sep):
+                raise ValueError("Ruta de imagen inválida.")
+            logger.info(f"Leyendo imagen subida a la app desde {full_path}")
+            with open(full_path, "rb") as f:
+                file_bytes = f.read()
+            filename = os.path.basename(full_path)
+        elif image_url:
+            logger.info(f"Descargando imagen desde {image_url} para subir a Meta")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(image_url)
+                response.raise_for_status()
+                file_bytes = response.content
+            filename = image_url.rsplit("/", 1)[-1] or "campaign_image.jpg"
+        else:
+            raise ValueError("Must provide either image_hash, image_path or image_url")
 
-        logger.info(f"Descargando imagen desde {image_url} para subir a Meta")
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(image_url)
-            response.raise_for_status()
-            file_bytes = response.content
-
-        filename = image_url.rsplit("/", 1)[-1] or "campaign_image.jpg"
         endpoint = f"{ad_account_external_id}/adimages"
 
         result = await self.limiter.call_api_multipart(

@@ -65,10 +65,14 @@ export default function NewCampaignPage() {
     product_name: "",
     budget: 100,
     days: 7,
-    image_url: "",
+    image_path: "",
     image_hash: "",
     copy_text: "",
   });
+
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState("");
 
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -125,6 +129,27 @@ export default function NewCampaignPage() {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: name === "budget" || name === "days" ? Number(value) : value }));
+  };
+
+  // Reemplaza el viejo campo "URL de imagen": la app guarda la foto y usa esa
+  // ruta para crear la campaña — preview instantáneo local, subida en background.
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImagePreviewUrl(URL.createObjectURL(file));
+    setFormData((prev) => ({ ...prev, image_path: "" }));
+    setImageUploadError("");
+    setImageUploading(true);
+    try {
+      const res = await api.uploadCampaignImage(file);
+      setFormData((prev) => ({ ...prev, image_path: res.image_path }));
+    } catch (err: any) {
+      setImageUploadError(err.message || "No se pudo subir la imagen.");
+    } finally {
+      setImageUploading(false);
+    }
   };
 
   const handleSuggest = async () => {
@@ -198,8 +223,13 @@ export default function NewCampaignPage() {
       setStatus("error");
       return;
     }
-    if (!formData.image_url && !formData.image_hash) {
-      setErrorMessage("Agrega una URL de imagen o un image_hash.");
+    if (!formData.image_path && !formData.image_hash) {
+      setErrorMessage("Sube una imagen o pega un image_hash.");
+      setStatus("error");
+      return;
+    }
+    if (imageUploading) {
+      setErrorMessage("Espera a que termine de subirse la imagen.");
       setStatus("error");
       return;
     }
@@ -233,7 +263,7 @@ export default function NewCampaignPage() {
         budget: formData.budget,
         days: formData.days,
         whatsapp_number: selectedPage.whatsapp_number,
-        image_url: formData.image_url || undefined,
+        image_path: formData.image_path || undefined,
         image_hash: formData.image_hash || undefined,
         copy_text: formData.copy_text,
       });
@@ -396,11 +426,31 @@ export default function NewCampaignPage() {
               <input type="number" name="days" required min={1} value={formData.days} onChange={handleChange} className="form-input" />
             </div>
             <div>
-              <label style={labelStyle}>URL de imagen</label>
-              <input type="text" name="image_url" value={formData.image_url} onChange={handleChange} className="form-input" placeholder="https://..." />
+              <label style={labelStyle}>Imagen del anuncio</label>
+              <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleImageFileChange} className="form-input" />
+              {imageUploading && (
+                <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
+                  Subiendo imagen...
+                </span>
+              )}
+              {!imageUploading && formData.image_path && (
+                <span style={{ fontSize: "12px", color: "var(--color-pulse-green)", marginTop: "4px", display: "block" }}>
+                  ✓ Imagen subida
+                </span>
+              )}
+              {imageUploadError && (
+                <p role="alert" style={{ color: "var(--color-coral-red)", fontSize: "12px", marginTop: "4px" }}>{imageUploadError}</p>
+              )}
+              {imagePreviewUrl && (
+                <img
+                  src={imagePreviewUrl}
+                  alt="Previsualización de la imagen del anuncio"
+                  style={{ marginTop: "8px", maxHeight: "140px", borderRadius: "6px", border: "1px solid var(--color-graphite)" }}
+                />
+              )}
             </div>
             <div>
-              <label style={labelStyle}>Image Hash (si ya está subida)</label>
+              <label style={labelStyle}>Image Hash (avanzado — reutilizar una imagen ya subida a Meta)</label>
               <input type="text" name="image_hash" value={formData.image_hash} onChange={handleChange} className="form-input" />
             </div>
           </div>
@@ -520,11 +570,11 @@ export default function NewCampaignPage() {
           ) : (
             <button
               type="submit"
-              disabled={!activeAdAccountId || riskChecking}
+              disabled={!activeAdAccountId || riskChecking || imageUploading}
               className="btn-primary"
               style={{ width: "100%" }}
             >
-              {riskChecking ? "Calculando nivel de riesgo..." : "Revisar riesgo y crear campaña"}
+              {riskChecking ? "Calculando nivel de riesgo..." : imageUploading ? "Subiendo imagen..." : "Revisar riesgo y crear campaña"}
             </button>
           )}
         </form>

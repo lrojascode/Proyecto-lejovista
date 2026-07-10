@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell
 } from "recharts";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
@@ -29,6 +29,8 @@ export default function DashboardPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [apiCallHistory, setApiCallHistory] = useState<any[]>([]);
+  const [spendHistory, setSpendHistory] = useState<any[]>([]);
+  const [businessPolicies, setBusinessPolicies] = useState<{ industry: string | null; policies: { title: string; description: string }[] } | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -45,6 +47,18 @@ export default function DashboardPage() {
       setApiCallHistory(history || []);
     } catch (e) {
       console.error("Error fetching API call history:", e);
+    }
+    try {
+      const spend = await api.getSpendHistory();
+      setSpendHistory(spend?.months || []);
+    } catch (e) {
+      console.error("Error fetching spend history:", e);
+    }
+    try {
+      const policies = await api.getBusinessPolicies();
+      setBusinessPolicies(policies);
+    } catch (e) {
+      console.error("Error fetching business policies:", e);
     }
   };
 
@@ -110,6 +124,12 @@ export default function DashboardPage() {
     name: c.campaign_name.substring(0, 15) + "...",
     cpl: c.cpl
   })).sort((a, b) => a.cpl - b.cpl).slice(0, 5);
+
+  const MONTH_LABELS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+  const monthlySpendData = spendHistory.map((m) => {
+    const [year, month] = m.year_month.split("-");
+    return { name: `${MONTH_LABELS[parseInt(month, 10) - 1]} ${year.slice(2)}`, spend: m.spend };
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -201,6 +221,26 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {monthlySpendData.length > 0 && (
+            <div className="glass-card">
+              <h2 style={{ fontSize: 16, fontWeight: 510, marginBottom: 4 }}>Histórico de Inversión Mensual</h2>
+              <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 16 }}>
+                Gasto total por mes en esta cuenta (sin desglose por campaña).
+              </p>
+              <div style={{ height: 260, width: "100%" }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={monthlySpendData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#23252a" />
+                    <XAxis dataKey="name" stroke="#62666d" tick={{ fontSize: 12 }} />
+                    <YAxis stroke="#62666d" tick={{ fontSize: 12 }} />
+                    <Tooltip cursor={{ stroke: 'rgba(255, 255, 255, 0.15)' }} contentStyle={chartTooltipStyle} />
+                    <Line type="monotone" dataKey="spend" name="Inversión (S/)" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
           <div className="glass-card" style={{ padding: 0, overflow: "hidden" }}>
             <div style={{
               padding: "16px 24px", borderBottom: "1px solid var(--color-graphite)",
@@ -237,6 +277,34 @@ export default function DashboardPage() {
             </div>
           </div>
         </>
+      )}
+
+      {businessPolicies && (
+        <div className="glass-card">
+          <h2 style={{ fontSize: 16, fontWeight: 510, marginBottom: 4 }}>Políticas de Meta relevantes para tu negocio</h2>
+          <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 16 }}>
+            Recordatorios generales, no un sustituto de la política oficial de Meta.
+            {!businessPolicies.industry && (
+              <> <Link href="/settings" style={{ color: "var(--color-signal-teal)" }}>Selecciona tu rubro en Configuración</Link> para ver recordatorios más específicos.</>
+            )}
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {businessPolicies.policies.map((p, i) => (
+              <div key={i} style={{ borderLeft: "2px solid var(--color-signal-teal)", paddingLeft: 12 }}>
+                <p style={{ fontWeight: 510, fontSize: 14, marginBottom: 2 }}>{p.title}</p>
+                <p style={{ color: "var(--color-fog)", fontSize: 13 }}>{p.description}</p>
+              </div>
+            ))}
+          </div>
+          <a
+            href="https://www.facebook.com/policies/ads/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--color-fog)", fontSize: 12, marginTop: 16, display: "inline-block" }}
+          >
+            Ver la política oficial completa de Meta →
+          </a>
+        </div>
       )}
 
       <div className="glass-card" style={{ padding: 0, overflow: "hidden" }}>

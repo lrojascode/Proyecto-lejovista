@@ -41,6 +41,10 @@ services:
     # En producción no mapeamos puertos al host por seguridad (acceso solo via Nginx proxy)
     expose:
       - "8000"
+    # Imágenes subidas para crear campañas (POST /campaigns/upload-image).
+    # Compartido con celery-worker-creation, que las lee del disco sin HTTP.
+    volumes:
+      - media_data:/app/media
 
   # I-2: colas dedicadas (sync/ai/creation) — ver app/workers/celery_app.py (task_routes)
   # y la nota equivalente en docker-compose.yml.
@@ -67,6 +71,9 @@ services:
     depends_on:
       - backend
     env_file: .env
+    # Lee las imágenes que `backend` guardó (mismo volumen, ver MetaAssetRepository).
+    volumes:
+      - media_data:/app/media
 
   celery-beat:
     image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
@@ -108,3 +115,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  media_data:

@@ -15,6 +15,8 @@ export default function Settings() {
   const [maxBudget, setMaxBudget] = useState(1000);
   const [aiModels, setAiModels] = useState<{ value: string; label: string }[]>([]);
   const [aiProvider, setAiProvider] = useState<string>("");
+  const [industry, setIndustry] = useState("");
+  const [industries, setIndustries] = useState<{ value: string; label: string }[]>([]);
   
   // Connection Form States
   const [accName, setAccName] = useState("");
@@ -33,6 +35,10 @@ export default function Settings() {
       setOrg(orgData);
       setAccounts(accountsData);
       setMaxBudget(orgData.max_budget);
+      setIndustry(orgData.industry || "");
+
+      const policiesData = await api.getBusinessPolicies();
+      setIndustries(policiesData.available_industries || []);
 
       // Solo se ofrecen los modelos del proveedor de IA realmente activo
       // (según qué API key esté configurada en el backend), para no guardar
@@ -57,7 +63,7 @@ export default function Settings() {
     e.preventDefault();
     setMsg("");
     try {
-      await api.updateOrg({ ai_model: aiModel, max_budget: maxBudget });
+      await api.updateOrg({ ai_model: aiModel, max_budget: maxBudget, industry: industry || null });
       setMsg("Configuración de organización guardada con éxito.");
     } catch (err: any) {
       setMsg(`Error: ${err.message}`);
@@ -174,6 +180,26 @@ export default function Settings() {
               />
               <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
                 La IA detendrá cualquier creación o escalado si excede este monto.
+              </span>
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                Rubro del negocio
+              </label>
+              <select
+                className="form-input"
+                value={industry}
+                onChange={(e) => setIndustry(e.target.value)}
+                style={{ background: "var(--color-obsidian)" }}
+              >
+                <option value="">Sin especificar</option>
+                {industries.map((i) => (
+                  <option key={i.value} value={i.value}>{i.label}</option>
+                ))}
+              </select>
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
+                Determina qué recordatorios de políticas de Meta se muestran en el Dashboard.
               </span>
             </div>
 

@@ -13,6 +13,9 @@ class Organization(Base):
     ai_model: Mapped[str] = mapped_column(String, default="google/gemini-3.5-flash")
     max_budget: Mapped[float] = mapped_column(Float, default=1000.0)  # Límite financiero mensual de seguridad
     status: Mapped[str] = mapped_column(String, default="ACTIVE")
+    # Rubro del negocio (ver app/services/policy_catalog.py) — determina qué
+    # recordatorios de políticas de Meta se muestran en el dashboard.
+    industry: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones

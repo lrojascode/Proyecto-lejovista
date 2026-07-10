@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
+from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.services.ai.engine import AIEngine
 from app.services.report_builder import ReportBuilder
 from app.utils.security import get_current_user, get_active_ad_account_id
@@ -63,5 +65,31 @@ async def get_master_brief_data(
         "narrative_prompt_version": acc.narrative_prompt_version,
         "report": report,
         "campaigns_data": raw_data
+    }
+
+
+@router.get("/spend-history")
+async def get_spend_history(
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Histórico de inversión mensual (sin desglose por campaña) de la cuenta
+    de anuncios activa — poblado por `MetaAdsSyncService._sync_spend_history`."""
+    if not ad_account_id:
+        raise HTTPException(status_code=400, detail="No se encontró una cuenta de anuncios activa.")
+
+    rows = (await db.execute(
+        select(AdAccountSpendMonthly)
+        .where(AdAccountSpendMonthly.ad_account_id == ad_account_id)
+        .order_by(AdAccountSpendMonthly.year_month.asc())
+    )).scalars().all()
+
+    return {
+        "ad_account_id": ad_account_id,
+        "months": [
+            {"year_month": r.year_month, "spend": round(r.spend, 2), "closed": r.closed}
+            for r in rows
+        ],
     }
 

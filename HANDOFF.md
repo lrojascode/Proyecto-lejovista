@@ -568,6 +568,71 @@ tabla por funcionalidad. En MOCK/sin API key no se registra nada. Tests: `test_t
 Migraciones: `a3b8c1d4e7f2` (ai_token_usage) y `b4c9d2e5f8a3` (campaign_learning_logs).
 153 tests del backend en verde. Rebuild completo del stack aplicado.
 
+## 12. Histórico de inversión mensual, subida de imagen local, y políticas por rubro (2026-07-10)
+
+### 12.1 — Histórico de inversión mensual (sin desglose por campaña)
+
+Nueva tabla `ad_account_spend_monthly` (`ad_account_id`, `year_month` "YYYY-MM", `spend`,
+`closed`) — un total por cuenta y mes, no por campaña. `MetaAdsSyncService._sync_spend_history`
+(`app/services/meta_ads/sync.py`) hace **backfill una sola vez por cuenta**: si no hay
+ninguna fila para la cuenta, pide `{account}/insights` con `time_increment=monthly` +
+`date_preset=maximum` (una fila por mes calendario, barato incluso para cuentas de años).
+En cualquier sync posterior (ya hay backfill), solo pide el mes en curso
+(`date_preset=this_month`, un total) y cierra perezosamente (`closed=True`) cualquier mes
+viejo que quedara abierto — **nunca vuelve a bajar el histórico completo**. Mock
+(`_sync_mock_spend_history`) genera 18 meses ficticios una sola vez, para poder probar la UI
+sin cuenta real. Endpoint `GET /reports/spend-history` (scopeado por `get_active_ad_account_id`,
+mismo patrón que `/brief-data`). Frontend: card "Histórico de Inversión Mensual" en el
+dashboard (`page.tsx`) con `LineChart` de `recharts`. Tests: `test_spend_history.py` (6).
+Migración: `c8d3e5f1a9b4`.
+
+### 12.2 — Subir imagen a la app en vez de pegar una URL
+
+`POST /campaigns/upload-image` (multipart, JPG/PNG/WebP, máx 8MB) guarda el archivo en
+`MEDIA_ROOT/{organization_id}/{uuid}.{ext}` y devuelve `image_path`. En vez de que el worker
+de creación vuelva a descargar la imagen por HTTP (que en dev rompería porque `api.localhost`
+no resuelve dentro de la red de Docker), `MetaAssetRepository.get_or_upload_image` acepta un
+nuevo parámetro `image_path` y **lee el archivo directo del disco compartido** —
+`backend`/`celery-worker-*` ya comparten el bind mount `./backend:/app` en dev; en prod se
+agregó el volumen nombrado `media_data` a `backend` y `celery-worker-creation` en
+`docker-compose.prod.yml`. Precedencia en el pipeline: `image_hash` > `image_path` >
+`image_url` (compat retro, `image_url` se mantiene por si se necesita a futuro). Frontend:
+`campaigns/new/page.tsx` reemplaza el input de texto "URL de imagen" por un
+`<input type="file">` con preview instantáneo client-side (`URL.createObjectURL`, sin
+round-trip) y subida en background; el campo "Image Hash" queda como opción avanzada para
+reutilizar una imagen ya subida a Meta. Tests: `test_campaign_image_upload.py` (6, incluye
+rechazo de path traversal). Verificado end-to-end en Docker: archivo subido vía UI aparece en
+`/app/media/{org_id}/` dentro del contenedor `backend`.
+
+### 12.3 — Políticas de Meta relevantes según el rubro del negocio
+
+Decisión (confirmada con el usuario): selector manual de rubro en Configuración, **sin IA**
+— las políticas de Meta son un tema de cumplimiento real y el motor ya tiene la regla de
+nunca inventar/asumir hechos (AI-1); usar un LLM para resumir/citar políticas es más riesgoso
+que para sugerencias de campaña. `Organization.industry` (nullable, migración `d2f6a8c3b1e7`)
++ catálogo curado a mano en `app/services/policy_catalog.py` (`INDUSTRIES`, ~11 rubros;
+`GENERIC_POLICIES`, 5 recordatorios aplicables a cualquier rubro; `INDUSTRY_POLICIES`, 1-2
+puntos específicos por rubro). Endpoint `GET /organizations/my/policies` devuelve
+`{industry, policies, available_industries}` — el mismo call sirve para poblar el selector de
+Configuración y la card del dashboard, sin un segundo endpoint. El contenido son recordatorios
+en lenguaje propio, no citas literales de Meta; el dashboard siempre enlaza a
+`facebook.com/policies/ads/` para el texto oficial. Frontend: `<select>` "Rubro del negocio"
+en `settings/page.tsx` (mismo patrón que el selector de modelo de IA); card "Políticas de Meta
+relevantes para tu negocio" en el dashboard (`page.tsx`), con nota + link a Configuración si
+no hay rubro elegido. Tests: `test_business_policies.py` (7).
+
+**Nota operativa:** `AUTO_CREATE_TABLES=true` (dev) crea tablas nuevas automáticamente pero
+**no altera tablas existentes** — la columna `organizations.industry` no aparece sola.
+Se aplicó manualmente en la BD local (`ALTER TABLE organizations ADD COLUMN industry
+VARCHAR;`) para esta sesión; en producción, correr `alembic upgrade head` normalmente sí la
+crea (parte de la cadena de migraciones).
+
+181 tests del backend en verde (162 + 19 nuevos). Verificado en vivo en Docker (login
+admin@seed.com, cuenta ITS IN): histórico mensual renderiza con datos de prueba insertados y
+removidos tras verificar, subida de imagen real confirmada en disco del contenedor, selector
+de rubro persiste y la card de políticas cambia acorde (probado con `telecom_cable` y
+revertido a `NULL` tras la prueba, para no dejar un rubro inventado en la cuenta real).
+
 ## 📌 Workflow
 
 Commits directos a `main`, sin PRs (`gh` no está instalado en el entorno).

@@ -13,6 +13,7 @@ from app.schemas.schemas import (
 from app.utils.security import get_current_user
 from app.workers.tasks import sync_ad_account
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
+from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
 from typing import List, Optional
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -54,6 +55,24 @@ async def update_my_organization(
     db.add(org)
     await db.commit()
     return org
+
+@router.get("/my/policies")
+async def get_my_business_policies(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Recordatorios de políticas de Meta según el rubro configurado (ver
+    app/services/policy_catalog.py) — contenido curado, no generado por IA.
+    Incluye `available_industries` para que Configuración no necesite otro
+    endpoint para poblar el selector de rubro."""
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+    return {
+        "industry": org.industry,
+        "policies": get_policies_for_industry(org.industry),
+        "available_industries": INDUSTRIES,
+    }
 
 @router.get("/my/ad-accounts", response_model=List[AdAccountResponse])
 async def list_my_ad_accounts(

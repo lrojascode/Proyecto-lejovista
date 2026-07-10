@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from app.database import get_db
@@ -12,8 +12,11 @@ from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List, Optional
 import datetime
+import os
+import uuid
 from fastapi import status
 from celery import chain
+from app.config import settings
 
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
@@ -237,6 +240,40 @@ async def get_campaign_suggestion(
     }
 
 
+_ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+_MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8MB
+
+
+@router.post("/upload-image")
+async def upload_campaign_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Sube una foto para usar en la creación de campaña (reemplaza pegar una
+    URL a mano). Se guarda en MEDIA_ROOT/{organization_id}/{uuid}.{ext} — el
+    Saga de creación la lee del mismo disco vía `image_path`
+    (MetaAssetRepository.get_or_upload_image), sin volver a subirla por HTTP."""
+    ext = _ALLOWED_IMAGE_TYPES.get(file.content_type)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Usa JPG, PNG o WebP.")
+
+    contents = await file.read()
+    if len(contents) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=400, detail="La imagen supera el límite de 8MB.")
+
+    org_dir = os.path.join(settings.MEDIA_ROOT, current_user.organization_id)
+    os.makedirs(org_dir, exist_ok=True)
+    filename = f"{uuid.uuid4()}{ext}"
+    with open(os.path.join(org_dir, filename), "wb") as f:
+        f.write(contents)
+
+    return {"image_path": f"{current_user.organization_id}/{filename}"}
+
+
 @router.post("/risk-preview")
 async def preview_campaign_risk(
     request: CampaignRiskPreviewRequest,
@@ -373,6 +410,7 @@ async def create_campaign(
         "whatsapp_number": request.whatsapp_number,
         "image_url": request.image_url,
         "image_hash": request.image_hash,
+        "image_path": request.image_path,
         "video_id": request.video_id,
         "thumbnail_url": request.thumbnail_url,
         "copy_text": request.copy_text,
