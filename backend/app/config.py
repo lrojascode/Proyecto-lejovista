@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -52,6 +53,12 @@ class Settings(BaseSettings):
     # hasta que esto sea true. Evita mutaciones accidentales con parámetros aún sin validar.
     ENABLE_META_WRITEBACK: bool = Field(default=False)
 
+    # F-2: encendido controlado del write-back. ENABLE_META_WRITEBACK es un
+    # flag global — sin esto, activarlo escribe de verdad en TODAS las cuentas
+    # a la vez, no solo en la piloto. Lista separada por comas de AdAccount.id.
+    # Vacío (default) = comportamiento anterior, sin restricción por cuenta.
+    WRITEBACK_ACCOUNT_ALLOWLIST: str = Field(default="")
+
     # D-3: días de retención de snapshots en las tablas calientes antes de
     # archivarlos (ver app/services/snapshot_archiver.py).
     SNAPSHOT_RETENTION_DAYS: int = Field(default=180)
@@ -74,8 +81,22 @@ class Settings(BaseSettings):
 
     @property
     def SIMULATE_META_WRITES(self) -> bool:
-        """True si NO se deben ejecutar escrituras reales en Meta."""
+        """True si NO se deben ejecutar escrituras reales en Meta (sin distinguir
+        por cuenta). Usar `simulate_meta_writes_for` donde haya un ad_account_id
+        disponible — respeta el allowlist de la cuenta piloto (F-2)."""
         return self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK
+
+    def simulate_meta_writes_for(self, ad_account_id: Optional[str]) -> bool:
+        """F-2: como SIMULATE_META_WRITES, pero además restringe el write-back
+        real a las cuentas de WRITEBACK_ACCOUNT_ALLOWLIST cuando está configurado
+        — así ENABLE_META_WRITEBACK=true no enciende escritura real para todo el
+        parque de cuentas de golpe, solo para la(s) piloto."""
+        if self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK:
+            return True
+        allowlist = [a.strip() for a in self.WRITEBACK_ACCOUNT_ALLOWLIST.split(",") if a.strip()]
+        if not allowlist:
+            return False  # sin allowlist configurado: todas las cuentas, comportamiento anterior
+        return ad_account_id not in allowlist
 
     # Usar .env buscando de forma robusta en la raíz del proyecto o del backend
     model_config = SettingsConfigDict(

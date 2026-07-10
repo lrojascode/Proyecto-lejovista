@@ -163,7 +163,7 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             campaign_id = (
                 f"mock_camp_{int(datetime.now().timestamp())}"
-                if settings.SIMULATE_META_WRITES
+                if settings.simulate_meta_writes_for(acc.id)
                 else result.get("id")
             )
             if not campaign_id:
@@ -231,7 +231,7 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             adset_id = (
                 f"mock_adset_{int(datetime.now().timestamp())}"
-                if settings.SIMULATE_META_WRITES
+                if settings.simulate_meta_writes_for(acc.id)
                 else result.get("id")
             )
             if not adset_id:
@@ -280,7 +280,7 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             creative_id = (
                 f"mock_creative_{int(datetime.now().timestamp())}"
-                if settings.SIMULATE_META_WRITES
+                if settings.simulate_meta_writes_for(acc.id)
                 else result.get("id")
             )
             if not creative_id:
@@ -323,7 +323,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             ad_id = (
                 f"mock_ad_{int(datetime.now().timestamp())}"
-                if settings.SIMULATE_META_WRITES
+                if settings.simulate_meta_writes_for(acc.id)
                 else result.get("id")
             )
             if not ad_id:
@@ -347,7 +347,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
                         "adset_id": context["adset_id"],
                         "creative_id": context["creative_id"],
                         "ad_id": ad_id,
-                        "simulated": settings.SIMULATE_META_WRITES,
+                        "simulated": settings.simulate_meta_writes_for(acc.id),
                     }
                     db.add(action)
                     await db.commit()

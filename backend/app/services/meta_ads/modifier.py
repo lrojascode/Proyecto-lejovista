@@ -40,7 +40,7 @@ class MetaCampaignModifier:
 
         # 1. Obtener estado actual (Backup para rollback)
         backup_state = {}
-        if not settings.SIMULATE_META_WRITES:
+        if not settings.simulate_meta_writes_for(ad_account.id):
             # En producción, hacemos un GET del estado actual
             backup_state = await limiter.call_api(
                 f"{target_id}",

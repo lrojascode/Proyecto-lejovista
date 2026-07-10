@@ -69,8 +69,9 @@ class MetaAPIRateLimiter:
         es_post = method.upper() == "POST"
 
         # Lecturas: reales si MOCK_SERVICES=false.
-        # Escrituras (POST): reales solo si el write-back está explícitamente habilitado.
-        simulate = settings.SIMULATE_META_WRITES if es_post else settings.MOCK_SERVICES
+        # Escrituras (POST): reales solo si el write-back está explícitamente
+        # habilitado Y (sin allowlist, o) esta cuenta está en la piloto (F-2).
+        simulate = settings.simulate_meta_writes_for(self.ad_account_id) if es_post else settings.MOCK_SERVICES
 
         # Aplicar el delay antes de la llamada
         await self._apply_delay(es_post)
@@ -174,7 +175,7 @@ class MetaAPIRateLimiter:
         """
         await self._apply_delay(True)
 
-        if settings.SIMULATE_META_WRITES:
+        if settings.simulate_meta_writes_for(self.ad_account_id):
             logger.info(f"[MOCK] API CALL (multipart) - POST - {endpoint} - file={filename}")
             await self._log_api_call("POST", endpoint, data, 200, "MOCK RESPONSE OK")
             return {"mock": True, "images": {filename: {"hash": f"mock_hash_{filename}"}}}

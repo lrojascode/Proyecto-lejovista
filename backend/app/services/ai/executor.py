@@ -72,7 +72,7 @@ class AIExecutor:
             # (write-back desactivado), para que el frontend no dé por hecho que
             # la campaña se pausó/modificó realmente (P-1).
             if isinstance(result, dict):
-                result["simulated"] = settings.SIMULATE_META_WRITES
+                result["simulated"] = settings.simulate_meta_writes_for(ad_account.id)
             action.status = "COMPLETED"
             action.execution_result = result
 
