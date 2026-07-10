@@ -21,10 +21,24 @@ PROMPT_VERSION = "master-brief-v2"
 # Versión del prompt de copy de campañas (Fase 3B del plan de creación de
 # campañas). Se persiste en el CampaignDraft para trazar qué prompt generó
 # cada copy (AI-4), igual que PROMPT_VERSION para el Master Brief.
-CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v1"
+# v2 (3.4, anexo 6.2): 2 variantes de headline/primary_text (el usuario elige
+# en la UI), rubro de la organización inyectado, límites de caracteres de
+# Meta instruidos y validados, response_format json_object cuando el
+# proveedor lo soporta.
+CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v2"
 
-# Claves obligatorias del JSON de copy que debe devolver el LLM.
+# Claves obligatorias del JSON de copy que debe devolver el LLM. headline y
+# primary_text son ARRAYS de 2 variantes (v2); description/welcome_message
+# siguen siendo un único string.
 _REQUIRED_COPY_KEYS = {"headline", "primary_text", "description", "welcome_message"}
+_VARIANT_KEYS = {"headline", "primary_text"}
+_COPY_VARIANTS = 2
+
+# Límites de caracteres de Meta para el Ad Creative (Graph API: adcreatives /
+# object_story_spec.link_data). El copy_text libre (primary_text) no tiene
+# límite estricto de Meta, pero headline y description sí.
+META_HEADLINE_MAX_CHARS = 40
+META_DESCRIPTION_MAX_CHARS = 30
 
 # Modelos válidos por proveedor, para que el selector de Preferencias solo
 # muestre los que realmente puede usar el proveedor activo (ver
@@ -224,14 +238,18 @@ class OpenRouterClient:
         winning_context: Optional[Dict[str, Any]] = None,
         winning_ad_copy: Optional[Dict[str, Any]] = None,
         usage_ctx: Optional[UsageContext] = None,
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """
         Fase 3B del plan de creación de campañas: genera el copy de una campaña
-        nueva (headline/primary_text/description/welcome_message) siguiendo la
-        estructura ganadora del playbook (§6: DOLOR → PROMESA → BENEFICIOS →
-        URGENCIA → CTA). El LLM SOLO redacta texto — las cifras (presupuesto,
-        placements, edad) las decide `CampaignSuggester` (Fase 3A) de forma
-        determinista, nunca el LLM.
+        nueva siguiendo la estructura ganadora del playbook (§6: DOLOR →
+        PROMESA → BENEFICIOS → URGENCIA → CTA). El LLM SOLO redacta texto —
+        las cifras (presupuesto, placements, edad) las decide
+        `CampaignSuggester` (Fase 3A) de forma determinista, nunca el LLM.
+
+        v2 (3.4): `headline` y `primary_text` vienen como 2 variantes (arrays)
+        para que el usuario elija en la UI; `description` y `welcome_message`
+        siguen siendo un único string. Ambos textos respetan los límites de
+        caracteres de Meta (`META_HEADLINE_MAX_CHARS`/`META_DESCRIPTION_MAX_CHARS`).
 
         `winning_ad_copy` (título/cuerpo/CTA reales del anuncio ganador,
         capturados por el sync — antes solo se guardaba la imagen) es
@@ -273,6 +291,11 @@ class OpenRouterClient:
             "línea naturales, tono directo y cercano.\n\n"
             "Estructura OBLIGATORIA del primary_text: DOLOR → PROMESA → BENEFICIOS (✅) → URGENCIA → "
             "CTA (📲).\n\n"
+            f"VARIANTES: genera exactamente {_COPY_VARIANTS} variantes de headline y de primary_text "
+            "(distinto ángulo o gancho cada una, mismo producto), para que el usuario elija.\n\n"
+            "LÍMITES DE META (obligatorios, Meta rechaza el anuncio si se exceden): "
+            f"cada headline ≤ {META_HEADLINE_MAX_CHARS} caracteres; description ≤ {META_DESCRIPTION_MAX_CHARS} "
+            "caracteres. primary_text y welcome_message no tienen límite estricto.\n\n"
             "REGLA INQUEBRANTABLE: no inventes ni menciones cifras de rendimiento (CPL, CTR, "
             "conversiones, costos) en el copy — esas nunca forman parte del texto del anuncio.\n\n"
             "REGLA DE POLÍTICAS DE META: evita por completo lenguaje de medicamentos o farmacéutico "
@@ -280,12 +303,14 @@ class OpenRouterClient:
             "producto pertenece a ese rubro, enfócalo como cuidado personal o cosmético, o describe "
             "el producto físico en vez del fármaco.\n\n"
             "Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni markdown, con "
-            'exactamente estas claves: {"headline": "...", "primary_text": "...", '
-            '"description": "...", "welcome_message": "..."}.'
+            'exactamente estas claves: {"headline": ["variante 1", "variante 2"], '
+            '"primary_text": ["variante 1", "variante 2"], "description": "...", "welcome_message": "..."}.'
         )
 
+        industry_line = f"Rubro del negocio: {org.industry}.\n" if org.industry else ""
         user_prompt = (
             f"Producto o servicio: {product_name}\n"
+            f"{industry_line}"
             f"{winning_summary}\n"
             f"{winning_copy_block}\n"
             "Genera el copy para una campaña nueva de mensajes de WhatsApp de esta marca."
@@ -302,6 +327,12 @@ class OpenRouterClient:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
+            # 3.4(d): la mayoría de proveedores OpenAI-compatibles (openai,
+            # openrouter, Gemini vía su endpoint OpenAI-compat) soportan JSON
+            # forzado — reduce la tasa de fallback a la plantilla local por
+            # respuestas mal formadas. El parser por regex sigue como red de
+            # seguridad si el proveedor lo ignora.
+            "response_format": {"type": "json_object"},
         }
 
         try:
@@ -328,10 +359,12 @@ class OpenRouterClient:
         return self._generate_mock_copy(product_name, winning_context)
 
     @staticmethod
-    def _parse_copy_json(content: str) -> Optional[Dict[str, str]]:
+    def _parse_copy_json(content: str) -> Optional[Dict[str, Any]]:
         """Extrae el JSON del copy de la respuesta del LLM. Tolera que el modelo
         envuelva el JSON en texto o ```json ... ``` pese a la instrucción de no
-        hacerlo. Devuelve None si no se puede parsear o faltan claves."""
+        hacerlo. Devuelve None si no se puede parsear, faltan claves, las
+        variantes de headline/primary_text no son exactamente 2, o algún
+        headline/description excede el límite de caracteres de Meta."""
         import re
         match = re.search(r"\{.*\}", content.strip(), re.DOTALL)
         if not match:
@@ -342,25 +375,53 @@ class OpenRouterClient:
             return None
         if not isinstance(data, dict) or not _REQUIRED_COPY_KEYS.issubset(data.keys()):
             return None
-        return {k: str(data[k]) for k in _REQUIRED_COPY_KEYS}
+
+        result: Dict[str, Any] = {}
+        for key in _VARIANT_KEYS:
+            variants = data[key]
+            if not isinstance(variants, list) or len(variants) != _COPY_VARIANTS:
+                return None
+            variants = [str(v) for v in variants]
+            if key == "headline" and any(len(v) > META_HEADLINE_MAX_CHARS for v in variants):
+                return None
+            result[key] = variants
+
+        description = str(data["description"])
+        if len(description) > META_DESCRIPTION_MAX_CHARS:
+            return None
+        result["description"] = description
+        result["welcome_message"] = str(data["welcome_message"])
+        return result
 
     def _generate_mock_copy(
         self, product_name: str, winning_context: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, str]:
+    ) -> Dict[str, Any]:
         """Plantilla local determinista (sin LLM) — nunca rompe la creación de
         campañas si el LLM falla, no hay API key configurada, o MOCK_SERVICES
         está activo. Sigue la misma estructura DOLOR→PROMESA→BENEFICIOS→URGENCIA→CTA
-        del playbook (§6), sin inventar cifras de rendimiento."""
+        del playbook (§6), sin inventar cifras de rendimiento. Respeta los
+        mismos límites de Meta que se le exigen al LLM (headline/description)."""
+        headline_a = f"{product_name} 🔥"[:META_HEADLINE_MAX_CHARS]
+        headline_b = f"Cotiza {product_name} ya"[:META_HEADLINE_MAX_CHARS]
         return {
-            "headline": f"{product_name} 🔥",
-            "primary_text": (
-                f"¿Buscas {product_name.lower()} de confianza? 😩\n\n"
-                f"Con nosotros lo tienes fácil: calidad garantizada y atención inmediata. ✅\n"
-                f"✅ Entrega rápida\n✅ Atención personalizada\n✅ Precios justos\n\n"
-                f"🔥 Cupos limitados esta semana.\n"
-                f"📲 Escríbenos ahora por WhatsApp y cotiza sin compromiso."
-            ),
-            "description": f"{product_name} · Cotiza por WhatsApp",
+            "headline": [headline_a, headline_b],
+            "primary_text": [
+                (
+                    f"¿Buscas {product_name.lower()} de confianza? 😩\n\n"
+                    f"Con nosotros lo tienes fácil: calidad garantizada y atención inmediata. ✅\n"
+                    f"✅ Entrega rápida\n✅ Atención personalizada\n✅ Precios justos\n\n"
+                    f"🔥 Cupos limitados esta semana.\n"
+                    f"📲 Escríbenos ahora por WhatsApp y cotiza sin compromiso."
+                ),
+                (
+                    f"¿Cansado de no encontrar {product_name.lower()} de calidad? 😩\n\n"
+                    f"Te lo ponemos fácil: atención rápida y precios justos. ✅\n"
+                    f"✅ Stock disponible\n✅ Asesoría personalizada\n✅ Entrega puntual\n\n"
+                    f"🔥 Promoción válida esta semana.\n"
+                    f"📲 Escríbenos por WhatsApp y cotiza gratis."
+                ),
+            ],
+            "description": f"{product_name} · Cotiza por WhatsApp"[:META_DESCRIPTION_MAX_CHARS],
             "welcome_message": f"¡Hola! 👋 Gracias por escribir. Cuéntanos qué necesitas de {product_name} y te ayudamos al toque.",
         }
 

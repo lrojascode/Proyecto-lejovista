@@ -27,6 +27,12 @@ class CampaignCreateRequest(BaseModel):
     video_id: Optional[str] = Field(default=None, description="ID del video ya subido a Meta (/advideos)")
     thumbnail_url: Optional[str] = Field(default=None, description="URL de la miniatura, requerida junto a video_id")
     copy_text: str = Field(..., description="Texto completo del anuncio, incluyendo hook, bullets y CTA")
+    # 3.4: variante de headline/description elegida por el usuario en la UI
+    # (de las 2 que genera el copy v2). Opcionales — copy_text sigue siendo
+    # el único campo obligatorio del anuncio. Se validan contra los límites
+    # de Meta en CampaignValidator si vienen presentes.
+    headline: Optional[str] = Field(default=None, description="Headline elegido (máx. 40 caracteres, límite de Meta)")
+    description: Optional[str] = Field(default=None, description="Description elegida (máx. 30 caracteres, límite de Meta)")
 
     class Config:
         json_schema_extra = {

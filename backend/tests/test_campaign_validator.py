@@ -33,12 +33,14 @@ async def _make_org_with_two_accounts(db: AsyncSession, slug="validator-org"):
     return org, acc_a, acc_b
 
 
-def _request(ad_account_id: str):
-    return CampaignCreateRequest(
+def _request(ad_account_id: str, **overrides):
+    fields = dict(
         ad_account_id=ad_account_id, page_id="page-1",
         product_name="CableGPT", budget=100.0, days=7,
         whatsapp_number="51999888777", image_hash="hash1", copy_text="Copy",
     )
+    fields.update(overrides)
+    return CampaignCreateRequest(**fields)
 
 
 @pytest.mark.asyncio
@@ -121,3 +123,46 @@ async def test_validate_skips_real_call_when_mock_services_enabled(db_session: A
     await CampaignValidator(acc_a).validate(_request(acc_a.id))
 
     mock_call_api.assert_not_called()
+
+
+# --- 3.4(c): límites de caracteres de Meta para headline/description ---
+
+@pytest.mark.asyncio
+async def test_validate_rejects_headline_over_meta_limit(db_session: AsyncSession, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-headline")
+
+    with pytest.raises(Exception) as exc_info:
+        await CampaignValidator(acc_a).validate(_request(acc_a.id, headline="H" * 41))
+    assert "headline" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_accepts_headline_at_meta_limit(db_session: AsyncSession, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-headline-ok")
+
+    await CampaignValidator(acc_a).validate(_request(acc_a.id, headline="H" * 40))
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_description_over_meta_limit(db_session: AsyncSession, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-desc")
+
+    with pytest.raises(Exception) as exc_info:
+        await CampaignValidator(acc_a).validate(_request(acc_a.id, description="D" * 31))
+    assert "description" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_validate_allows_missing_headline_and_description(db_session: AsyncSession, monkeypatch):
+    """Ambos son opcionales — copy_text sigue siendo el único texto obligatorio."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-optional")
+
+    await CampaignValidator(acc_a).validate(_request(acc_a.id))

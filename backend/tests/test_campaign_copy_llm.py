@@ -57,7 +57,10 @@ async def test_suggest_campaign_copy_uses_mock_when_mock_services_enabled(monkey
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
-    assert "Cable GPT" in result["headline"]
+    assert len(result["headline"]) == 2 and len(result["primary_text"]) == 2
+    assert "Cable GPT" in result["headline"][0]
+    assert all(len(h) <= 40 for h in result["headline"])
+    assert len(result["description"]) <= 30
 
 
 @pytest.mark.asyncio
@@ -67,7 +70,7 @@ async def test_suggest_campaign_copy_parses_valid_llm_json(monkeypatch):
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
 
     llm_json = json.dumps({
-        "headline": "LLM Headline", "primary_text": "LLM body",
+        "headline": ["LLM Headline A", "LLM Headline B"], "primary_text": ["LLM body A", "LLM body B"],
         "description": "LLM desc", "welcome_message": "LLM welcome",
     })
     fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
@@ -79,7 +82,7 @@ async def test_suggest_campaign_copy_parses_valid_llm_json(monkeypatch):
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert result == {
-        "headline": "LLM Headline", "primary_text": "LLM body",
+        "headline": ["LLM Headline A", "LLM Headline B"], "primary_text": ["LLM body A", "LLM body B"],
         "description": "LLM desc", "welcome_message": "LLM welcome",
     }
 
@@ -91,7 +94,7 @@ async def test_suggest_campaign_copy_tolerates_llm_wrapping_json_in_markdown(mon
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
 
     wrapped = "```json\n" + json.dumps({
-        "headline": "H", "primary_text": "P", "description": "D", "welcome_message": "W",
+        "headline": ["H1", "H2"], "primary_text": ["P1", "P2"], "description": "D", "welcome_message": "W",
     }) + "\n```"
     fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
         "choices": [{"message": {"content": wrapped}}]
@@ -101,7 +104,7 @@ async def test_suggest_campaign_copy_tolerates_llm_wrapping_json_in_markdown(mon
     org, acc = _org_and_acc()
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
-    assert result["headline"] == "H"
+    assert result["headline"] == ["H1", "H2"]
 
 
 @pytest.mark.asyncio
@@ -119,7 +122,96 @@ async def test_suggest_campaign_copy_falls_back_on_invalid_json(monkeypatch):
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
-    assert "Cable GPT" in result["headline"]
+    assert "Cable GPT" in result["headline"][0]
+
+
+@pytest.mark.asyncio
+async def test_suggest_campaign_copy_falls_back_when_variant_count_wrong(monkeypatch):
+    """3.4: si el LLM no manda exactamente 2 variantes, se descarta y cae al mock."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+
+    llm_json = json.dumps({
+        "headline": ["Solo una variante"], "primary_text": ["P1", "P2"],
+        "description": "D", "welcome_message": "W",
+    })
+    fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
+        "choices": [{"message": {"content": llm_json}}]
+    })))
+    monkeypatch.setattr(httpx, "AsyncClient", fake_client)
+
+    org, acc = _org_and_acc()
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
+
+    assert len(result["headline"]) == 2  # cayó al mock, que sí trae 2
+
+
+@pytest.mark.asyncio
+async def test_suggest_campaign_copy_falls_back_when_headline_exceeds_meta_limit(monkeypatch):
+    """3.4(c): un headline que excede el límite de Meta se rechaza, no se pasa tal cual."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+
+    too_long = "H" * 41
+    llm_json = json.dumps({
+        "headline": [too_long, "Headline corto"], "primary_text": ["P1", "P2"],
+        "description": "D", "welcome_message": "W",
+    })
+    fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
+        "choices": [{"message": {"content": llm_json}}]
+    })))
+    monkeypatch.setattr(httpx, "AsyncClient", fake_client)
+
+    org, acc = _org_and_acc()
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
+
+    assert too_long not in result["headline"]  # cayó al mock
+
+
+@pytest.mark.asyncio
+async def test_suggest_campaign_copy_injects_organization_industry(monkeypatch):
+    """3.4(a): el rubro de la organización se inyecta en el prompt."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+
+    fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
+        "choices": [{"message": {"content": json.dumps({
+            "headline": ["H1", "H2"], "primary_text": ["P1", "P2"],
+            "description": "D", "welcome_message": "W",
+        })}}]
+    })))
+    monkeypatch.setattr(httpx, "AsyncClient", fake_client)
+
+    org, acc = _org_and_acc()
+    org.industry = "Ferretería"
+    await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
+
+    user_message = next(m["content"] for m in fake_client.captured_json["messages"] if m["role"] == "user")
+    assert "Ferretería" in user_message
+
+
+@pytest.mark.asyncio
+async def test_suggest_campaign_copy_requests_json_response_format(monkeypatch):
+    """3.4(d): response_format json_object cuando el proveedor lo soporta."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test")
+
+    fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
+        "choices": [{"message": {"content": json.dumps({
+            "headline": ["H1", "H2"], "primary_text": ["P1", "P2"],
+            "description": "D", "welcome_message": "W",
+        })}}]
+    })))
+    monkeypatch.setattr(httpx, "AsyncClient", fake_client)
+
+    org, acc = _org_and_acc()
+    await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
+
+    assert fake_client.captured_json["response_format"] == {"type": "json_object"}
 
 
 @pytest.mark.asyncio
@@ -177,7 +269,7 @@ async def test_suggest_campaign_copy_includes_winning_ad_copy_in_prompt(monkeypa
 
     fake_client = _FakeAsyncClient(response=_FakeResponse(200, json.dumps({
         "choices": [{"message": {"content": json.dumps({
-            "headline": "H", "primary_text": "P", "description": "D", "welcome_message": "W",
+            "headline": ["H1", "H2"], "primary_text": ["P1", "P2"], "description": "D", "welcome_message": "W",
         })}}]
     })))
     monkeypatch.setattr(httpx, "AsyncClient", fake_client)

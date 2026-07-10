@@ -40,7 +40,8 @@ type Suggestion = {
   best_age_range: string | null;
   winning_campaign: { name: string; cost_per_conv: number; ctr: number } | null;
   evidence: string[];
-  copy: { headline: string; primary_text: string; description: string; welcome_message: string };
+  // 3.4: 2 variantes de headline/primary_text — el usuario elige en la UI.
+  copy: { headline: string[]; primary_text: string[]; description: string; welcome_message: string };
 };
 
 // Colores por nivel de riesgo (paleta del design system "midnight").
@@ -74,7 +75,11 @@ export default function NewCampaignPage() {
     image_path: "",
     image_hash: "",
     copy_text: "",
+    headline: "",
   });
+
+  // 3.4: variante de copy elegida (0 o 1) de las 2 que genera la IA.
+  const [copyVariant, setCopyVariant] = useState(0);
 
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
@@ -174,11 +179,13 @@ export default function NewCampaignPage() {
         activeAdAccountId, formData.product_name
       );
       setSuggestion(data);
+      setCopyVariant(0);
       setFormData((prev) => ({
         ...prev,
         budget: data.suggested_budget,
         days: data.suggested_days,
-        copy_text: data.copy.primary_text,
+        copy_text: data.copy.primary_text[0],
+        headline: data.copy.headline[0],
       }));
     } catch (err: any) {
       setSuggestError(err.message || "No se pudo obtener la sugerencia.");
@@ -267,6 +274,17 @@ export default function NewCampaignPage() {
     }
   };
 
+  // 3.4: cambia entre las 2 variantes de headline/primary_text que genera la IA.
+  const selectCopyVariant = (index: 0 | 1) => {
+    if (!suggestion) return;
+    setCopyVariant(index);
+    setFormData((prev) => ({
+      ...prev,
+      copy_text: suggestion.copy.primary_text[index],
+      headline: suggestion.copy.headline[index],
+    }));
+  };
+
   // Paso 2 (Ajuste 1): el usuario confirmó el riesgo → se crea de verdad.
   const doCreate = async () => {
     if (!activeAdAccountId || !selectedPage || !selectedPage.whatsapp_number) return;
@@ -285,6 +303,7 @@ export default function NewCampaignPage() {
         image_path: formData.image_path || undefined,
         image_hash: formData.image_hash || undefined,
         copy_text: formData.copy_text,
+        headline: formData.headline || undefined,
       });
 
       setDraftId(res.draft_id);
@@ -515,6 +534,32 @@ export default function NewCampaignPage() {
                     (se recalcula con tu presupuesto final antes de confirmar)
                   </span>
                 </p>
+              )}
+
+              {/* 3.4: elegir entre las 2 variantes de copy que generó la IA. */}
+              {suggestion.copy?.headline?.length > 1 && (
+                <div style={{ marginTop: "12px" }}>
+                  <p style={{ marginBottom: "6px" }}>Variante de copy:</p>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                    {suggestion.copy.headline.map((h, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => selectCopyVariant(i as 0 | 1)}
+                        style={{
+                          textAlign: "left", flex: "1 1 200px", padding: "8px 10px",
+                          borderRadius: "6px", cursor: "pointer",
+                          border: copyVariant === i ? "1px solid var(--color-signal-teal)" : "1px solid var(--border-color)",
+                          background: copyVariant === i ? "rgba(2, 184, 204, 0.12)" : "transparent",
+                          color: "inherit", fontSize: "12px",
+                        }}
+                      >
+                        <strong>Variante {i + 1}{copyVariant === i ? " ✓" : ""}</strong>
+                        <div style={{ color: "var(--color-fog)", marginTop: "2px" }}>{h}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
           )}

@@ -54,7 +54,8 @@ async def test_suggestion_endpoint_returns_structure_and_copy(async_client: Asyn
     assert body["objective"] == "OUTCOME_LEADS"
     assert body["destination_type"] == "WHATSAPP"
     assert body["suggested_budget"] == 100.0
-    assert "CableGPT" in body["copy"]["headline"]
+    assert "CableGPT" in body["copy"]["headline"][0]
+    assert len(body["copy"]["headline"]) == 2 and len(body["copy"]["primary_text"]) == 2
     assert set(body["copy"].keys()) == {"headline", "primary_text", "description", "welcome_message"}
 
 

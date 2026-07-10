@@ -215,7 +215,9 @@ async def get_campaign_suggestion(
 
     risk = assess_campaign_risk(
         budget=suggestion["suggested_budget"],
-        copy_text=copy.get("primary_text", ""),
+        # 3.4: primary_text ahora es un array de 2 variantes; se evalúa la
+        # primera para el chequeo de riesgo (lenguaje que Meta suele rechazar).
+        copy_text=(copy.get("primary_text") or [""])[0],
         suggestion=suggestion,
     )
 

@@ -5,6 +5,7 @@ from app.config import settings
 from app.models.ad_account import AdAccount
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
+from app.services.ai.llm import META_HEADLINE_MAX_CHARS, META_DESCRIPTION_MAX_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,22 @@ class CampaignValidator:
         # Permite letras, números, espacios y guiones bajos básicos
         if not re.match(r"^[A-Za-z0-9 _-]+$", request.product_name):
             raise HTTPException(status_code=400, detail="product_name contains invalid characters (no accents or emojis allowed).")
+
+        # 3. Límites de caracteres de Meta para el Ad Creative (3.4). Solo se
+        # validan si vienen presentes — son opcionales (variante elegida en la
+        # UI de las 2 que genera el copy v2).
+        if request.headline and len(request.headline) > META_HEADLINE_MAX_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"headline excede el límite de Meta de {META_HEADLINE_MAX_CHARS} caracteres "
+                       f"({len(request.headline)}).",
+            )
+        if request.description and len(request.description) > META_DESCRIPTION_MAX_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"description excede el límite de Meta de {META_DESCRIPTION_MAX_CHARS} caracteres "
+                       f"({len(request.description)}).",
+            )
 
     async def _verify_meta_account_status(self):
         """

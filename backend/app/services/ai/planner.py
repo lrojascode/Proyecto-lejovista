@@ -294,8 +294,12 @@ class AIPlanner:
                     excluded_placements=suggestion.get("excluded_placements") or [],
                 ),
                 "creative": {
-                    "headline": copy["headline"],
-                    "body": copy["primary_text"],
+                    # 3.4: el copy v2 trae 2 variantes de headline/primary_text
+                    # para que un humano elija en la UI; en el flujo 100% IA
+                    # (esta acción se aprueba sin editor de copy) se toma la
+                    # primera variante.
+                    "headline": copy["headline"][0],
+                    "body": copy["primary_text"][0],
                     "description": copy["description"],
                     "welcome_message": copy["welcome_message"],
                 },
