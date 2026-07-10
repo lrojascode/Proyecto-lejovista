@@ -148,6 +148,7 @@ class AIEngine:
                     "name": s.campaign_name,
                     "spend": 0.0,
                     "conversions": 0,
+                    "conversations": 0,
                     "impressions": 0,
                     "clicks": 0,
                     "ctr": 0.0,
@@ -155,12 +156,17 @@ class AIEngine:
                 }
             campaigns[c_id]["spend"] += s.spend
             campaigns[c_id]["conversions"] += s.conversions
+            campaigns[c_id]["conversations"] += (s.conversations or 0)
             campaigns[c_id]["impressions"] += s.impressions
             campaigns[c_id]["clicks"] += s.clicks
-            
-        # Recalcular CTR global de la semana
+
+        # Recalcular CTR global de la semana y unificar la métrica primaria (E-2):
+        # "conversations" = conversaciones de WhatsApp si existen, si no leads —
+        # el MISMO criterio que ReportBuilder (conversations or conversions),
+        # para que /diagnostics y /reporte no muestren números distintos.
         for c_id, data in campaigns.items():
             if data["impressions"] > 0:
                 data["ctr"] = (data["clicks"] / data["impressions"]) * 100.0
+            data["conversations"] = data["conversations"] or data["conversions"]
 
         return campaigns

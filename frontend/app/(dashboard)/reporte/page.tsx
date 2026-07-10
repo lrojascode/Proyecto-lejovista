@@ -171,7 +171,9 @@ export default function Reporte() {
 
       {/* KPIs */}
       <div style={card}>
-        <h2 style={h2}>Resumen Ejecutivo</h2>
+        {/* E-2: ventana temporal explícita — /diagnostics muestra 7 días y este
+            reporte 30; sin el rótulo, los totales parecían contradecirse. */}
+        <h2 style={h2}>Resumen Ejecutivo <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 400 }}>· últimos {r.window_days} días</span></h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "1rem" }}>
           <Kpi label="Total invertido" value={money(k.total_spend)} />
           <Kpi label="Personas alcanzadas" value={num(k.total_reach)} />

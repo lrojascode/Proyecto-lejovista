@@ -205,17 +205,19 @@ export default function Diagnostics() {
                     </div>
                   </div>
                   <div className="card-subtle" style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Leads Totales</div>
+                    {/* E-2: métrica primaria unificada con /reporte — conversaciones
+                        (con fallback a leads en el backend), mismo nombre en toda la app. */}
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Conversaciones</div>
                     <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
-                      {Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversions || 0), 0)}
+                      {Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversations ?? c.conversions ?? 0), 0)}
                     </div>
                   </div>
                   <div className="card-subtle" style={{ textAlign: "center" }}>
-                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>CPL Promedio</div>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Costo por conversación</div>
                     <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
                       S/.{(() => {
                         const totalSpend = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.spend || 0), 0);
-                        const totalConvs = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversions || 0), 0);
+                        const totalConvs = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversations ?? c.conversions ?? 0), 0);
                         return totalConvs > 0 ? (totalSpend / totalConvs).toFixed(2) : totalSpend.toFixed(2);
                       })()}
                     </div>
@@ -255,20 +257,21 @@ export default function Diagnostics() {
                     <thead>
                       <tr style={{ color: "var(--text-secondary)", borderBottom: "1px solid var(--border-color)", textAlign: "left" }}>
                         <th style={{ padding: "0.5rem" }}>Campaña</th>
-                        <th style={{ padding: "0.5rem" }}>Spend</th>
-                        <th style={{ padding: "0.5rem" }}>Leads</th>
-                        <th style={{ padding: "0.5rem" }}>CPL</th>
+                        <th style={{ padding: "0.5rem" }}>Gasto</th>
+                        <th style={{ padding: "0.5rem" }}>Conv.</th>
+                        <th style={{ padding: "0.5rem" }}>Costo/Conv.</th>
                         <th style={{ padding: "0.5rem" }}>CTR</th>
                       </tr>
                     </thead>
                     <tbody>
                       {Object.values(briefData.campaigns_data || {}).map((c: any) => {
-                        const cpl = c.conversions > 0 ? c.spend / c.conversions : c.spend;
+                        const convs = c.conversations ?? c.conversions ?? 0;
+                        const cpl = convs > 0 ? c.spend / convs : c.spend;
                         return (
                           <tr key={c.name} style={{ borderBottom: "1px solid var(--border-color)", color: "var(--text-primary)" }}>
                             <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510 }}>{c.name}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>S/.{c.spend.toFixed(2)}</td>
-                            <td style={{ padding: "0.75rem 0.5rem" }}>{c.conversions}</td>
+                            <td style={{ padding: "0.75rem 0.5rem" }}>{convs}</td>
                             <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>{c.ctr.toFixed(2)}%</td>
                           </tr>
