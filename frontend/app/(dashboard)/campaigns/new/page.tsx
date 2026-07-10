@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
+import { useWebSocket } from "@/components/providers/WebSocketProvider";
 
 type MetaPage = {
   id: string;
@@ -52,11 +53,16 @@ const RISK_STYLES: Record<string, { bg: string; border: string; color: string; l
 type DraftStatus = "idle" | "submitting" | "polling" | "success" | "error";
 
 const POLL_INTERVAL_MS = 2500;
-const POLL_MAX_ATTEMPTS = 40; // ~100s de margen
+// D-3 (auditoría): la Saga tarda ~3 min (4 pasos con countdown=40s entre sí).
+// Con 40 intentos (~100s) el polling se agotaba ANTES de que la creación pudiera
+// terminar y el usuario veía timeout en creaciones exitosas. 120 ≈ 5 min de margen;
+// además el evento WS `campaign_creation` (abajo) resuelve sin esperar al polling.
+const POLL_MAX_ATTEMPTS = 120;
 
 export default function NewCampaignPage() {
   const router = useRouter();
   const { activeAdAccountId, accounts } = useAdAccount();
+  const { lastEvent } = useWebSocket();
 
   const [pages, setPages] = useState<MetaPage[]>([]);
   const [selectedPageId, setSelectedPageId] = useState("");
@@ -180,6 +186,19 @@ export default function NewCampaignPage() {
       setSuggestLoading(false);
     }
   };
+
+  // D-3: el worker publica `campaign_creation` (READY/FAILED) por WebSocket al
+  // terminar la Saga — antes se ignoraba y solo existía el polling. Al recibirlo,
+  // consultamos el draft de inmediato (fuente de verdad) en vez de esperar el
+  // próximo tick. El polling queda como fallback si el WS está caído.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.event_type !== "campaign_creation") return;
+    if (!draftId || lastEvent.job_id !== draftId) return;
+    if (status !== "polling") return;
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    pollDraft(draftId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastEvent]);
 
   const pollDraft = (id: string) => {
     pollAttempts.current += 1;
@@ -334,6 +353,12 @@ export default function NewCampaignPage() {
             {status === "polling" && "Creando campaña (pausada) en Meta..."}
             {status === "success" && "¡Campaña creada — en estado PAUSADA!"}
           </h2>
+          {status === "polling" && (
+            <p style={{ color: "var(--color-fog)", marginTop: "8px", fontSize: "13px", maxWidth: "420px", textAlign: "center" }}>
+              La creación va por pasos (campaña → conjunto → creativo → anuncio) con pausas de
+              seguridad entre cada uno: toma <strong>~3 minutos</strong>. Puedes dejar esta pantalla abierta.
+            </p>
+          )}
           {draftId && (
             <p className="mono" style={{ color: "var(--color-fog)", marginTop: "8px", fontSize: "13px" }}>
               Draft ID: {draftId}
