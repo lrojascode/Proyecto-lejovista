@@ -842,3 +842,63 @@ agregado de 7d con datos reales).
 Siguiente: **Fase 5** (producto premium: dashboard rejerarquizado,
 comparativa temporal, PDF real, pulido UX, tipado de frontend) o **Fase 6**
 (SaaS comercializable: reglas por tenant, OAuth de Meta, billing).
+
+## Fase 5 del plan de auditoría — 5.1-5.4 COMPLETOS, 5.5 pendiente (2026-07-10)
+
+Producto premium: el dashboard ahora abre con las métricas de negocio en
+vez de una tabla de auditoría técnica, el reporte compara contra el período
+anterior con un selector de ventana, el PDF es real (no `window.print()`),
+y varios detalles de accesibilidad/UX quedaron resueltos.
+
+- **5.1 Dashboard re-jerarquizado (E-3)**: fila de KPIs de 7d (gasto,
+  conversaciones, costo/conv.) con flecha de tendencia vs los 7d previos +
+  contador de alertas críticas enlazado a Diagnósticos, arriba de todo.
+  Tarjetas con las 3 alertas más severas. "Última sincronización: hace X"
+  en el header. El historial de llamadas a la API (auditoría técnica) se
+  movió a una sección `<details>` colapsada al final. Nuevo
+  `kpi_period.py` (extraído de `AIEngine._get_previous_period_kpis`) y
+  endpoint `GET /reports/kpis-summary`.
+- **5.2 Comparativa temporal (F-3.1)**: `ReportBuilder.build()` calcula
+  también la ventana anterior del MISMO tamaño y agrega `deltas_pct` a los
+  KPIs de cuenta y `spend_delta_pct`/`cost_per_conv_delta_pct` por
+  campaña (`None` sin historia previa, no un 0% engañoso). Selector 7/30/90
+  días en `/reporte` (`window_days` query param, valida 400 si no es uno de
+  esos tres) que cambia la ventana sin recargar.
+- **5.3 PDF real (F-3.2)**: nuevo `pdf_report.py` con WeasyPrint (HTML→PDF
+  server-side, sin navegador headless) + `GET /reports/pdf`. Reemplaza el
+  `window.print()` del botón "Exportar PDF". Requirió agregar dependencias
+  de sistema (Pango/Cairo/gdk-pixbuf) a ambas etapas del `Dockerfile` —
+  verificado que la imagen compila y el PDF se genera en ~0.14s (bien
+  dentro del presupuesto de <10s del plan).
+- **5.4 Pulido UX (E-6)**: modal de rechazo de acciones con focus trap +
+  Escape + `aria-modal` (verificado en navegador real: foco inicial en el
+  textarea, Tab atrapado, Escape cierra y devuelve el foco al botón que lo
+  abrió); badges con ícono además de color en todo el dashboard; thumbnails
+  reales de creativos en `/reporte`; `ReportBuilder` cruza cada campaña con
+  `CampaignLearningLog`/`CampaignDraft` y marca `created_by_ai` (badge
+  "Creada por IA" en el reporte y el PDF); `@media print` actualizado tras
+  el cambio de 5.3.
+
+**5.5 (tipado del frontend, E-5) queda pendiente** — decisión explícita del
+usuario de cerrar la fase aquí en vez de acometer ese refactor (toca
+`lib/types.ts` nuevo, `lib/api.ts` completo y reemplazar `useState<any[]>`
+en la mayoría de páginas) en esta sesión ya larga. Recomendado abordarlo en
+una sesión dedicada, revisando con más cuidado dado el tamaño de la
+superficie tocada.
+
+Estado: nuevos tests backend en verde (`test_kpis_summary_endpoint.py`,
+`test_report_builder_deltas.py`, `test_report_pdf.py`,
+`test_report_created_by_ai.py`), verificados junto con
+`test_master_brief_v2.py`/`test_engine_brief_context.py`/
+`test_classify_campaign.py` sin regresiones. `npx tsc --noEmit` limpio
+(fuera de errores preexistentes en `__tests__/` sin tipos de Jest
+configurados, no tocados). Verificado en vivo en el navegador: KPIs +
+alertas del dashboard, badges con ícono, y el modal accesible — /reporte no
+pudo verificarse visualmente por una inestabilidad puntual del navegador
+embebido de la sesión (confirmado que no es un bug real: `curl` devuelve
+HTML válido, la API responde JSON correctamente shaped, sin errores de
+consola).
+
+Siguiente: **5.5** (tipado del frontend) en una sesión dedicada, o
+**Fase 6** (SaaS comercializable: reglas por tenant, OAuth de Meta,
+billing).
