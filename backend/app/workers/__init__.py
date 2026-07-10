@@ -1,18 +1,8 @@
-from celery import Celery
-from app.config import settings
+# Re-exporta la app real de Celery (celery_app.py: colas, rutas y beat_schedule).
+# Antes este __init__ creaba una SEGUNDA instancia de Celery con otra config
+# (sin task_routes ni beat_schedule) que competía con la de celery_app.py al
+# resolver `celery -A app.workers` — y era el único sitio que aún incluía el
+# stub app.workers.sync_tasks (A-2).
+from app.workers.celery_app import celery_app
 
-celery_app = Celery(
-    "lejovista_workers",
-    broker=settings.REDIS_URL,
-    backend=settings.CELERY_RESULT_BACKEND_URL,
-    include=["app.workers.sync_tasks", "app.workers.creation_tasks", "app.workers.tasks"]
-)
-
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="UTC",
-    enable_utc=True,
-    result_expires=3600, # 1 hour
-)
+__all__ = ["celery_app"]

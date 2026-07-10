@@ -8,7 +8,6 @@ from app.api.v1.campaigns import router as campaign_router
 from app.api.v1.insights import router as insight_router
 from app.api.v1.actions import router as action_router
 from app.api.v1.reports import router as report_router
-from app.api.v1.sync import router as sync_router
 from app.api.v1.ai_usage import router as ai_usage_router
 from app.api.v1.ws import router as ws_router, redis_listener
 import logging
@@ -101,7 +100,6 @@ app.include_router(campaign_router, prefix="/api/v1")
 app.include_router(insight_router, prefix="/api/v1")
 app.include_router(action_router, prefix="/api/v1")
 app.include_router(report_router, prefix="/api/v1")
-app.include_router(sync_router, prefix="/api/v1")
 app.include_router(ai_usage_router, prefix="/api/v1")
 app.include_router(ws_router) # Not prefixed with api/v1 to keep ws://host/ws/
 

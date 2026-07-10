@@ -30,11 +30,13 @@ async def _make_org_and_account(db: AsyncSession, slug="af-org"):
     return org, acc
 
 
-# --- S-2: /sync requiere autenticación ---
+# --- A-2 (auditoría jul-2026): el endpoint stub /sync se eliminó por completo
+# (el sync real vive en /campaigns/sync-trigger). Debe responder 404, no existir
+# a medias.
 @pytest.mark.asyncio
-async def test_sync_endpoint_requires_auth(async_client: AsyncClient):
+async def test_phantom_sync_endpoint_removed(async_client: AsyncClient):
     res = await async_client.post("/api/v1/sync/?ad_account_id=x&page_id=y")
-    assert res.status_code == 401
+    assert res.status_code == 404
 
 
 # --- S-6: expiración de tokens de Meta ---
