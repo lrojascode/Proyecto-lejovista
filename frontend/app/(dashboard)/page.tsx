@@ -120,10 +120,18 @@ export default function DashboardPage() {
     spend: c.spend
   })).sort((a, b) => b.spend - a.spend).slice(0, 5);
 
-  const cplData = campaigns.map(c => ({
-    name: c.campaign_name.substring(0, 15) + "...",
-    cpl: c.cpl
-  })).sort((a, b) => a.cpl - b.cpl).slice(0, 5);
+  // E-4: ranking por costo/conversación de los últimos 7 días (agregado real,
+  // no el snapshot de un solo día que puede tener 0 gasto o un pico atípico).
+  // Se excluyen campañas sin conversiones en la ventana — dividirían por 0 y
+  // ensuciarían el "menor CPL" con falsos ganadores de gasto cero.
+  const cplData = campaigns
+    .filter(c => (c.conversations_7d ?? c.conversions) > 0)
+    .map(c => ({
+      name: c.campaign_name.substring(0, 15) + "...",
+      cpl: c.cost_per_conv_7d ?? c.cpl
+    }))
+    .sort((a, b) => a.cpl - b.cpl)
+    .slice(0, 5);
 
   const MONTH_LABELS = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
   const monthlySpendData = spendHistory.map((m) => {
@@ -254,7 +262,7 @@ export default function DashboardPage() {
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Campaña</th>
-                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>CPL (S/)</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>CPL 7d (S/)</th>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>Inversión</th>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "center" }}>Estado</th>
                   </tr>
@@ -263,8 +271,8 @@ export default function DashboardPage() {
                   {campaigns.slice(0, 5).map((campaign) => (
                     <tr key={campaign.id} style={{ borderBottom: "1px solid var(--color-graphite)" }}>
                       <td style={{ padding: "12px 24px", fontSize: 14, color: "var(--color-mist)" }}>{campaign.campaign_name}</td>
-                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{campaign.cpl.toFixed(2)}</td>
-                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{campaign.spend.toFixed(2)}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{(campaign.cost_per_conv_7d ?? campaign.cpl).toFixed(2)}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{(campaign.spend_7d ?? campaign.spend).toFixed(2)}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>
                         <span className={`badge ${campaign.status === 'ACTIVE' ? 'badge-success' : 'badge-warning'}`}>
                           {campaign.status}

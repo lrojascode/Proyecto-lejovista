@@ -105,6 +105,13 @@ class CampaignSnapshotResponse(BaseModel):
     extra_breakdowns: Dict[str, Any] = {}
     date: date
 
+    # 4.3 (E-4): agregado real de los últimos 7 días (vía ReportBuilder/cache),
+    # no el snapshot de un solo día — el ranking "menor CPL" del dashboard
+    # comparaba días individuales, que pueden tener 0 gasto o un pico atípico.
+    spend_7d: Optional[float] = None
+    conversations_7d: Optional[int] = None
+    cost_per_conv_7d: Optional[float] = None
+
     model_config = ConfigDict(from_attributes=True)
 
     # Los snapshots del sync real de Meta no rellenan los breakdowns (quedan NULL en

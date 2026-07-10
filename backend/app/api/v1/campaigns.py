@@ -25,6 +25,7 @@ from app.schemas.campaign_schemas import CampaignCreateRequest, CampaignRiskPrev
 from app.schemas.schemas import CampaignDraftResponse
 from app.services.campaign_validator import CampaignValidator
 from app.services.campaign_suggester import CampaignSuggester
+from app.services.report_cache import get_report
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
@@ -78,17 +79,33 @@ async def list_recent_campaign_snapshots(
 
     res = await db.execute(q)
     all_snapshots = res.scalars().all()
-    
+
     # Filtrar para obtener solo el más reciente por campaign_id
     seen_campaigns = set()
     latest_snapshots = []
-    
+
     for s in all_snapshots:
         if s.campaign_id not in seen_campaigns:
             seen_campaigns.add(s.campaign_id)
             latest_snapshots.append(s)
-            
-    return latest_snapshots
+
+    # 4.3 (E-4): adjuntar el agregado real de 7 días por campaña (mismo cálculo
+    # que /reporte, vía el cache 4.2) — el snapshot de un solo día puede tener
+    # 0 gasto o un pico atípico y descolocar el ranking "menor CPL".
+    responses = [CampaignSnapshotResponse.model_validate(s) for s in latest_snapshots]
+    if ad_account_id is not None and responses:
+        acc = await db.get(AdAccount, ad_account_id)
+        if acc:
+            report = await get_report(db, acc, window_days=7)
+            agg_by_campaign = {c["campaign_id"]: c for c in report["campaigns"]}
+            for r in responses:
+                agg = agg_by_campaign.get(r.campaign_id)
+                if agg:
+                    r.spend_7d = agg["spend"]
+                    r.conversations_7d = agg["conversations"]
+                    r.cost_per_conv_7d = agg["cost_per_conv"]
+
+    return responses
 
 @router.get("/api-call-history")
 async def list_api_call_history(
