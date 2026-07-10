@@ -21,6 +21,61 @@ logger = get_task_logger(__name__)
 # golpear el rate limit de Meta con N cuentas sincronizando al mismo tiempo.
 BEAT_STAGGER_WINDOW_SECONDS = 1800  # 30 min
 
+# Debounce del análisis post-sync (D-1): una org con N cuentas disparaba N
+# análisis completos (cada uno itera TODAS las cuentas y llama al LLM por cada
+# una → hasta N² llamadas). Con el lock, el primer sync que completa agenda UN
+# análisis diferido y los demás no encolan nada.
+ANALYSIS_DEBOUNCE_COUNTDOWN = 300   # el análisis corre 5 min después del 1er sync
+ANALYSIS_DEBOUNCE_TTL = 360         # el lock vive un poco más que el countdown
+
+
+def _schedule_org_analysis_debounced(org_id: str) -> bool:
+    """Encola run_ai_analysis para la org solo si no hay ya uno pendiente.
+
+    Usa Redis SET NX EX como lock. Fail-open: si Redis no responde, se encola
+    igual (preferimos un análisis de más a perder el análisis).
+    Devuelve True si se encoló.
+    """
+    import redis as redis_sync  # cliente síncrono: esto corre en contexto Celery
+
+    try:
+        client = redis_sync.Redis.from_url(settings.REDIS_URL)
+        try:
+            acquired = client.set(
+                f"analysis_pending:{org_id}", "1", nx=True, ex=ANALYSIS_DEBOUNCE_TTL
+            )
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+        if not acquired:
+            logger.info(f"Análisis para org {org_id} ya pendiente; no se encola otro (debounce).")
+            return False
+    except Exception as e:
+        logger.warning(f"Redis no disponible para debounce ({e}); encolando análisis igual.")
+
+    run_ai_analysis.apply_async(args=(org_id,), countdown=ANALYSIS_DEBOUNCE_COUNTDOWN)
+    return True
+
+
+def _release_analysis_lock(org_id: str) -> None:
+    """Libera el lock del debounce al INICIAR el análisis, para que un sync que
+    complete durante la corrida pueda agendar el siguiente. Fail-silent."""
+    import redis as redis_sync
+
+    try:
+        client = redis_sync.Redis.from_url(settings.REDIS_URL)
+        try:
+            client.delete(f"analysis_pending:{org_id}")
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 def run_async(coro):
     """Ejecuta una corrutina en un event loop nuevo y limpio por tarea.
 
@@ -112,9 +167,11 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
             except Exception:
                 logger.exception("No se pudo publicar la notificación de sync al WebSocket")
 
-            # Al completar sync incremental o full, disparamos análisis de la organización
+            # Al completar sync incremental o full, disparamos análisis de la
+            # organización — con debounce (D-1): si otra cuenta de la misma org
+            # ya lo agendó, no se encola otro.
             if job.status == "COMPLETED":
-                run_ai_analysis.delay(acc.organization_id)
+                _schedule_org_analysis_debounced(acc.organization_id)
                 
     run_async(_impl())
 
@@ -124,12 +181,16 @@ def run_ai_analysis(org_id: str):
     Ejecuta el motor de análisis de IA para una organización.
     """
     async def _impl():
+        # Liberar el lock del debounce (D-1): a partir de aquí, un sync nuevo
+        # puede agendar el siguiente análisis sin quedar bloqueado por este.
+        _release_analysis_lock(org_id)
+
         async with async_session() as db:
             org = await db.get(Organization, org_id)
             if not org:
                 logger.error(f"Organización {org_id} no encontrada para análisis.")
                 return
-                
+
             engine = AIEngine(db)
             logger.info(f"Iniciando análisis de IA para {org.name}...")
             result = await engine.run_analysis(org_id)

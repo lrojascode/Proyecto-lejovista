@@ -120,19 +120,21 @@ async def test_sync_ad_account_task(setup_worker_data, mocker):
         "app.services.meta_ads.sync.MetaAdsSyncService.run_sync",
         autospec=True
     )
-    mock_run_analysis_delay = mocker.patch("app.workers.tasks.run_ai_analysis.delay")
-    
+    # D-1: al completar, el análisis se agenda con debounce (helper propio),
+    # ya no con run_ai_analysis.delay directo.
+    mock_debounced = mocker.patch("app.workers.tasks._schedule_org_analysis_debounced")
+
     # We need to simulate that run_sync returns a SyncJob with COMPLETED status
     class MockJob:
         status = "COMPLETED"
         records_synced = 5
-        
+
     mock_run_sync.return_value = MockJob()
-    
+
     run_in_thread(sync_ad_account, acc_id, "INCREMENTAL")
-    
+
     mock_run_sync.assert_called_once()
-    mock_run_analysis_delay.assert_called_once_with(org_id)
+    mock_debounced.assert_called_once_with(org_id)
 
 @pytest.mark.asyncio
 async def test_run_ai_analysis_task(setup_worker_data, mocker):
