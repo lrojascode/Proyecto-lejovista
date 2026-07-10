@@ -787,3 +787,58 @@ Siguiente: **Fase 4** (rendimiento de datos: agregaciones SQL, cache del
 ReportBuilder, KPIs agregados en el dashboard — recomendada antes de sumar
 más cuentas reales) o **Fase 5** (producto premium: dashboard rejerarquizado,
 comparativa temporal, PDF real, pulido UX, tipado de frontend).
+
+## Fase 4 del plan de auditoría — COMPLETA (2026-07-10)
+
+Rendimiento de datos: menos trabajo en Python que crecía sin límite con el
+historial de la cuenta, un solo cálculo de reporte compartido entre los 3
+endpoints que lo repetían por request, y el ranking del dashboard usando el
+mismo agregado de 7 días que ve el usuario en `/reporte` en vez de un
+snapshot de un solo día.
+
+- `34b1777` **4.1-4.2 Agregaciones en SQL + cache del ReportBuilder (B-2)**:
+  `rules.py` calculaba el target_cpl cargando TODO el historial de
+  snapshots de la cuenta a Python solo para sumarlo — ahora es un
+  `SUM()`/`COALESCE()` en SQL. `planner.py` acota `budget_map`/`adset_map`
+  a los últimos 30 días (antes cargaba el historial completo solo para
+  quedarse con el snapshot más reciente por campaña/adset). Nuevo
+  `report_cache.py`: cachea `ReportBuilder.build()` serializado en Redis
+  por `(ad_account_id, window_days)`, TTL 10 min, fail-open si Redis no
+  responde, invalidado al completar un sync de esa cuenta — con esto
+  `/suggestion`, `/risk-preview` (se dispara al tipear en el formulario de
+  creación) y `/create` comparten un solo build en vez de recorrer los
+  snapshots por separado en cada uno.
+- `b66b998` **4.3 KPIs agregados en el dashboard (E-4)**: `/campaigns/recent`
+  ahora adjunta `spend_7d`/`conversations_7d`/`cost_per_conv_7d` por
+  campaña (mismo cálculo que `/reporte`, vía el cache de 4.2). El "Top 5 por
+  menor CPL" y la tabla de resumen del dashboard usan ese agregado en vez
+  del snapshot de un solo día, que podía traer 0 gasto o un pico atípico y
+  descolocar el ranking.
+
+**Nota de transparencia**: la suite de tests completa (`pytest tests/`) es
+flaky en este entorno por una causa **no relacionada con este trabajo**: el
+rate-limiter de `/auth/signup` (`auth.py:60`, máximo 5 signups/hora por IP)
+pega contra el Redis real de desarrollo sin aislamiento en `conftest.py`, y
+la suite completa hace muchos más de 5 signups — así que corridas largas o
+repetidas empiezan a devolver 429 en cascada a partir de cierto punto,
+independientemente del código bajo prueba. Confirmado reproducible en HEAD
+de `main` sin ningún cambio de esta fase (mismo conteo de fallos con y sin
+el diff). Quedó señalizado como tarea de seguimiento (chip de sesión) en
+vez de arreglarse aquí sin que el usuario lo pidiera. El código de esta
+fase se validó con los archivos de test relevantes corridos de forma
+aislada (todos en verde), más un test nuevo dedicado
+(`test_recent_kpis_7d.py`) que verifica el agregado de 7d contra 0 en el
+snapshot del día.
+
+Verificación de 4.3: no fue posible probar el dashboard en vivo en el
+navegador porque el backend de desarrollo llama a la API real de Meta
+(`MOCK_SERVICES=false`) y no hay credenciales válidas disponibles en esta
+sesión — se optó por no generar tokens de acceso de usuarios reales para
+sortear esto (fuera de las reglas de seguridad de la sesión). Validado en
+su lugar con un test de integración contra la base de datos real que
+reproduce exactamente el escenario del bug (snapshot del día con gasto 0,
+agregado de 7d con datos reales).
+
+Siguiente: **Fase 5** (producto premium: dashboard rejerarquizado,
+comparativa temporal, PDF real, pulido UX, tipado de frontend) o **Fase 6**
+(SaaS comercializable: reglas por tenant, OAuth de Meta, billing).
