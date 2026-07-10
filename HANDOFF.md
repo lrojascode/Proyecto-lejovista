@@ -674,3 +674,29 @@ corriendo (backend healthy, workers ready, beat con schedule real).
 
 Siguiente: **Fase 1** (outcome loop del aprendizaje, C-1) y **Fase 2** (unificar
 creación en la Saga + write-back piloto) — pueden ir en paralelo.
+
+## Fase 1 del plan de auditoría — COMPLETA (2026-07-10)
+
+El ciclo de aprendizaje de la IA está cerrado: cada campaña que crea queda con
+hipótesis registrada, se evalúa sola contra los snapshots reales al vencer su
+ventana, y el veredicto alimenta las decisiones siguientes y la UI.
+
+- `3bed628` **1.1 Outcome loop (C-1)**: `services/campaign_outcome.py` +
+  task Beat diaria `evaluate_campaign_outcomes` (8:00 Lima, cola `ai`).
+  Veredicto determinista: WIN (costo/conv ≤ esperado+20%), LOSS (gastó sin
+  conversaciones o >2× esperado), NEUTRAL, NOT_ACTIVATED (Saga fallida/sin
+  actividad). `outcome_json` guarda cifras auditables + hipótesis original.
+- `30033c5` **1.2 Madurez con resultados propios**: convergencia exige ≥2 WIN
+  propios además del CV estable; 2 LOSS recientes fuerzan exploración.
+  `build_analysis` expone el `track_record` en el summary.
+- `b8ad7b3` **1.3 UI**: OutcomeBlock muestra veredicto (incl. NOT_ACTIVATED),
+  cifras y razón.
+
+Estado: 208 tests backend + 14 frontend en verde. Beat y worker `ai`
+reiniciados en local con el schedule nuevo (verificado: `daily-campaign-outcomes`
+cargado, ruta a cola `ai`). El dev DB no tiene learning logs aún — el loop se
+verá con las próximas campañas creadas (o reduciendo `evaluation_window_days`
+a 0 en staging para probar el flujo completo, ver plan 1.3).
+
+Siguiente: **Fase 2** (unificar CREATE_CAMPAIGN en la Saga + MODIFY_PLACEMENTS
+válido + checklist de write-back piloto, ver plan 2.1–2.3).
