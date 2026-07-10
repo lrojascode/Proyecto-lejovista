@@ -58,8 +58,12 @@ class MetaCampaignModifier:
                 "targeting": {"geo_locations": {"keys": [2771]}, "publisher_platforms": ["facebook", "instagram"]}
             }
 
-        # Guardar el estado previo en los parámetros de la acción
-        action.parameters["backup_state"] = backup_state
+        # Guardar el estado previo en los parámetros de la acción. REASIGNAR el
+        # dict (no mutarlo in-place): `parameters` es una columna JSON plana y
+        # SQLAlchemy no detecta mutaciones internas — con la mutación in-place el
+        # backup solo vivía en memoria y se perdía tras un reinicio del worker,
+        # dejando el rollback sin datos (A-3).
+        action.parameters = {**action.parameters, "backup_state": backup_state}
         self.db.add(action)
         await self.db.commit()
 
