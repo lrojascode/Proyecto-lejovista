@@ -536,6 +536,11 @@ export default function NewCampaignPage() {
               <p style={{ color: "var(--color-fog)" }}>
                 📆 Días de evaluación recomendados: <strong>{suggestion.analysis.evaluation_window_days}</strong> — deja correr la campaña ese tiempo antes de juzgar su rendimiento.
               </p>
+              <p style={{ marginTop: "10px", marginBottom: 0 }}>
+                <a href="/campaigns/learning" style={{ color: "var(--color-signal-teal)", fontSize: "13px" }}>
+                  Ver el historial completo de aprendizaje de la IA →
+                </a>
+              </p>
             </div>
           )}
 

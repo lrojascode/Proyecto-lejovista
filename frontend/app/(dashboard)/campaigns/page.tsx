@@ -54,9 +54,14 @@ export default function CampaignsList() {
             <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
           )}
         </div>
-        <Link href="/campaigns/new" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
-          + Crear Campaña
-        </Link>
+        <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <Link href="/campaigns/learning" className="btn-secondary" style={{ whiteSpace: "nowrap" }}>
+            Aprendizaje de la IA
+          </Link>
+          <Link href="/campaigns/new" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
+            + Crear Campaña
+          </Link>
+        </div>
       </div>
 
       <div className="glass-card">
