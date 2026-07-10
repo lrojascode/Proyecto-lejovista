@@ -134,6 +134,46 @@ async function apiUploadRequest<T = any>(endpoint: string, formData: FormData): 
   return await response.json();
 }
 
+// 5.3 (F-3.2): descarga el PDF real del reporte (no puede reusar apiRequest,
+// que siempre parsea la respuesta como JSON) — pide el blob con los mismos
+// headers de auth/tenant/cuenta activa y dispara la descarga en el navegador.
+async function downloadReportPdf(windowDays: number = 30): Promise<void> {
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const url = `${getApiUrl()}/api/v1/reports/pdf?window_days=${windowDays}`;
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (typeof window !== "undefined") {
+    const slug = getTenantSlugFromHostname(window.location.hostname);
+    if (slug) headers["X-Tenant-Slug"] = slug;
+    const adAccountId = localStorage.getItem("active_ad_account_id");
+    if (adAccountId) headers["X-Ad-Account-Id"] = adAccountId;
+  }
+
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    let errorMessage = "No se pudo generar el PDF.";
+    try {
+      const detail = (await response.json()).detail;
+      errorMessage = (typeof detail === "string" ? detail : detail?.message) || errorMessage;
+    } catch {}
+    throw new Error(errorMessage);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+  const filename = filenameMatch?.[1] || "reporte.pdf";
+
+  const objectUrl = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
 export const api = {
   // --- AUTH ---
   login: (data: any) => apiRequest("/api/v1/auth/login", "POST", data),
@@ -199,4 +239,5 @@ export const api = {
   getBriefData: (windowDays: number = 30) => apiRequest(`/api/v1/reports/brief-data?window_days=${windowDays}`, "GET"),
   getSpendHistory: () => apiRequest("/api/v1/reports/spend-history", "GET"),
   getKpisSummary: () => apiRequest("/api/v1/reports/kpis-summary", "GET"),
+  downloadReportPdf,
 };

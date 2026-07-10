@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 import datetime
@@ -12,6 +12,7 @@ from app.models.sync_job import SyncJob
 from app.services.ai.engine import AIEngine
 from app.services.report_cache import get_report
 from app.services.kpi_period import get_kpis_with_deltas
+from app.services.pdf_report import render_report_pdf
 from app.utils.security import get_current_user, get_active_ad_account_id
 from typing import Optional
 
@@ -76,6 +77,46 @@ async def get_master_brief_data(
         "report": report,
         "campaigns_data": raw_data
     }
+
+
+@router.get("/pdf")
+async def download_report_pdf(
+    window_days: int = 30,
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """5.3 (F-3.2): PDF real del reporte, renderizado server-side con
+    WeasyPrint a partir de los mismos datos de `ReportBuilder` — no es un
+    `window.print()` del navegador."""
+    if window_days not in (7, 30, 90):
+        raise HTTPException(status_code=400, detail="window_days debe ser 7, 30 o 90.")
+
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    if not ad_account_id:
+        raise HTTPException(status_code=400, detail="No se encontró una cuenta de anuncios activa para generar el informe.")
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.status != "ACTIVE":
+        raise HTTPException(status_code=400, detail="No se encontró una cuenta de anuncios activa para generar el informe.")
+
+    report = await get_report(db, acc, window_days=window_days)
+    pdf_bytes = render_report_pdf(
+        organization_name=org.name,
+        ad_account_name=acc.name,
+        external_account_id=acc.external_account_id,
+        report=report,
+        narrative=acc.cached_narrative,
+    )
+
+    filename = f"reporte-{acc.external_account_id}-{window_days}d.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/kpis-summary")

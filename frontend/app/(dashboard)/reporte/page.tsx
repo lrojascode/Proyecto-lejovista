@@ -129,6 +129,20 @@ export default function Reporte() {
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
   const [windowDays, setWindowDays] = useState<number>(30);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    setPdfError("");
+    try {
+      await api.downloadReportPdf(windowDays);
+    } catch (e: any) {
+      setPdfError(e?.message || "No se pudo generar el PDF.");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   const fetchReport = async (days: number = windowDays) => {
     try {
@@ -207,11 +221,14 @@ export default function Reporte() {
               </button>
             ))}
           </div>
-          <button onClick={() => window.print()} className="btn-secondary">
-            Exportar PDF
+          <button onClick={handleDownloadPdf} disabled={downloadingPdf} className="btn-secondary">
+            {downloadingPdf ? "Generando PDF..." : "Exportar PDF"}
           </button>
         </div>
       </div>
+      {pdfError && (
+        <p className="no-print" style={{ color: "var(--color-coral-red)", fontSize: "13px" }}>{pdfError}</p>
+      )}
 
       {/* KPIs */}
       <div style={card}>

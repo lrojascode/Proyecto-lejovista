@@ -8,9 +8,17 @@ FROM python:3.11-slim AS builder
 # Herramientas de compilación solo para construir wheels (bcrypt/cffi, etc.).
 # libpq-dev se mantiene por compatibilidad con la build actual; asyncpg no lo
 # necesita en runtime, por eso no se instala en la etapa final.
+# libpango-1.0-0/libcairo2/libgdk-pixbuf-2.0-0 (5.3, F-3.2): headers de
+# WeasyPrint (HTML→PDF del reporte) para que compile su binding cffi contra
+# las librerías correctas.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # venv autocontenido en /opt/venv: se copia entero a la imagen final.
@@ -31,6 +39,16 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1
 
 # Solo las librerías de sistema que el runtime necesita de verdad.
+# WeasyPrint (5.3, F-3.2) las necesita en runtime, no solo al compilar —
+# a diferencia de bcrypt/asyncpg, no son solo headers de compilación.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
