@@ -636,3 +636,41 @@ revertido a `NULL` tras la prueba, para no dejar un rubro inventado en la cuenta
 ## 📌 Workflow
 
 Commits directos a `main`, sin PRs (`gh` no está instalado en el entorno).
+
+---
+
+## Fase 0 del plan de auditoría — COMPLETA (2026-07-10)
+
+Ver `plan-implementacion-auditoria.md` (plan completo por fases) y `auditoria2026.md`.
+Los 10 quick wins, un commit por paso:
+
+1. **B-1** `0e9d24f` — dedupe de insights: cada análisis descarta los previos de la
+   cuenta antes de insertar; se acabaron las alertas repetidas en /diagnostics.
+2. **E-1** `e1b6d1a` — `/campaigns/learning`: timeline del aprendizaje de la IA
+   (modo, riesgo, razonamiento, bloque de outcome listo para la Fase 1).
+3. **D-3** `a0f1b2e` — creación de campañas: escucha el WS `campaign_creation`,
+   polling 40→120 intentos (la Saga tarda ~3 min y el timeout viejo era ~100s).
+4. **A-2** `69abd96` — borrado el sync fantasma (sync_tasks/meta_sync_service/
+   meta_insights_service/router /sync). **Bonus crítico:** `app/workers/__init__.py`
+   creaba una 2ª app de Celery sin beat_schedule que ganaba `-A app.workers` — el
+   Beat corría vacío (el sync de 6am y el análisis de 7am no se programaban).
+   Verificar en logs del beat que el schedule dispare.
+5. **D-1** `84535b6` — debounce del análisis post-sync (lock Redis SET NX EX 360 +
+   countdown 300): N cuentas → 1 análisis, no N (ni N² llamadas al LLM).
+6. **A-5** `8574a32` — `META_API_VERSION` en settings, v19.0 (EXPIRADA, devolvía
+   error) → v25.0. Pendiente: FULL sync real end-to-end (checklist 2.3 del plan).
+7. **C-4** `f3c70df` — fallback del LLM honesto: `narrative_provider=
+   "fallback_template"` + badge "Informe básico — IA no disponible" en la UI.
+8. **E-2** `8cffb1f` — métrica primaria unificada ("Conversaciones", mismo criterio
+   conversations-or-conversions que ReportBuilder) y ventanas rotuladas (7d vs 30d).
+9. **D-2** `31420cc` — healthchecks en compose de prod + `GET /health/deep` (último
+   sync exitoso; >24h => degraded) para uptime-monitor externo.
+10. **A-3** `fe3c7e9` — diagnóstico afinado vs. la auditoría: el modifier SÍ capturaba
+    backup_state, pero la mutación in-place del JSON no se persistía (SQLAlchemy no
+    detecta mutaciones internas sin MutableDict). Fix: reasignar el dict.
+
+Estado tests al cierre: **192 backend + 12 frontend en verde**. Stack local verificado
+corriendo (backend healthy, workers ready, beat con schedule real).
+
+Siguiente: **Fase 1** (outcome loop del aprendizaje, C-1) y **Fase 2** (unificar
+creación en la Saga + write-back piloto) — pueden ir en paralelo.
