@@ -11,7 +11,7 @@ from app.models.adset_snapshot import AdsetSnapshot
 from app.models.organization import Organization
 from app.services.brand_code import derive_brand_code
 from app.services.campaign_suggester import CampaignSuggester
-from app.services.campaign_targeting import build_targeting
+from app.services.campaign_targeting import build_targeting, _facebook_positions
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
@@ -56,6 +56,10 @@ class AIPlanner:
         # nivel de adset en vez de escribir sobre el nodo de campaña (AI-2).
         adset_map: Dict[str, List[str]] = {}
         latest_date_by_campaign: Dict[str, datetime.date] = {}
+        # A-4: resumen de targeting REAL (del snapshot más reciente de cada
+        # adset) para poder documentar old_placements con datos reales en vez
+        # de una lista hardcodeada en MODIFY_PLACEMENTS.
+        adset_targeting_map: Dict[str, dict] = {}
         q_adsets = select(AdsetSnapshot).where(
             AdsetSnapshot.ad_account_id == ad_account.id
         ).order_by(AdsetSnapshot.date.desc())
@@ -64,6 +68,7 @@ class AIPlanner:
             latest = latest_date_by_campaign.setdefault(a.campaign_id, a.date)
             if a.date == latest:
                 adset_map.setdefault(a.campaign_id, []).append(a.adset_id)
+            adset_targeting_map.setdefault(a.adset_id, a.targeting_summary or {})
 
         for ins in insights:
             if not ins.suggested_action_type:
@@ -85,7 +90,7 @@ class AIPlanner:
             # 2. Generar los detalles y parámetros según el tipo de acción
             action = await self._create_action_from_insight(
                 ad_account, ins, budget_map.get(ins.campaign_id), adset_map.get(ins.campaign_id, []),
-                name_map.get(ins.campaign_id),
+                name_map.get(ins.campaign_id), adset_targeting_map,
             )
             if action:
                 self.db.add(action)
@@ -104,6 +109,7 @@ class AIPlanner:
         current_budget: Optional[float] = None,
         adset_ids: Optional[List[str]] = None,
         existing_campaign_name: Optional[str] = None,
+        adset_targeting_map: Optional[Dict[str, dict]] = None,
     ) -> Optional[AIAction]:
         """
         Construye una instancia de AIAction en base al insight y sus métricas.
@@ -191,16 +197,47 @@ class AIPlanner:
 
         elif action_type == "MODIFY_PLACEMENTS":
             risk = "LOW"
-            title = "Optimizar Placements (Remover Instagram)"
-            description = f"Remover la red de Instagram de los placements debido a CPL ineficiente, y priorizar Facebook Reels."
+
+            # A-4: el placement que el insight señaló para excluir. rules.py
+            # genera el título con el patrón "... : {pl_name}" únicamente para
+            # el caso "Instagram ineficiente" (el caso "Oportunidad en Reels"
+            # es para priorizar, no para excluir nada, y required_placements
+            # ya mantiene facebook_reels siempre presente).
+            flagged_placement = insight.title.rsplit(":", 1)[-1].strip() if ":" in insight.title else None
+            if not flagged_placement:
+                logger.warning(
+                    "MODIFY_PLACEMENTS omitido para campaña %s: el insight no señala un "
+                    "placement concreto a excluir.", c_id,
+                )
+                return None
+
+            # old_placements REAL: publisher_platforms del snapshot más reciente
+            # del adset (AI-2/A-4), no una lista hardcodeada para cualquier cuenta.
+            adset_targeting = (adset_targeting_map or {}).get(target_adset_id) or {}
+            old_placements = adset_targeting.get("publisher_platforms") or ["facebook"]
+
+            # Meta espera publisher_platforms genérico ("facebook") + las
+            # posiciones concretas en facebook_positions — antes se enviaba
+            # "facebook_reels" como si fuera un publisher_platform, valor
+            # inválido para ese campo (bug A-4).
+            new_positions = _facebook_positions([flagged_placement])
+
+            title = f"Optimizar Placements (remover {flagged_placement.replace('_', ' ')})"
+            description = (
+                f"Remover el placement '{flagged_placement}' de los placements activos del adset "
+                f"debido a CPL ineficiente. {insight.description}"
+            )
             parameters = {
-                "old_placements": ["facebook_feed", "instagram_positions", "facebook_reels"],
-                "new_placements": ["facebook_feed", "facebook_reels"]
+                "old_placements": old_placements,
+                "new_placements": new_positions,
+                "excluded_placement": flagged_placement,
             }
             planned_calls = [
-                {"method": "POST", "endpoint": f"{target_adset_id}", "body": {"targeting": {"publisher_platforms": ["facebook", "facebook_reels"]}}}
+                {"method": "POST", "endpoint": f"{target_adset_id}", "body": {
+                    "targeting": {"publisher_platforms": ["facebook"], "facebook_positions": new_positions}
+                }}
             ]
-            estimated_impact = "El CPL promedio del adset podría bajar un 15-20% al remover placements caros."
+            estimated_impact = "El CPL promedio del adset podría bajar al remover un placement ineficiente."
             confidence = 0.90
 
         elif action_type == "CREATE_CAMPAIGN":

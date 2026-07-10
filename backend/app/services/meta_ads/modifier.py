@@ -90,22 +90,29 @@ class MetaCampaignModifier:
                 post_data["daily_budget"] = int(new_budget_nominal * 100)
 
         elif action_type == "MODIFY_PLACEMENTS":
-            # Cambiar placements (ej. quitar Instagram, solo Reels/Feed)
-            new_placements = action.parameters.get("new_placements", [])
-            if not new_placements:
+            # A-4: `new_placements` son posiciones de facebook_positions
+            # (feed/story/reels/...), no publisher_platforms — antes se
+            # escribían aquí mismo (p.ej. "facebook_reels" como si fuera una
+            # red), un valor inválido para ese campo de la Graph API.
+            new_positions = list(action.parameters.get("new_placements", []))
+            if not new_positions:
                 raise ValueError("Faltan los nuevos placements en parámetros.")
-            
-            # Regla de seguridad: SIEMPRE incluir facebook_reels
-            if "facebook_reels" not in new_placements:
-                new_placements.append("facebook_reels")
-                
-            # Regla de seguridad: NUNCA incluir instagram_positions si es IA Autónoma (según briefs)
-            if "instagram" in new_placements:
-                new_placements = [p for p in new_placements if "instagram" not in p]
 
-            # Inyectar en estructura de targeting de Meta
+            # Regla de seguridad (defensa en profundidad; el planner ya
+            # garantiza esto vía _facebook_positions): SIEMPRE incluir reels
+            # (TENANT_CAMPAIGN_RULES["required_placements"], literal "facebook_reels").
+            if "facebook_reels" not in new_positions:
+                new_positions.append("facebook_reels")
+
+            # Regla de seguridad: NUNCA una posición de Instagram, aunque el
+            # vocabulario de facebook_positions no las incluye.
+            new_positions = [p for p in new_positions if "instagram" not in p]
+
+            # Inyectar en estructura de targeting de Meta: publisher_platforms
+            # genérico + las posiciones concretas en facebook_positions.
             current_targeting = backup_state.get("targeting", {})
-            current_targeting["publisher_platforms"] = new_placements
+            current_targeting["publisher_platforms"] = ["facebook"]
+            current_targeting["facebook_positions"] = new_positions
             post_data["targeting"] = current_targeting
 
         elif action_type == "MODIFY_TARGETING":
