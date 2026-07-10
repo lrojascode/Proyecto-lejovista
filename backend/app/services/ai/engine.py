@@ -2,11 +2,12 @@ import logging
 import json
 import datetime
 from typing import Dict, Any
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.models.ai_insight import AIInsight
 from app.services.ai.rules import Capa1Rules
 from app.services.ai.statistics import Capa2Statistics
 from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
@@ -54,6 +55,19 @@ class AIEngine:
             # 2. Capa 2: Estadísticas
             stats_analyzer = Capa2Statistics(self.db)
             insights_c2 = await stats_analyzer.analyze(acc)
+
+            # Dedupe (B-1): cada análisis REEMPLAZA la foto anterior de la cuenta.
+            # Sin esto, el análisis corre tras cada sync (+ trigger manual + Beat)
+            # y la misma alerta se acumulaba repetida en /diagnostics hasta que
+            # el usuario la descartara a mano una por una.
+            await self.db.execute(
+                update(AIInsight)
+                .where(
+                    AIInsight.ad_account_id == acc.id,
+                    AIInsight.is_dismissed == False,  # noqa: E712
+                )
+                .values(is_dismissed=True)
+            )
 
             # Guardar insights en DB
             all_insights = insights_c1 + insights_c2
