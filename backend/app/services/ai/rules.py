@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
-from app.services.ai.thresholds import get_thresholds_for_org
+from app.services.ai.thresholds import get_thresholds_for_org, compute_target_cpl
 
 class Capa1Rules:
     def __init__(self, db: AsyncSession):
@@ -91,13 +91,7 @@ class Capa1Rules:
         
         total_spend = sum(s.spend for s in all_snapshots)
         total_conversions = sum(s.conversions for s in all_snapshots)
-        
-        if total_conversions > 0:
-            target_cpl = total_spend / total_conversions
-            # Mantener un rango razonable por seguridad
-            target_cpl = max(t.target_cpl_floor, min(t.target_cpl_ceiling, target_cpl))
-        else:
-            target_cpl = t.target_cpl_fallback
+        target_cpl = compute_target_cpl(total_spend, total_conversions, t)
 
         for c_id, data in campaign_data.items():
             # Solo analizamos campañas activas en la última sincronización

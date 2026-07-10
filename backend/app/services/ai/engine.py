@@ -13,6 +13,7 @@ from app.services.ai.statistics import Capa2Statistics
 from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
 from app.services.ai.token_tracking import UsageContext
 from app.services.ai.planner import AIPlanner
+from app.services.report_builder import ReportBuilder
 
 logger = logging.getLogger("lejovista.ai_engine")
 
@@ -25,7 +26,7 @@ class AIEngine:
         Ejecuta el pipeline completo de análisis en 3 capas para una organización.
         1. Capa 1: Reglas
         2. Capa 2: Estadística
-        3. Capa 3: LLM (Narrativa + Generación de HTML Master Brief)
+        3. Capa 3: LLM (Narrativa del Master Brief)
         4. AI Planner: Proponer acciones en base a los insights creados.
         """
         # Buscar la organización
@@ -40,9 +41,6 @@ class AIEngine:
 
         total_insights = []
         total_actions = []
-        
-        # Guardaremos el último reporte HTML generado para retornar
-        html_brief = ""
 
         for acc in ad_accounts:
             if acc.status != "ACTIVE":
@@ -80,9 +78,16 @@ class AIEngine:
             # 3. Preparar resumen para el LLM (Capa 3)
             # Buscamos el estado resumido de campañas en los últimos 7 días
             raw_data = await self._get_recent_campaigns_summary(acc.id)
-            
+
+            # C-3 (master-brief-v2): contexto enriquecido — target_cpl, KPIs 7d
+            # vs 7d previos, top/bottom campañas, pacing y breakdown, todo
+            # derivado de ReportBuilder (misma fuente que /reporte, no
+            # recalculado aquí) para que el LLM clasifique con el mismo
+            # criterio que ve el usuario en el dashboard.
+            brief_context = await self._build_brief_context(acc)
+
             insights_summary = "\n".join([
-                f"- [{ins.level}] [{ins.category}] {ins.title}: {ins.description}" 
+                f"- [{ins.level}] [{ins.category}] {ins.title}: {ins.description}"
                 for ins in all_insights
             ])
 
@@ -95,10 +100,8 @@ class AIEngine:
                     organization_id=org.id,
                     ad_account_id=acc.id,
                 ),
+                brief_context=brief_context,
             )
-
-            # Generar HTML del Master Brief
-            html_brief = await llm_client.generate_html_brief(org, acc, narrative, raw_data)
 
             # 4. Proponer acciones basadas en los insights
             planner = AIPlanner(self.db)
@@ -118,12 +121,86 @@ class AIEngine:
             self.db.add(acc)
 
         await self.db.commit()
-        
+
         return {
             "insights_count": len(total_insights),
             "actions_proposed": len(total_actions),
-            "html_brief": html_brief
         }
+
+    async def _build_brief_context(self, ad_account: AdAccount) -> Dict[str, Any]:
+        """C-3: contexto enriquecido del Master Brief v2, derivado de
+        ReportBuilder (misma fuente que /reporte — no se recalculan
+        breakdowns ni clasificaciones aquí, solo se reutilizan)."""
+        report = await ReportBuilder(self.db).build(ad_account, window_days=7)
+        campaigns = report["campaigns"]
+
+        spend = report["kpis"]["total_spend"]
+        conversations = report["kpis"]["total_conversations"]
+        cost_per_conv = round(spend / conversations, 2) if conversations > 0 else spend
+        kpis_7d = {"spend": spend, "conversations": conversations, "cost_per_conv": cost_per_conv}
+
+        kpis_prev = await self._get_previous_period_kpis(ad_account.id)
+
+        def _pct_change(old: float, new: float) -> Any:
+            if not old:
+                return None
+            return round((new - old) / old * 100, 1)
+
+        deltas_pct = {
+            "spend": _pct_change(kpis_prev["spend"], kpis_7d["spend"]),
+            "conversations": _pct_change(kpis_prev["conversations"], kpis_7d["conversations"]),
+            "cost_per_conv": _pct_change(kpis_prev["cost_per_conv"], kpis_7d["cost_per_conv"]),
+        }
+
+        winners = [c for c in campaigns if c["conversations"] > 0]  # ya ordenados por costo asc
+        top3 = [
+            {"name": c["name"], "cost_per_conv": c["cost_per_conv"], "conversations": c["conversations"], "label": c["label"]}
+            for c in winners[:3]
+        ]
+        bottom3 = [
+            {"name": c["name"], "cost_per_conv": c["cost_per_conv"], "conversations": c["conversations"], "label": c["label"]}
+            for c in campaigns[-3:]
+        ]
+
+        active_budget = sum(c["budget"] for c in campaigns if c["status"] == "ACTIVE")
+        pacing = {
+            "daily_budget_total": round(active_budget, 2),
+            "daily_spend_avg": round(spend / 7, 2),
+        }
+
+        return {
+            # Único mercado operado hoy (playbook §1: Lima/soles) — no es un
+            # valor inventado, es el alcance real vigente del producto.
+            "currency": "PEN",
+            "country": "Perú",
+            "target_cpl": report["kpis"]["target_cpl"],
+            "kpis_7d": kpis_7d,
+            "kpis_prev_7d": kpis_prev,
+            "deltas_pct": deltas_pct,
+            "top3": top3,
+            "bottom3": bottom3,
+            "pacing": pacing,
+            "segmentation": report["segmentation"],
+        }
+
+    async def _get_previous_period_kpis(self, ad_account_id: str) -> Dict[str, float]:
+        """KPIs agregados de los 7 días ANTERIORES a la ventana actual (días
+        8-14), para la comparativa Δ% del Master Brief v2 (C-3)."""
+        today = datetime.date.today()
+        start = today - datetime.timedelta(days=14)
+        end = today - datetime.timedelta(days=7)
+
+        q = select(CampaignSnapshot).where(
+            CampaignSnapshot.ad_account_id == ad_account_id,
+            CampaignSnapshot.date >= start,
+            CampaignSnapshot.date < end,
+        )
+        snapshots = (await self.db.execute(q)).scalars().all()
+
+        spend = sum(s.spend for s in snapshots)
+        conversations = sum((s.conversations or s.conversions) for s in snapshots)
+        cost_per_conv = round(spend / conversations, 2) if conversations > 0 else spend
+        return {"spend": round(spend, 2), "conversations": conversations, "cost_per_conv": cost_per_conv}
 
     async def _get_recent_campaigns_summary(self, ad_account_id: str) -> dict:
         """

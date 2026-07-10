@@ -20,6 +20,14 @@ class AIThresholds:
     target_cpl_floor: float = 1.50              # piso del CPL objetivo dinámico
     target_cpl_ceiling: float = 10.00           # techo del CPL objetivo dinámico
     target_cpl_fallback: float = 3.50           # CPL objetivo si no hay histórico
+    # C-2: bandas del clasificador único, relativas al target_cpl dinámico
+    # (antes cada consumidor —report_builder, llm.py narrativa mock y HTML—
+    # tenía su propio umbral absoluto en soles, y clasificaban distinto).
+    label_ganadora_multiplier: float = 0.7      # costo <= target_cpl * N => GANADORA
+    label_buena_multiplier: float = 1.0         # costo <= target_cpl * N => BUENA
+    # Por encima de target_cpl * cpl_critical_multiplier => CARA (reusa el
+    # mismo umbral que ya dispara la alerta CRÍTICA en rules.py); entre BUENA
+    # y ese punto => REGULAR.
     placement_min_spend: float = 15.0           # gasto mínimo para evaluar un placement
     instagram_cpl_ceiling: float = 5.0          # CPL de Instagram considerado ineficiente
     reels_cpl_advantage: float = 0.7            # Reels es oportunidad si CPL < feed * N
@@ -44,3 +52,44 @@ def get_thresholds_for_org(organization: Optional[object] = None) -> AIThreshold
     overrides por organización/vertical (p. ej. una tabla TenantRules).
     """
     return DEFAULT_THRESHOLDS
+
+
+def compute_target_cpl(
+    total_spend: float, total_conversions: float, t: AIThresholds = DEFAULT_THRESHOLDS
+) -> float:
+    """CPL objetivo dinámico: promedio histórico real (spend/conversiones),
+    acotado a un rango razonable de seguridad, con fallback conservador si aún
+    no hay conversiones con qué calibrar.
+
+    Antes esta cuenta vivía duplicada dentro de rules.py; se centraliza aquí
+    para que cualquier consumidor (reglas, reporte, narrativa) calcule el
+    mismo target_cpl con la misma fórmula.
+    """
+    if total_conversions > 0:
+        target_cpl = total_spend / total_conversions
+        return max(t.target_cpl_floor, min(t.target_cpl_ceiling, target_cpl))
+    return t.target_cpl_fallback
+
+
+def classify_campaign(
+    cost_per_conv: float, conversions: int, target_cpl: float, t: AIThresholds = DEFAULT_THRESHOLDS
+) -> str:
+    """C-2: clasificador único de campañas, relativo al target_cpl dinámico de
+    la cuenta (no un umbral absoluto en soles igual para cualquier cliente).
+
+    Antes report_builder.py, llm.py (narrativa mock) y llm.py (HTML brief)
+    tenían cada uno su propio umbral hardcodeado (1.8/2.5/3.5 en un lado,
+    2.0/7.0 en otro) — la MISMA campaña podía salir "Buena" en el reporte y
+    "FALLIDA" en el brief de IA. Devuelve GANADORA/BUENA/REGULAR/CARA/PAUSAR.
+    """
+    if conversions <= 0:
+        return "PAUSAR"
+    if target_cpl <= 0:
+        target_cpl = t.target_cpl_fallback
+    if cost_per_conv <= target_cpl * t.label_ganadora_multiplier:
+        return "GANADORA"
+    if cost_per_conv <= target_cpl * t.label_buena_multiplier:
+        return "BUENA"
+    if cost_per_conv <= target_cpl * t.cpl_critical_multiplier:
+        return "REGULAR"
+    return "CARA"

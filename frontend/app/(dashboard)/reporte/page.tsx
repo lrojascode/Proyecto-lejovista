@@ -18,7 +18,7 @@ const td: React.CSSProperties = { padding: "0.6rem 0.75rem", borderBottom: "1px 
 const h2: React.CSSProperties = { fontSize: "16px", fontWeight: 510, color: "var(--color-paper)", marginBottom: "1rem" };
 
 const labelBadge = (label: string) =>
-  label === "Ganadora" || label === "Buena" ? "badge-success" : label === "Regular" ? "badge-warning" : "badge-danger";
+  label === "GANADORA" || label === "BUENA" ? "badge-success" : label === "REGULAR" ? "badge-warning" : "badge-danger";
 
 function money(n: number) { return `S/.${(n ?? 0).toFixed(2)}`; }
 function num(n: number) { return (n ?? 0).toLocaleString(); }

@@ -121,7 +121,6 @@ async def test_ai_engine_analysis_and_planning(setup_test_data, db_session: Asyn
     # Assert analysis execution returned insights and proposed actions
     assert result["insights_count"] > 0
     assert result["actions_proposed"] > 0
-    assert "html_brief" in result
     
     # Check database records
     q_insights = select(AIInsight).where(AIInsight.organization_id == org_id)

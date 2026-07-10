@@ -17,18 +17,7 @@ from app.models.adset_snapshot import AdsetSnapshot
 from app.models.ad_snapshot import AdSnapshot
 from app.models.meta_creative import MetaCreative
 from app.models.custom_audience import CustomAudience
-
-
-def _label(cost: float, conv: int) -> str:
-    if conv == 0:
-        return "Pausar"
-    if cost < 1.8:
-        return "Ganadora"
-    if cost <= 2.5:
-        return "Buena"
-    if cost <= 3.5:
-        return "Regular"
-    return "Caro"
+from app.services.ai.thresholds import classify_campaign, compute_target_cpl
 
 
 class ReportBuilder:
@@ -51,17 +40,25 @@ class ReportBuilder:
         audiences = (await self.db.execute(
             select(CustomAudience).where(CustomAudience.ad_account_id == ad_account.id))).scalars().all()
 
-        campaigns = self._agg_campaigns(camp_snaps)
-        adsets = self._agg_adsets(adset_snaps)
-        ads = self._agg_ads(ad_snaps)
-        segmentation = self._segmentation(camp_snaps)
-
         total_spend = sum(s.spend for s in camp_snaps)
         total_reach = sum(s.reach for s in camp_snaps)
         total_impr = sum(s.impressions for s in camp_snaps)
         total_clicks = sum(s.clicks for s in camp_snaps)
         total_conv = sum((s.conversations or s.conversions) for s in camp_snaps)
         avg_ctr = (total_clicks / total_impr * 100) if total_impr else 0
+
+        # C-2: target_cpl de la ventana del reporte — la MISMA fórmula que usa
+        # rules.py (piso/techo de thresholds.py), para que la clasificación de
+        # cada campaña (GANADORA/BUENA/REGULAR/CARA/PAUSAR) sea relativa al
+        # desempeño real de la cuenta, no un umbral absoluto en soles igual
+        # para cualquier cliente.
+        target_cpl = compute_target_cpl(total_spend, total_conv)
+
+        campaigns = self._agg_campaigns(camp_snaps, target_cpl)
+        adsets = self._agg_adsets(adset_snaps)
+        ads = self._agg_ads(ad_snaps)
+        segmentation = self._segmentation(camp_snaps)
+
         best_cost = min([c["cost_per_conv"] for c in campaigns if c["conversations"] > 0], default=0)
 
         return {
@@ -80,6 +77,7 @@ class ReportBuilder:
                 "total_conversations": total_conv,
                 "avg_ctr": round(avg_ctr, 2),
                 "best_cost_per_conv": round(best_cost, 2),
+                "target_cpl": round(target_cpl, 2),
             },
             "campaigns": campaigns,
             "adsets": adsets,
@@ -100,7 +98,7 @@ class ReportBuilder:
         }
 
     # --- agregaciones ---
-    def _agg_campaigns(self, snaps) -> List[Dict[str, Any]]:
+    def _agg_campaigns(self, snaps, target_cpl: float) -> List[Dict[str, Any]]:
         agg: Dict[str, Any] = {}
         for s in snaps:
             a = agg.setdefault(s.campaign_id, {
@@ -126,10 +124,10 @@ class ReportBuilder:
             ctr = (a["clicks"] / a["impressions"] * 100) if a["impressions"] else 0
             freq = (sum(a["freqs"]) / len(a["freqs"])) if a["freqs"] else 0
             out.append({
-                "campaign_id": cid, "name": a["name"], "status": a["status"],
+                "campaign_id": cid, "name": a["name"], "status": a["status"], "budget": a["budget"],
                 "spend": round(a["spend"], 2), "reach": a["reach"], "impressions": a["impressions"],
                 "frequency": round(freq, 2), "ctr": round(ctr, 2), "conversations": conv,
-                "cost_per_conv": round(cost, 2), "label": _label(cost, conv),
+                "cost_per_conv": round(cost, 2), "label": classify_campaign(cost, conv, target_cpl),
             })
         out.sort(key=lambda x: x["cost_per_conv"])
         return out
@@ -233,11 +231,11 @@ class ReportBuilder:
     def _alerts(self, campaigns) -> Dict[str, List[Dict[str, str]]]:
         red, green = [], []
         for c in campaigns:
-            if c["label"] in ("Caro", "Pausar"):
+            if c["label"] in ("CARA", "PAUSAR"):
                 reason = ("0 conversaciones" if c["conversations"] == 0
                           else f"costo/conversación S/.{c['cost_per_conv']:.2f} (alto)")
                 red.append({"name": c["name"], "reason": reason})
-            elif c["label"] in ("Ganadora", "Buena"):
+            elif c["label"] in ("GANADORA", "BUENA"):
                 green.append({"name": c["name"], "reason": f"S/.{c['cost_per_conv']:.2f}/conv, CTR {c['ctr']:.2f}%"})
         return {"red": red, "green": green}
 
@@ -256,7 +254,7 @@ class ReportBuilder:
             out.append(f"{b['name']} es la campaña más eficiente: S/.{b['cost_per_conv']:.2f} por "
                        f"conversación con CTR {b['ctr']:.2f}% (el mejor de la cuenta).")
 
-        expensive = [c for c in campaigns if c["label"] in ("Caro", "Pausar") and c["conversations"] > 0]
+        expensive = [c for c in campaigns if c["label"] in ("CARA", "PAUSAR") and c["conversations"] > 0]
         if expensive:
             names = " y ".join(c["name"] for c in expensive[:2])
             hi = max(c["cost_per_conv"] for c in expensive)
