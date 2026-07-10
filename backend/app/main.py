@@ -110,3 +110,34 @@ def read_root():
         "mock_mode": settings.MOCK_SERVICES,
         "base_domain": settings.BASE_DOMAIN
     }
+
+
+# D-2: chequeo profundo para monitoreo. El healthcheck del contenedor solo dice
+# que FastAPI responde; esto dice si el PIPELINE está vivo: si ninguna cuenta
+# sincronizó con éxito en 24h, el Beat/worker de sync está caído o roto y nadie
+# se enteraría hasta que el cliente reclame. Sin auth a propósito (no expone
+# datos de tenants, solo un timestamp global) para que un uptime-monitor simple
+# pueda consultarlo.
+@app.get("/health/deep")
+async def health_deep():
+    import datetime
+    from sqlalchemy import select, func
+    from app.database import async_session
+    from app.models.sync_job import SyncJob
+
+    async with async_session() as db:
+        last_ok = (await db.execute(
+            select(func.max(SyncJob.completed_at)).where(SyncJob.status == "COMPLETED")
+        )).scalar_one_or_none()
+
+    if last_ok is None:
+        # Instalación nueva sin syncs todavía: no es un fallo del pipeline.
+        return {"status": "ok", "last_successful_sync": None, "note": "sin syncs registrados aún"}
+
+    age_hours = (datetime.datetime.utcnow() - last_ok).total_seconds() / 3600
+    degraded = age_hours > 24
+    return {
+        "status": "degraded" if degraded else "ok",
+        "last_successful_sync": last_ok.isoformat(),
+        "hours_since_last_sync": round(age_hours, 1),
+    }

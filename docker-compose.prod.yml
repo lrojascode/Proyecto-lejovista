@@ -45,6 +45,14 @@ services:
     # Compartido con celery-worker-creation, que las lee del disco sin HTTP.
     volumes:
       - media_data:/app/media
+    # D-2: mismos healthchecks que el compose local — sin esto, un backend o
+    # worker muerto en el VPS pasaba desapercibido hasta que el cliente reclame.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # I-2: colas dedicadas (sync/ai/creation) — ver app/workers/celery_app.py (task_routes)
   # y la nota equivalente en docker-compose.yml.
@@ -55,6 +63,12 @@ services:
     depends_on:
       - backend
     env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers inspect ping -d sync@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   celery-worker-ai:
     image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
@@ -63,6 +77,12 @@ services:
     depends_on:
       - backend
     env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers inspect ping -d ai@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   celery-worker-creation:
     image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
@@ -71,6 +91,12 @@ services:
     depends_on:
       - backend
     env_file: .env
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.workers inspect ping -d creation@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     # Lee las imágenes que `backend` guardó (mismo volumen, ver MetaAssetRepository).
     volumes:
       - media_data:/app/media
