@@ -700,3 +700,54 @@ a 0 en staging para probar el flujo completo, ver plan 1.3).
 
 Siguiente: **Fase 2** (unificar CREATE_CAMPAIGN en la Saga + MODIFY_PLACEMENTS
 válido + checklist de write-back piloto, ver plan 2.1–2.3).
+
+## Fase 2 del plan de auditoría — COMPLETA (2026-07-10)
+
+Un solo camino de código para crear campañas (aprobadas por la IA o por
+formulario manual) y el write-back real ya tiene un candado por cuenta.
+
+- `e363bff` **2.1 Unificar CREATE_CAMPAIGN en la Saga (A-1)**: el executor ya
+  no tiene un flujo inline duplicado — despacha el mismo chain de
+  `creation_tasks` que usa `/campaigns/`. Si la página/WhatsApp de destino o
+  el creativo no se resuelven sin ambigüedad, la acción queda `NEEDS_INPUT`
+  (visible en `/actions`) en vez de adivinar.
+- `9b067f9` **2.2 MODIFY_PLACEMENTS válido (A-4)**: el payload real a Meta
+  ahora separa `publisher_platforms` (red) de `facebook_positions`
+  (posición) — antes se mezclaban y Meta lo habría rechazado. `old_placements`
+  sale del `targeting_summary` real del adset, no de una lista hardcodeada.
+- `8fbf988` **2.3 Allowlist de write-back (F-2)**: `WRITEBACK_ACCOUNT_ALLOWLIST`
+  permite encender `ENABLE_META_WRITEBACK` solo para la cuenta piloto en vez
+  de para todo el parque de un golpe.
+
+### Checklist operativo para encender el write-back en la cuenta piloto
+
+Pendiente de ejecución manual (no es código, es una secuencia de validación
+contra Meta real) antes de aprobar escrituras en más cuentas:
+
+1. **Validar un FULL sync end-to-end** contra Meta real con la API v25.0
+   (pendiente desde el HANDOFF de la Fase 0) — confirmar que campañas,
+   adsets, ads y breakdowns sincronizan sin error de versión.
+2. En `.env` de producción: `ENABLE_META_WRITEBACK=true` +
+   `WRITEBACK_ACCOUNT_ALLOWLIST=<id-de-la-cuenta-piloto>` (el `AdAccount.id`
+   interno, no el `external_account_id` de Meta — verificar con
+   `SELECT id FROM ad_accounts WHERE ...`).
+3. Secuencia de prueba en la cuenta piloto:
+   - Crear una campaña desde la UI (o aprobar una acción `CREATE_CAMPAIGN`
+     de la IA) → verificar en Ads Manager que existe, **PAUSADA**, con el
+     targeting correcto (edad/dispositivo/placements).
+   - Aprobar un `MODIFY_BUDGET` → verificar el cambio de presupuesto real.
+   - Aprobar un `MODIFY_PLACEMENTS` → verificar en Ads Manager que
+     `facebook_positions` cambió y que Instagram nunca aparece.
+   - Forzar un fallo (token inválido o similar) → verificar que el rollback
+     automático del executor restaura el `backup_state` (persistido, A-3).
+4. Auditar cada paso vía el historial de llamadas API del dashboard
+   (`APICallLog`, ya expuesto en Settings/Actividad técnica).
+5. Solo tras firmar este checklist, ampliar `WRITEBACK_ACCOUNT_ALLOWLIST`
+   a más cuentas (o vaciarlo para el parque completo).
+
+Estado: 225 tests backend en verde. Stack local reiniciado y sano tras los
+cambios (backend + 3 workers healthy).
+
+Siguiente: **Fase 3** (clasificador único de campañas + prompt v2, C-2/C-3,
+puede ir en paralelo si hay dos personas) o **Fase 4** (rendimiento de datos,
+recomendado antes de sumar más cuentas reales).
