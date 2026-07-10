@@ -66,7 +66,6 @@ def _base_context(acc: AdAccount, **overrides):
         "ad_account_id": acc.id,
         "page_id": "page-1",
         "product_name": "CableGPT",
-        "zone": "Surquillo",
         "budget": 200.0,
         "days": 5,
         "whatsapp_number": "51999888777",
@@ -311,8 +310,8 @@ async def campaign_draft(ad_account, db_session: AsyncSession):
     org, acc = ad_account
     draft = CampaignDraft(
         organization_id=org.id,
-        name="CableGPT_Surquillo",
-        payload={"ad_account_id": acc.id, "product_name": "CableGPT", "zone": "Surquillo"},
+        name="CableGPT",
+        payload={"ad_account_id": acc.id, "product_name": "CableGPT"},
         status="PENDING_CREATION",
     )
     db_session.add(draft)

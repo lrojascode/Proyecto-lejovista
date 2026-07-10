@@ -54,11 +54,10 @@ async def test_suggest_campaign_copy_uses_mock_when_mock_services_enabled(monkey
     monkeypatch.setattr(settings, "MOCK_SERVICES", True)
     org, acc = _org_and_acc()
 
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
     assert "Cable GPT" in result["headline"]
-    assert "Surquillo" in result["headline"]
 
 
 @pytest.mark.asyncio
@@ -77,7 +76,7 @@ async def test_suggest_campaign_copy_parses_valid_llm_json(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", fake_client)
 
     org, acc = _org_and_acc()
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert result == {
         "headline": "LLM Headline", "primary_text": "LLM body",
@@ -100,7 +99,7 @@ async def test_suggest_campaign_copy_tolerates_llm_wrapping_json_in_markdown(mon
     monkeypatch.setattr(httpx, "AsyncClient", fake_client)
 
     org, acc = _org_and_acc()
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert result["headline"] == "H"
 
@@ -117,7 +116,7 @@ async def test_suggest_campaign_copy_falls_back_on_invalid_json(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", fake_client)
 
     org, acc = _org_and_acc()
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
     assert "Cable GPT" in result["headline"]
@@ -133,7 +132,7 @@ async def test_suggest_campaign_copy_falls_back_on_http_error(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", fake_client)
 
     org, acc = _org_and_acc()
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
 
@@ -148,7 +147,7 @@ async def test_suggest_campaign_copy_falls_back_on_network_exception(monkeypatch
     monkeypatch.setattr(httpx, "AsyncClient", fake_client)
 
     org, acc = _org_and_acc()
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
 
@@ -162,7 +161,7 @@ async def test_suggest_campaign_copy_no_api_key_uses_mock(monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
 
     org, acc = _org_and_acc()
-    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT", "Surquillo")
+    result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
     assert set(result.keys()) == _REQUIRED_COPY_KEYS
 
@@ -185,7 +184,7 @@ async def test_suggest_campaign_copy_includes_winning_ad_copy_in_prompt(monkeypa
 
     org, acc = _org_and_acc()
     await OpenRouterClient().suggest_campaign_copy(
-        org, acc, "Cable GPT", "Surquillo",
+        org, acc, "Cable GPT",
         winning_ad_copy={
             "title": "El copy que ya funcionó",
             "body": "Cuerpo real ganador con gancho probado",

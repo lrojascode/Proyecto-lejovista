@@ -213,9 +213,8 @@ class AIPlanner:
             suggestion = await CampaignSuggester(self.db).suggest(ad_account)
             org = await self.db.get(Organization, ad_account.organization_id)
             product_name = existing_campaign_name or "Producto"
-            zone = "Lima"  # geo por defecto del tenant (TENANT_CAMPAIGN_RULES); el insight no trae zona explícita
             copy = await OpenRouterClient().suggest_campaign_copy(
-                org, ad_account, product_name=product_name, zone=zone,
+                org, ad_account, product_name=product_name,
                 winning_context=suggestion.get("winning_campaign"),
                 winning_ad_copy=suggestion.get("winning_ad_copy"),
                 usage_ctx=UsageContext(
@@ -227,7 +226,7 @@ class AIPlanner:
 
             brand = derive_brand_code(ad_account)
             month_year = datetime.date.today().strftime("%b%Y").upper()
-            new_camp_name = f"{brand}_MSJ_{product_name}_{zone}_{month_year}".replace(" ", "")
+            new_camp_name = f"{brand}_MSJ_{product_name}_{month_year}".replace(" ", "")
 
             description = (
                 f"Crear una campaña nueva para reemplazar '{product_name}' (CTR bajo), con "

@@ -131,10 +131,10 @@ export const api = {
   getMyPages: () => apiRequest("/api/v1/organizations/my/pages", "GET"),
   setPageWhatsApp: (pageId: string, whatsappNumber: string) =>
     apiRequest(`/api/v1/organizations/my/pages/${pageId}/whatsapp`, "PATCH", { whatsapp_number: whatsappNumber }),
-  getCampaignSuggestion: (adAccountId: string, productName: string, zone: string) =>
+  getCampaignSuggestion: (adAccountId: string, productName: string) =>
     apiRequest(
       `/api/v1/campaigns/suggestion?ad_account_id=${encodeURIComponent(adAccountId)}` +
-      `&product_name=${encodeURIComponent(productName)}&zone=${encodeURIComponent(zone)}`,
+      `&product_name=${encodeURIComponent(productName)}`,
       "GET"
     ),
   createCampaign: (data: any) => apiRequest("/api/v1/campaigns/", "POST", data),

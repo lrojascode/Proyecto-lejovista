@@ -45,9 +45,6 @@ class CampaignValidator:
         if not re.match(r"^[A-Za-z0-9 _-]+$", request.product_name):
             raise HTTPException(status_code=400, detail="product_name contains invalid characters (no accents or emojis allowed).")
 
-        if not re.match(r"^[A-Za-z0-9 _-]+$", request.zone):
-            raise HTTPException(status_code=400, detail="zone contains invalid characters (no accents or emojis allowed).")
-
     async def _verify_meta_account_status(self):
         """
         Paso 1 del documento: GET /act_[ID]?fields=amount_spent,spend_cap,account_status

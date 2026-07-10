@@ -468,7 +468,6 @@ class OpenRouterClient:
         org: Organization,
         ad_account: AdAccount,
         product_name: str,
-        zone: str,
         winning_context: Optional[Dict[str, Any]] = None,
         winning_ad_copy: Optional[Dict[str, Any]] = None,
         usage_ctx: Optional[UsageContext] = None,
@@ -487,7 +486,7 @@ class OpenRouterClient:
         frases o ganchos que ya demostraron funcionar, no solo el tono.
         """
         if settings.MOCK_SERVICES or not self.api_key:
-            return self._generate_mock_copy(product_name, zone, winning_context)
+            return self._generate_mock_copy(product_name, winning_context)
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -534,7 +533,6 @@ class OpenRouterClient:
 
         user_prompt = (
             f"Producto o servicio: {product_name}\n"
-            f"Zona: {zone}\n"
             f"{winning_summary}\n"
             f"{winning_copy_block}\n"
             "Genera el copy para una campaña nueva de mensajes de WhatsApp de esta marca."
@@ -574,7 +572,7 @@ class OpenRouterClient:
         except Exception:
             logger.exception("Error llamando a la API del LLM para copy de campaña. Usando plantilla local.")
 
-        return self._generate_mock_copy(product_name, zone, winning_context)
+        return self._generate_mock_copy(product_name, winning_context)
 
     @staticmethod
     def _parse_copy_json(content: str) -> Optional[Dict[str, str]]:
@@ -594,22 +592,22 @@ class OpenRouterClient:
         return {k: str(data[k]) for k in _REQUIRED_COPY_KEYS}
 
     def _generate_mock_copy(
-        self, product_name: str, zone: str, winning_context: Optional[Dict[str, Any]] = None
+        self, product_name: str, winning_context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, str]:
         """Plantilla local determinista (sin LLM) — nunca rompe la creación de
         campañas si el LLM falla, no hay API key configurada, o MOCK_SERVICES
         está activo. Sigue la misma estructura DOLOR→PROMESA→BENEFICIOS→URGENCIA→CTA
         del playbook (§6), sin inventar cifras de rendimiento."""
         return {
-            "headline": f"{product_name} en {zone} 🔥",
+            "headline": f"{product_name} 🔥",
             "primary_text": (
-                f"¿Buscas {product_name.lower()} de confianza en {zone}? 😩\n\n"
+                f"¿Buscas {product_name.lower()} de confianza? 😩\n\n"
                 f"Con nosotros lo tienes fácil: calidad garantizada y atención inmediata. ✅\n"
                 f"✅ Entrega rápida\n✅ Atención personalizada\n✅ Precios justos\n\n"
                 f"🔥 Cupos limitados esta semana.\n"
                 f"📲 Escríbenos ahora por WhatsApp y cotiza sin compromiso."
             ),
-            "description": f"{product_name} · {zone} · Cotiza por WhatsApp",
+            "description": f"{product_name} · Cotiza por WhatsApp",
             "welcome_message": f"¡Hola! 👋 Gracias por escribir. Cuéntanos qué necesitas de {product_name} y te ayudamos al toque.",
         }
 

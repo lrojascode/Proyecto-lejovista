@@ -36,7 +36,7 @@ async def _make_org_with_two_accounts(db: AsyncSession, slug="validator-org"):
 def _request(ad_account_id: str):
     return CampaignCreateRequest(
         ad_account_id=ad_account_id, page_id="page-1",
-        product_name="CableGPT", zone="Surquillo", budget=100.0, days=7,
+        product_name="CableGPT", budget=100.0, days=7,
         whatsapp_number="51999888777", image_hash="hash1", copy_text="Copy",
     )
 

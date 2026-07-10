@@ -63,7 +63,6 @@ export default function NewCampaignPage() {
 
   const [formData, setFormData] = useState({
     product_name: "",
-    zone: "",
     budget: 100,
     days: 7,
     image_url: "",
@@ -133,15 +132,15 @@ export default function NewCampaignPage() {
       setSuggestError("Selecciona una cuenta de anuncios activa primero.");
       return;
     }
-    if (!formData.product_name || !formData.zone) {
-      setSuggestError("Completa producto y zona antes de pedir la sugerencia.");
+    if (!formData.product_name) {
+      setSuggestError("Completa el producto antes de pedir la sugerencia.");
       return;
     }
     setSuggestLoading(true);
     setSuggestError("");
     try {
       const data: Suggestion = await api.getCampaignSuggestion(
-        activeAdAccountId, formData.product_name, formData.zone
+        activeAdAccountId, formData.product_name
       );
       setSuggestion(data);
       setFormData((prev) => ({
@@ -231,7 +230,6 @@ export default function NewCampaignPage() {
         ad_account_id: activeAdAccountId,
         page_id: selectedPage.external_page_id,
         product_name: formData.product_name,
-        zone: formData.zone,
         budget: formData.budget,
         days: formData.days,
         whatsapp_number: selectedPage.whatsapp_number,
@@ -388,10 +386,6 @@ export default function NewCampaignPage() {
             <div>
               <label style={labelStyle}>Producto</label>
               <input type="text" name="product_name" required value={formData.product_name} onChange={handleChange} className="form-input" placeholder="Cable GPT" />
-            </div>
-            <div>
-              <label style={labelStyle}>Zona</label>
-              <input type="text" name="zone" required value={formData.zone} onChange={handleChange} className="form-input" placeholder="Surquillo" />
             </div>
             <div>
               <label style={labelStyle}>Presupuesto (S/. total)</label>

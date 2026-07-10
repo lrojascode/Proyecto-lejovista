@@ -28,9 +28,9 @@ async def test_get_campaign_draft_returns_real_progress(async_client: AsyncClien
 
     draft = CampaignDraft(
         organization_id=org_id,
-        name="CableGPT_Surquillo",
+        name="CableGPT",
         payload={
-            "product_name": "CableGPT", "zone": "Surquillo",
+            "product_name": "CableGPT",
             "result": {"campaign_id": "mock_camp_1", "adset_id": "mock_adset_1"},
         },
         status="PENDING_CREATION",

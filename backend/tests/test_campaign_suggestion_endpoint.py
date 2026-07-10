@@ -43,7 +43,7 @@ async def test_suggestion_endpoint_returns_structure_and_copy(async_client: Asyn
     headers, ad_account_id = await _signup_with_ad_account(async_client, "suggest-endpoint-org")
 
     res = await async_client.get(
-        f"/api/v1/campaigns/suggestion?ad_account_id={ad_account_id}&product_name=CableGPT&zone=Surquillo",
+        f"/api/v1/campaigns/suggestion?ad_account_id={ad_account_id}&product_name=CableGPT",
         headers=headers,
     )
     assert res.status_code == 200
@@ -55,7 +55,6 @@ async def test_suggestion_endpoint_returns_structure_and_copy(async_client: Asyn
     assert body["destination_type"] == "WHATSAPP"
     assert body["suggested_budget"] == 100.0
     assert "CableGPT" in body["copy"]["headline"]
-    assert "Surquillo" in body["copy"]["headline"]
     assert set(body["copy"].keys()) == {"headline", "primary_text", "description", "welcome_message"}
 
 

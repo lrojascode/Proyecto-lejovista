@@ -35,7 +35,6 @@ def _campaign_payload(ad_account_id: str):
         "ad_account_id": ad_account_id,
         "page_id": "page-1",
         "product_name": "CableGPT",
-        "zone": "Surquillo",
         "budget": 200.0,
         "days": 5,
         "whatsapp_number": "51999888777",

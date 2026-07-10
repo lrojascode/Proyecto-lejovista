@@ -176,7 +176,6 @@ async def trigger_manual_sync(
 async def get_campaign_suggestion(
     ad_account_id: str,
     product_name: str = "Producto",
-    zone: str = "Lima",
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -201,7 +200,7 @@ async def get_campaign_suggestion(
 
     suggestion = await CampaignSuggester(db).suggest(ad_account)
     copy = await OpenRouterClient().suggest_campaign_copy(
-        org, ad_account, product_name=product_name, zone=zone,
+        org, ad_account, product_name=product_name,
         winning_context=suggestion.get("winning_campaign"),
         winning_ad_copy=suggestion.get("winning_ad_copy"),
         usage_ctx=UsageContext(
@@ -330,7 +329,7 @@ async def create_campaign(
     draft = CampaignDraft(
         organization_id=tenant_id,
         created_by_user_id=current_user.id,
-        name=f"{request.product_name}_{request.zone}",
+        name=f"{request.product_name}",
         payload=request.model_dump(),
         status="PENDING_CREATION",
     )
@@ -345,7 +344,6 @@ async def create_campaign(
         ad_account_id=ad_account.id,
         draft_id=draft_id,
         product=request.product_name,
-        zone=request.zone,
         params_json={
             "budget": request.budget,
             "days": request.days,
@@ -370,7 +368,6 @@ async def create_campaign(
         "ad_account_id": request.ad_account_id,
         "page_id": request.page_id,
         "product_name": request.product_name,
-        "zone": request.zone,
         "budget": request.budget,
         "days": request.days,
         "whatsapp_number": request.whatsapp_number,
@@ -447,7 +444,6 @@ async def get_learning_history(
         {
             "id": r.id,
             "product": r.product,
-            "zone": r.zone,
             "risk_level": r.risk_level,
             "status": r.status,
             "params": r.params_json,

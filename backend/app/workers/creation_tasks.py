@@ -141,10 +141,9 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
             acc = await _get_ad_account(db, context["ad_account_id"])
 
             product_name = context["product_name"]
-            zone = context["zone"]
             month_year = datetime.now().strftime("%b%Y").upper()
             brand = _brand_code(acc)
-            campaign_name = f"{brand}_MSJ_{product_name}_{zone}_{month_year}".replace(" ", "")
+            campaign_name = f"{brand}_MSJ_{product_name}_{month_year}".replace(" ", "")
 
             payload = {
                 "name": campaign_name,
@@ -305,7 +304,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
             acc = await _get_ad_account(db, context["ad_account_id"])
 
             brand = _brand_code(acc)
-            ad_name = f"{brand}_AD_{context['product_name']}{context['zone']}_{datetime.now().strftime('%b%Y').upper()}"
+            ad_name = f"{brand}_AD_{context['product_name']}_{datetime.now().strftime('%b%Y').upper()}"
             payload = {
                 "name": ad_name,
                 "adset_id": context["adset_id"],
