@@ -9,6 +9,7 @@ import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { api } from "@/lib/api";
 import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
+import type { CampaignSnapshot, ApiCallHistoryEntry, SpendHistoryMonth, BusinessPolicies, KpisSummary, AIInsight } from "@/lib/types";
 
 // Acentos de apoyo del design system — nunca acid-lime (reservado para acciones)
 const COLORS = ['#6366f1', '#02b8cc', '#27a644', '#8b5cf6', '#f2994a'];
@@ -59,15 +60,15 @@ export default function DashboardPage() {
   const { lastEvent, isConnected } = useWebSocket();
   const [notifications, setNotifications] = useState<string[]>([]);
 
-  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
-  const [apiCallHistory, setApiCallHistory] = useState<any[]>([]);
-  const [spendHistory, setSpendHistory] = useState<any[]>([]);
-  const [businessPolicies, setBusinessPolicies] = useState<{ industry: string | null; policies: { title: string; description: string }[] } | null>(null);
-  const [kpisSummary, setKpisSummary] = useState<any | null>(null);
-  const [topAlerts, setTopAlerts] = useState<any[]>([]);
+  const [apiCallHistory, setApiCallHistory] = useState<ApiCallHistoryEntry[]>([]);
+  const [spendHistory, setSpendHistory] = useState<SpendHistoryMonth[]>([]);
+  const [businessPolicies, setBusinessPolicies] = useState<BusinessPolicies | null>(null);
+  const [kpisSummary, setKpisSummary] = useState<KpisSummary | null>(null);
+  const [topAlerts, setTopAlerts] = useState<AIInsight[]>([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -106,7 +107,7 @@ export default function DashboardPage() {
     try {
       const insights = await api.getInsights();
       const sorted = (insights || []).slice().sort(
-        (a: any, b: any) => (ALERT_LEVEL_ORDER[a.level] ?? 9) - (ALERT_LEVEL_ORDER[b.level] ?? 9)
+        (a: AIInsight, b: AIInsight) => (ALERT_LEVEL_ORDER[a.level] ?? 9) - (ALERT_LEVEL_ORDER[b.level] ?? 9)
       );
       setTopAlerts(sorted.slice(0, 3));
     } catch (e) {

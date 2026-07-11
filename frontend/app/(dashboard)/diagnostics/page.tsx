@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
+import type { AIInsight, BriefData } from "@/lib/types";
 
 export default function Diagnostics() {
   const { lastEvent } = useWebSocket();
-  const [insights, setInsights] = useState<any[]>([]);
-  const [briefData, setBriefData] = useState<any>(null);
+  const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [briefData, setBriefData] = useState<BriefData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dismissingId, setDismissingId] = useState("");

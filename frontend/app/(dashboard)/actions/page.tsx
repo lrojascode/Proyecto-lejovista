@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
+import type { AIAction } from "@/lib/types";
 
 // 5.4(a) (E-6): focus trap + Escape + aria-modal para el modal de rechazo —
 // antes era un overlay visual sin ninguna de las tres cosas: el foco del
@@ -93,8 +94,8 @@ function RejectModal({
 
 export default function Actions() {
   const { lastEvent } = useWebSocket();
-  const [pending, setPending] = useState<any[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
+  const [pending, setPending] = useState<AIAction[]>([]);
+  const [history, setHistory] = useState<AIAction[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState("");
   const [rejectId, setRejectId] = useState("");

@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import Link from "next/link";
-import { badgeIcon } from "@/lib/badge";
+import { badgeIcon, metaStatusBadge } from "@/lib/badge";
+import type { CampaignSnapshot } from "@/lib/types";
 
 export default function CampaignsList() {
   const { lastEvent } = useWebSocket();
-  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncMessage, setSyncMessage] = useState("");
 
@@ -82,6 +83,7 @@ export default function CampaignsList() {
                   <th style={{ padding: "1rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>CPL Promedio</th>
                   <th style={{ padding: "1rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Frecuencia</th>
                   <th style={{ padding: "1rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Estado</th>
+                  <th style={{ padding: "1rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Rendimiento</th>
                   <th style={{ padding: "1rem 0.5rem", color: "var(--text-secondary)", fontSize: "0.85rem" }}>Acciones</th>
                 </tr>
               </thead>
@@ -99,6 +101,8 @@ export default function CampaignsList() {
                     badgeLabel = "Alerta";
                   }
 
+                  const statusBadge = metaStatusBadge(c.status);
+
                   return (
                     <tr key={c.id} style={{ borderBottom: "1px solid var(--border-color)" }}>
                       <td style={{ padding: "12px 8px" }}>
@@ -111,6 +115,9 @@ export default function CampaignsList() {
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.conversions}</td>
                       <td style={{ padding: "12px 8px", fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.frequency.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px" }}>
+                        <span className={statusBadge.cls}>{badgeIcon(statusBadge.cls)} {statusBadge.label}</span>
+                      </td>
                       <td style={{ padding: "12px 8px" }}>
                         <span className={`badge ${badgeClass}`}>{badgeIcon(badgeClass)} {badgeLabel}</span>
                       </td>

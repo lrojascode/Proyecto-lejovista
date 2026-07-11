@@ -1,4 +1,9 @@
 import { getApiUrl, getTenantSlugFromHostname } from "./config";
+import type {
+  TokenResponse, User, Organization, AdAccount, MetaPage, BusinessPolicies, AiModelsResponse,
+  CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, Suggestion,
+  BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
+} from "./types";
 
 // Intenta renovar el access token usando el refresh token guardado (S-9).
 async function tryRefresh(): Promise<boolean> {
@@ -176,32 +181,32 @@ async function downloadReportPdf(windowDays: number = 30): Promise<void> {
 
 export const api = {
   // --- AUTH ---
-  login: (data: any) => apiRequest("/api/v1/auth/login", "POST", data),
-  signup: (data: any) => apiRequest("/api/v1/auth/signup", "POST", data),
-  getMe: () => apiRequest("/api/v1/auth/me", "GET"),
+  login: (data: any) => apiRequest<TokenResponse>("/api/v1/auth/login", "POST", data),
+  signup: (data: any) => apiRequest<TokenResponse>("/api/v1/auth/signup", "POST", data),
+  getMe: () => apiRequest<User>("/api/v1/auth/me", "GET"),
   logout: (refreshToken: string) => apiRequest("/api/v1/auth/logout", "POST", { refresh_token: refreshToken }),
 
   // --- ORGANIZATIONS & ACCOUNTS ---
-  getOrg: () => apiRequest("/api/v1/organizations/my", "GET"),
-  updateOrg: (data: any) => apiRequest("/api/v1/organizations/my", "PUT", data),
-  getAiModels: () => apiRequest("/api/v1/organizations/ai-models", "GET"),
-  getBusinessPolicies: () => apiRequest("/api/v1/organizations/my/policies", "GET"),
+  getOrg: () => apiRequest<Organization>("/api/v1/organizations/my", "GET"),
+  updateOrg: (data: any) => apiRequest<Organization>("/api/v1/organizations/my", "PUT", data),
+  getAiModels: () => apiRequest<AiModelsResponse>("/api/v1/organizations/ai-models", "GET"),
+  getBusinessPolicies: () => apiRequest<BusinessPolicies>("/api/v1/organizations/my/policies", "GET"),
   getAdAccounts: (includeArchived: boolean = false) =>
-    apiRequest(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),
-  connectAdAccount: (data: any) => apiRequest("/api/v1/organizations/my/ad-accounts", "POST", data),
+    apiRequest<AdAccount[]>(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),
+  connectAdAccount: (data: any) => apiRequest<AdAccount>("/api/v1/organizations/my/ad-accounts", "POST", data),
   archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),
   restoreAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/restore`, "POST"),
 
   // --- CAMPAIGNS ---
-  getRecentCampaigns: () => apiRequest("/api/v1/campaigns/recent", "GET"),
-  getCampaignHistory: (campaignId: string) => apiRequest(`/api/v1/campaigns/${campaignId}/history`, "GET"),
+  getRecentCampaigns: () => apiRequest<CampaignSnapshot[]>("/api/v1/campaigns/recent", "GET"),
+  getCampaignHistory: (campaignId: string) => apiRequest<CampaignSnapshot[]>(`/api/v1/campaigns/${campaignId}/history`, "GET"),
   triggerSync: () => apiRequest("/api/v1/campaigns/sync-trigger", "POST"),
-  getApiCallHistory: (limit: number = 10) => apiRequest(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
-  getMyPages: () => apiRequest("/api/v1/organizations/my/pages", "GET"),
+  getApiCallHistory: (limit: number = 10) => apiRequest<ApiCallHistoryEntry[]>(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
+  getMyPages: () => apiRequest<MetaPage[]>("/api/v1/organizations/my/pages", "GET"),
   setPageWhatsApp: (pageId: string, whatsappNumber: string) =>
     apiRequest(`/api/v1/organizations/my/pages/${pageId}/whatsapp`, "PATCH", { whatsapp_number: whatsappNumber }),
   getCampaignSuggestion: (adAccountId: string, productName: string) =>
-    apiRequest(
+    apiRequest<Suggestion>(
       `/api/v1/campaigns/suggestion?ad_account_id=${encodeURIComponent(adAccountId)}` +
       `&product_name=${encodeURIComponent(productName)}`,
       "GET"
@@ -210,34 +215,34 @@ export const api = {
   uploadCampaignImage: (file: File) => {
     const formData = new FormData();
     formData.append("file", file);
-    return apiUploadRequest("/api/v1/campaigns/upload-image", formData);
+    return apiUploadRequest<{ image_path: string }>("/api/v1/campaigns/upload-image", formData);
   },
-  getCampaignDraft: (draftId: string) => apiRequest(`/api/v1/campaigns/drafts/${draftId}`, "GET"),
+  getCampaignDraft: (draftId: string) => apiRequest<CampaignDraft>(`/api/v1/campaigns/drafts/${draftId}`, "GET"),
   previewCampaignRisk: (adAccountId: string, budget: number, copyText: string) =>
     apiRequest("/api/v1/campaigns/risk-preview", "POST", {
       ad_account_id: adAccountId, budget, copy_text: copyText,
     }),
   getLearningHistory: (limit: number = 20) =>
-    apiRequest(`/api/v1/campaigns/learning-history?limit=${limit}`, "GET"),
+    apiRequest<LearningLog[]>(`/api/v1/campaigns/learning-history?limit=${limit}`, "GET"),
 
   // --- AI USAGE (contador de tokens) ---
-  getAiUsage: (days: number = 30) => apiRequest(`/api/v1/ai-usage?days=${days}`, "GET"),
+  getAiUsage: (days: number = 30) => apiRequest<AiUsage>(`/api/v1/ai-usage?days=${days}`, "GET"),
 
   // --- INSIGHTS ---
-  getInsights: () => apiRequest("/api/v1/insights", "GET"),
+  getInsights: () => apiRequest<AIInsight[]>("/api/v1/insights", "GET"),
   dismissInsight: (insightId: string) => apiRequest(`/api/v1/insights/${insightId}/dismiss`, "POST"),
   triggerAnalysis: () => apiRequest("/api/v1/insights/analyze-trigger", "POST"),
 
   // --- ACTIONS ---
-  getPendingActions: () => apiRequest("/api/v1/actions", "GET"),
-  getActionHistory: () => apiRequest("/api/v1/actions/history", "GET"),
-  approveAction: (actionId: string, approve: boolean, rejectReason?: string) => 
-    apiRequest(`/api/v1/actions/${actionId}/approve`, "POST", { approve, reject_reason: rejectReason }),
-  getActionStatus: (actionId: string) => apiRequest(`/api/v1/actions/${actionId}/status`, "GET"),
+  getPendingActions: () => apiRequest<AIAction[]>("/api/v1/actions", "GET"),
+  getActionHistory: () => apiRequest<AIAction[]>("/api/v1/actions/history", "GET"),
+  approveAction: (actionId: string, approve: boolean, rejectReason?: string) =>
+    apiRequest<AIAction>(`/api/v1/actions/${actionId}/approve`, "POST", { approve, reject_reason: rejectReason }),
+  getActionStatus: (actionId: string) => apiRequest<AIAction>(`/api/v1/actions/${actionId}/status`, "GET"),
 
   // --- REPORTS ---
-  getBriefData: (windowDays: number = 30) => apiRequest(`/api/v1/reports/brief-data?window_days=${windowDays}`, "GET"),
-  getSpendHistory: () => apiRequest("/api/v1/reports/spend-history", "GET"),
-  getKpisSummary: () => apiRequest("/api/v1/reports/kpis-summary", "GET"),
+  getBriefData: (windowDays: number = 30) => apiRequest<BriefData>(`/api/v1/reports/brief-data?window_days=${windowDays}`, "GET"),
+  getSpendHistory: () => apiRequest<SpendHistory>("/api/v1/reports/spend-history", "GET"),
+  getKpisSummary: () => apiRequest<KpisSummary>("/api/v1/reports/kpis-summary", "GET"),
   downloadReportPdf,
 };

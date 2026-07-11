@@ -375,6 +375,13 @@ class MetaAdsSyncService:
         status_code = acc_info.get("account_status", 1)
         ad_account.status = "ACTIVE" if status_code == 1 else "SUSPENDED"
         self.db.add(ad_account)
+        # Commit inmediato: si algo más adelante en este sync falla (campañas,
+        # insights, adsets...), la excepción se propaga y el commit final de
+        # `run_sync` nunca ocurre — sin este commit parcial, spend_cap/amount_spent/
+        # status quedaban leídos de Meta pero descartados en silencio, y la cuenta
+        # se quedaba con datos viejos hasta el próximo sync que lograra completar
+        # TODO el pipeline sin errores.
+        await self.db.commit()
 
         # 1. Obtener todas las campañas de la cuenta
         campaigns_res = await limiter.call_api_paginated(

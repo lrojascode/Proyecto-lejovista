@@ -5,44 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
-
-type MetaPage = {
-  id: string;
-  external_page_id: string;
-  name: string;
-  whatsapp_number: string | null;
-};
-
-type Change = { change: string; why: string };
-type Analysis = {
-  summary: string;
-  mode: string;
-  converged: boolean;
-  maturity_reason: string;
-  strengths: string[];
-  weaknesses: string[];
-  changes_proposed: Change[];
-  past_failures: string[];
-  evaluation_window_days: number;
-  confidence: string;
-};
-
-type Suggestion = {
-  risk_level: string;
-  risk_reasons: string[];
-  has_history: boolean;
-  maturity: { converged: boolean; mode: string; reason: string };
-  analysis: Analysis;
-  suggested_budget: number;
-  suggested_days: number;
-  excluded_placements: string[];
-  best_device: string | null;
-  best_age_range: string | null;
-  winning_campaign: { name: string; cost_per_conv: number; ctr: number } | null;
-  evidence: string[];
-  // 3.4: 2 variantes de headline/primary_text — el usuario elige en la UI.
-  copy: { headline: string[]; primary_text: string[]; description: string; welcome_message: string };
-};
+import type { MetaPage, Suggestion } from "@/lib/types";
 
 // Colores por nivel de riesgo (paleta del design system "midnight").
 const RISK_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
@@ -210,7 +173,7 @@ export default function NewCampaignPage() {
   const pollDraft = (id: string) => {
     pollAttempts.current += 1;
     api.getCampaignDraft(id)
-      .then((draft: any) => {
+      .then((draft) => {
         if (draft.status === "CREATED") {
           setResultCampaignId(draft.payload?.result?.campaign_id || null);
           setStatus("success");

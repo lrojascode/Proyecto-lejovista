@@ -2,23 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-
-type FeatureUsage = {
-  feature: string;
-  calls: number;
-  prompt_tokens: number;
-  completion_tokens: number;
-  reasoning_tokens: number;
-  total_tokens: number;
-  cot_calls: number;
-  estimated_cost_usd: number;
-};
-
-type UsageResponse = {
-  days: number;
-  totals: Omit<FeatureUsage, "feature">;
-  by_feature: FeatureUsage[];
-};
+import type { AiUsage } from "@/lib/types";
 
 // Nombres legibles por funcionalidad (la `feature` cruda que graba el backend).
 const FEATURE_LABELS: Record<string, string> = {
@@ -36,7 +20,7 @@ function fmt(n: number) {
 
 export default function AiUsagePage() {
   const [days, setDays] = useState(30);
-  const [data, setData] = useState<UsageResponse | null>(null);
+  const [data, setData] = useState<AiUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -44,7 +28,7 @@ export default function AiUsagePage() {
     setLoading(true);
     setError("");
     api.getAiUsage(days)
-      .then((d: UsageResponse) => setData(d))
+      .then((d: AiUsage) => setData(d))
       .catch((e: any) => setError(e.message || "No se pudo cargar el consumo de IA."))
       .finally(() => setLoading(false));
   }, [days]);

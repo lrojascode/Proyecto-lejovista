@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
+import type { Organization, AdAccount } from "@/lib/types";
 
 export default function Settings() {
   const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
-  const [org, setOrg] = useState<any>(null);
-  const [accounts, setAccounts] = useState<any[]>([]);
+  const [org, setOrg] = useState<Organization | null>(null);
+  const [accounts, setAccounts] = useState<AdAccount[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Settings Form States
@@ -47,7 +48,7 @@ export default function Settings() {
       const modelsData = await api.getAiModels();
       setAiProvider(modelsData.active_provider);
       setAiModels(modelsData.models);
-      const isKnownModel = modelsData.models.some((m: any) => m.value === orgData.ai_model);
+      const isKnownModel = modelsData.models.some((m) => m.value === orgData.ai_model);
       setAiModel(isKnownModel ? orgData.ai_model : modelsData.models[0]?.value ?? orgData.ai_model);
     } catch (e) {
       console.error("Error fetching settings:", e);

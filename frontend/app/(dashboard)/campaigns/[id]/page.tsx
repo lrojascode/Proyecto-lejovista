@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import Link from "next/link";
+import type { CampaignSnapshot } from "@/lib/types";
 
 // Las fechas de snapshot llegan como ISO date-only ("2026-07-03"). `new Date(s)`
 // las interpreta como medianoche UTC, así que en un navegador con offset negativo
@@ -19,7 +20,7 @@ export default function CampaignDetail() {
   const router = useRouter();
   const campaignId = params.id as string;
 
-  const [history, setHistory] = useState<any[]>([]);
+  const [history, setHistory] = useState<CampaignSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

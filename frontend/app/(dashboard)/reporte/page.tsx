@@ -7,6 +7,10 @@ import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
+import type {
+  BriefData, ReportCampaign, ReportAdset, ReportAd, ReportAudience, ReportCreative,
+  OptimalParam, ReportSegmentationEntry,
+} from "@/lib/types";
 
 const card: React.CSSProperties = {
   background: "var(--color-carbon)",
@@ -82,7 +86,7 @@ function CreativeThumb({ url, name }: { url?: string; name: string }) {
   );
 }
 
-function BreakdownTable({ title, data }: { title: string; data: Record<string, any> }) {
+function BreakdownTable({ title, data }: { title: string; data: Record<string, ReportSegmentationEntry> }) {
   const rows = Object.entries(data || {});
   if (rows.length === 0) return null;
   // min-width: 0 es necesario porque los ítems de un grid no se encogen por
@@ -98,7 +102,7 @@ function BreakdownTable({ title, data }: { title: string; data: Record<string, a
       <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
         <thead><tr><th style={{ ...th, width: "40%" }}>Segmento</th><th style={{ ...th, width: "20%" }}>Gasto</th><th style={{ ...th, width: "15%" }}>Conv.</th><th style={{ ...th, width: "25%" }}>Costo/Conv.</th></tr></thead>
         <tbody>
-          {rows.map(([k, v]: [string, any]) => {
+          {rows.map(([k, v]) => {
             const conv = v.conversions || 0;
             const cost = conv > 0 ? v.spend / conv : v.spend;
             return (
@@ -118,16 +122,16 @@ function BreakdownTable({ title, data }: { title: string; data: Record<string, a
 
 const BAR_COLORS = ["#6366f1", "#02b8cc", "#27a644", "#8b5cf6", "#f2994a", "#eb5757"];
 
-function DistributionBars({ title, data }: { title: string; data: Record<string, any> }) {
+function DistributionBars({ title, data }: { title: string; data: Record<string, ReportSegmentationEntry> }) {
   const rows = Object.entries(data || {});
-  const total = rows.reduce((acc, [, v]: [string, any]) => acc + (v.spend || 0), 0);
+  const total = rows.reduce((acc, [, v]) => acc + (v.spend || 0), 0);
   if (total <= 0) return null;
   const sorted = rows.sort((a, b) => (b[1].spend || 0) - (a[1].spend || 0));
   return (
     <div>
       <h4 style={{ fontSize: "0.9rem", color: "var(--text-secondary)", marginBottom: "0.75rem" }}>{title}</h4>
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        {sorted.map(([k, v]: [string, any], i: number) => {
+        {sorted.map(([k, v], i: number) => {
           const pct = Math.round((v.spend / total) * 100);
           return (
             <div key={k} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -148,7 +152,7 @@ const WINDOW_OPTIONS = [7, 30, 90] as const;
 
 export default function Reporte() {
   const { lastEvent } = useWebSocket();
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<BriefData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncMessage, setSyncMessage] = useState("");
@@ -303,14 +307,14 @@ export default function Reporte() {
         <div style={{ ...card, borderLeft: "2px solid var(--color-coral-red)" }}>
           <h2 style={{ ...h2, fontSize: "15px" }}>Revisar / pausar</h2>
           {r.alerts.red.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin campañas críticas.</p> :
-            r.alerts.red.map((a: any, i: number) => (
+            r.alerts.red.map((a, i: number) => (
               <p key={i} style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}><strong>{a.name}:</strong> {a.reason}</p>
             ))}
         </div>
         <div style={{ ...card, borderLeft: "2px solid var(--color-pulse-green)" }}>
           <h2 style={{ ...h2, fontSize: "15px" }}>Ganadoras — replicar</h2>
           {r.alerts.green.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin campañas destacadas aún.</p> :
-            r.alerts.green.map((a: any, i: number) => (
+            r.alerts.green.map((a, i: number) => (
               <p key={i} style={{ fontSize: "0.85rem", marginBottom: "0.5rem" }}><strong>{a.name}:</strong> {a.reason}</p>
             ))}
         </div>
@@ -325,7 +329,7 @@ export default function Reporte() {
             <th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th><th style={th}>Estado</th>
           </tr></thead>
           <tbody>
-            {r.campaigns.map((c: any) => (
+            {r.campaigns.map((c: ReportCampaign) => (
               <tr key={c.campaign_id}>
                 <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>
                   {c.name}
@@ -361,7 +365,7 @@ export default function Reporte() {
               <th style={th}>Alcance</th><th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th>
             </tr></thead>
             <tbody>
-              {r.adsets.map((a: any) => (
+              {r.adsets.map((a: ReportAdset) => (
                 <tr key={a.adset_id}>
                   <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{a.name}</td>
                   <td style={{ ...td, color: "var(--text-secondary)", fontSize: "0.78rem" }}>
@@ -389,7 +393,7 @@ export default function Reporte() {
               <th style={th}>Impr.</th><th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th>
             </tr></thead>
             <tbody>
-              {r.ads.map((a: any) => (
+              {r.ads.map((a: ReportAd) => (
                 <tr key={a.ad_id}>
                   <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{a.name}</td>
                   <td style={td}>{money(a.spend)}</td>
@@ -426,23 +430,23 @@ export default function Reporte() {
         <div style={card}>
           <h2 style={{ ...h2, fontSize: "15px" }}>Audiencias personalizadas</h2>
           {r.audiences.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Esta cuenta no tiene audiencias personalizadas guardadas en Meta (usa Advantage+ o segmentación por intereses).</p> :
-            r.audiences.map((a: any, i: number) => (
+            r.audiences.map((a: ReportAudience, i: number) => (
               <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)" }}>
                 <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{a.name}</strong>{" "}
                 <span className="badge badge-success">{badgeIcon("badge-success")} {a.subtype}</span>
-                <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{a.description} · ~{num(a.approximate_count)}</p>
+                <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{a.description} · ~{num(a.approximate_count ?? 0)}</p>
               </div>
             ))}
         </div>
         <div style={card}>
           <h2 style={{ ...h2, fontSize: "15px" }}>Inventario de creativos</h2>
           {r.creatives.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin creativos.</p> :
-            r.creatives.map((c: any, i: number) => (
+            r.creatives.map((c: ReportCreative, i: number) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)", fontSize: "0.85rem" }}>
                 {/* 5.4(c): thumbnail real del creativo — la `url` ya venía del
                     reporte pero no se mostraba, solo texto. Fallback a un
                     placeholder si la imagen no carga (URL vencida/mock). */}
-                <CreativeThumb url={c.url} name={c.name || c.image_hash} />
+                <CreativeThumb url={c.url ?? undefined} name={c.name || c.image_hash} />
                 <div>
                   <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{c.name || c.image_hash}</strong>
                   <span style={{ color: "var(--text-secondary)" }}> · {c.width}×{c.height}</span>
@@ -458,7 +462,7 @@ export default function Reporte() {
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr><th style={th}>Parámetro</th><th style={th}>Valor recomendado</th><th style={th}>Justificación</th></tr></thead>
           <tbody>
-            {r.optimal_params.map((p: any, i: number) => (
+            {r.optimal_params.map((p: OptimalParam, i: number) => (
               <tr key={i}>
                 <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{p.param}</td>
                 <td style={td}>{p.value}</td>
