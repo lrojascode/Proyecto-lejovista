@@ -1,0 +1,125 @@
+# 04 · Frontend
+
+## 1. Stack
+
+Definido en `frontend/package.json`:
+
+| Área | Tecnología |
+|------|-----------|
+| Framework | **Next.js 16.2.9** (App Router, `output: "standalone"`) |
+| UI | **React 19.2**, componentes de servidor y de cliente |
+| Lenguaje | TypeScript 5 |
+| Gráficos | **Recharts 3** |
+| Markdown | `react-markdown` + `remark-gfm` (render de la narrativa del Master Brief) |
+| Estilos | CSS global (`app/globals.css`) con tokens/variables; **sin** framework de UI (no Tailwind, no MUI) |
+| Testing | Jest 30 + Testing Library + `jest-environment-jsdom` |
+
+> `AGENTS.md` advierte que esta versión de Next.js puede diferir de versiones previas; consultar `node_modules/next/dist/docs/` antes de tocar convenciones.
+
+## 2. Estructura de rutas (App Router)
+
+```
+app/
+├── layout.tsx                # Root: fuentes (Inter, JetBrains Mono), metadata, <html lang="es">
+├── landing/page.tsx          # Landing pública (sin auth)
+├── (auth)/login/page.tsx     # Login + signup
+└── (dashboard)/              # Grupo de rutas autenticadas
+    ├── layout.tsx            # Guard de auth + sidebar + providers
+    ├── page.tsx              # "Resumen" (KPIs 7d, gráficos, ranking)
+    ├── campaigns/
+    │   ├── page.tsx          # Listado de campañas (estado real de Meta)
+    │   ├── [id]/page.tsx     # Detalle + historial (gráfico)
+    │   ├── new/page.tsx      # Creación asistida por IA (622 líneas)
+    │   └── learning/page.tsx # Historial de entrenamiento de la IA
+    ├── reporte/page.tsx      # Master Brief + descarga PDF + comparativa 7/30/90d
+    ├── diagnostics/page.tsx  # Insights de IA (Capa 1 y 2)
+    ├── actions/page.tsx      # Acciones sugeridas (aprobar/rechazar)
+    ├── ai-usage/page.tsx     # Consumo de tokens por funcionalidad
+    └── settings/page.tsx     # Org, cuentas, páginas/WhatsApp, rubro, modelo IA
+```
+
+- Los **grupos de rutas** `(auth)` y `(dashboard)` no afectan la URL; separan layouts.
+- Casi todas las páginas del dashboard son **client components** (`"use client"`) porque dependen de `localStorage` (token) y de estado interactivo.
+
+## 3. Autenticación en el cliente
+
+- Tras login/signup se guardan en `localStorage`: `token`, `refresh_token`, `user`.
+- El **guard** vive en `(dashboard)/layout.tsx`: si no hay `token`/`user`, redirige a `/login` con `safeRedirect` (`window.location.replace`).
+- El cliente API (`lib/api.ts`) adjunta `Authorization: Bearer <token>` y, ante un `401`, intenta **un** refresh (`tryRefresh`) antes de expulsar al usuario y limpiar el storage.
+
+```mermaid
+sequenceDiagram
+    participant P as Página
+    participant API as lib/api.ts
+    participant BE as Backend
+    P->>API: api.getInsights()
+    API->>BE: GET /insights (Bearer access, X-Tenant-Slug, X-Ad-Account-Id)
+    alt 401
+        API->>BE: POST /auth/refresh (refresh_token)
+        alt refresh OK
+            BE-->>API: nuevo access+refresh
+            API->>BE: reintenta GET /insights
+        else refresh falla
+            API->>P: limpia storage → /login
+        end
+    end
+    BE-->>P: datos
+```
+
+## 4. Cliente API (`lib/api.ts`)
+
+- `apiRequest<T>()` centraliza `fetch`: base URL resuelta por `getApiUrl()`, headers de auth, tenant y cuenta activa, parseo de errores (`detail` string u objeto).
+- Headers automáticos (solo en navegador):
+  - `X-Tenant-Slug` — derivado del subdominio con `getTenantSlugFromHostname` (solo si el hostname termina en `BASE_DOMAIN`).
+  - `X-Ad-Account-Id` — leído de `localStorage["active_ad_account_id"]`, cuyo **único escritor** es `AdAccountProvider`.
+- Funciones especializadas que no pueden reusar `apiRequest`:
+  - `apiUploadRequest` — subida multipart (el navegador fija el boundary).
+  - `downloadReportPdf` — descarga el blob del PDF con los mismos headers.
+- El objeto `api` expone métodos tipados (`login`, `getRecentCampaigns`, `getInsights`, `getPendingActions`, `approveAction`, `getBriefData`, `getKpisSummary`, `getAiUsage`, `createCampaign`, `getCampaignSuggestion`, `previewCampaignRisk`, …).
+
+## 5. Resolución de entorno (`lib/config.ts`)
+
+Tres modos de despliegue soportados:
+
+| Modo | `getApiUrl()` | Tenant slug |
+|------|---------------|-------------|
+| **Local (2 subdominios)** | `http://localhost:8000` | subdominio de `*.localhost` |
+| **Producción (2 subdominios)** | `https://api.<BASE_DOMAIN>` | subdominio de `<BASE_DOMAIN>` |
+| **Single-host (túnel)** | `""` (origen relativo; Nginx rutea `/api` y `/ws`) | `null` |
+
+- `SINGLE_HOST_MODE` (`NEXT_PUBLIC_SINGLE_HOST_MODE`) activa el modo túnel.
+- `getTenantSlugFromHostname` es defensivo: solo devuelve slug si el hostname realmente termina en `BASE_DOMAIN` (evita mandar `X-Tenant-Slug` falso desde `*.ngrok-free.app`, que causaba 403).
+- **Las `NEXT_PUBLIC_*` se inlinean en build** (ver `Dockerfile` y `build-push.sh`): cambiar de dominio requiere reconstruir la imagen.
+
+## 6. Middleware (`middleware.ts`)
+
+- Extrae el subdominio del `Host` y lo inyecta como header `x-tenant-slug` para Server Components.
+- Reescribe la raíz sin subdominio (`/`) hacia `/landing`.
+- Excluye assets estáticos y `/api`.
+
+## 7. Providers de contexto (`components/providers/`)
+
+### `AdAccountProvider`
+- Carga las cuentas de la org (`api.getAdAccounts()`).
+- Resuelve la **cuenta activa**: la guardada (`active_ad_account_<orgId>`) si sigue existiendo, o la única si solo hay una, o ninguna (fuerza selección).
+- Escribe la clave fija `active_ad_account_id` que `lib/api.ts` lee de forma síncrona para el header `X-Ad-Account-Id`.
+- El **selector** en el sidebar solo aparece si hay 2+ cuentas; al cambiar, recarga la página.
+
+### `WebSocketProvider`
+- Abre `ws(s)://.../ws/notifications/<tenantId>?token=<JWT>`.
+- Reconexión automática cada 3 s; expone `lastEvent` e `isConnected` por contexto.
+- Las páginas escuchan `lastEvent` para refrescar (ej. `analysis_status`, `sync_status`, `campaign_creation`).
+
+## 8. Estilo y accesibilidad
+
+- Tema oscuro con tokens CSS (`--color-obsidian`, `--color-paper`, `--color-ash`, `--color-graphite`, `--text-secondary`, …) en `globals.css`.
+- **Accesibilidad** (`E-6`): los badges no dependen solo del color — `lib/badge.ts` añade un ícono redundante (`✓ ⚠ ✕ ✦`).
+- Distinción explícita entre **estado real de Meta** (`metaStatusBadge`: Activa/Pausada/Archivada/Eliminada) y **evaluación de rendimiento** de la IA (GANADORA/CARA/…), que antes se confundían en la columna "Estado".
+
+## 9. Tipos compartidos (`lib/types.ts`)
+
+Espejo manual de los schemas Pydantic del backend y de las formas de retorno de endpoints sin `response_model` (`ReportBuilder`, `kpi_period`, `ai_usage`, `learning-history`). Regla del propio archivo: **no inventar campos** que el backend no devuelve; si un endpoint cambia, este archivo se actualiza junto con él. Incluye una nota honesta de que `AIAction.reject_reason` está tipado pero el backend aún no lo expone en `AIActionResponse`.
+
+## 10. Testing del frontend
+
+`frontend/__tests__/` (Jest + Testing Library, jsdom): `login.test.tsx`, `page.test.tsx`, `diagnostics.test.tsx`, `learning.test.tsx`. Configuración en `jest.config.ts` + `jest.setup.ts`. Ver [13-testing](13-testing.md).
