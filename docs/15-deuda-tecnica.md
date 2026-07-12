@@ -58,10 +58,11 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 ## 3. Escalabilidad y rendimiento
 
-### 🟠 P-1 · Sincronización síncrona dentro de la tarea
-- **Explicación**: `run_sync` hace decenas de llamadas HTTP a Meta secuenciales por cuenta (`~12-15` en real). Con muchas cuentas, el worker `sync` (concurrency 2) puede volverse cuello de botella pese al escalonado.
-- **Impacto**: latencia del pipeline diario crece linealmente con el número de cuentas.
-- **Propuesta**: paralelizar lecturas independientes por cuenta, o particionar el fan-out; monitorear duración de sync.
+### ✅ P-1 · Sincronización síncrona dentro de la tarea — RESUELTO
+- **Explicación (histórica)**: `run_sync` hacía decenas de llamadas HTTP a Meta secuenciales por cuenta (`~12-15` en real). Con muchas cuentas, el worker `sync` (concurrency 2) podía volverse cuello de botella pese al escalonado.
+- **Resolución**: se identificaron los pares/grupos de lecturas genuinamente independientes dentro de `_sync_real_data` (`app/services/meta_ads/sync.py`) — ninguna hace una escritura a `self.db` antes de que termine el fetch, así que pedirlas con `asyncio.gather` en vez de una tras otra no introduce ninguna carrera sobre la sesión de SQLAlchemy (que sí sería insegura si se paralelizaran escrituras) — y se paralelizaron: campañas + insights de campaña, estructura + insights de adsets, estructura + insights de ads, imágenes + audiencias del inventario, y las **5 dimensiones de breakdown** (antes 5 llamadas una tras otra, el mayor cuello de botella individual). `MetaAPIRateLimiter.call_api` ya era seguro para invocación concurrente (cada llamada abre su propio `httpx.AsyncClient` y su propia sesión de log — sin estado mutuo compartido salvo un contador cosmético sin lectores). Reduce de ~16 a ~7 round-trips secuenciales por cuenta (más N llamadas por página, inherentemente secuenciales por depender del `page_id` anterior).
+- **No incluido**: paralelizar las escrituras a BD entre sub-syncs (adsets/ads/inventario/páginas/breakdowns como fases completas) — requeriría separar fetch/write en cada uno y usar sesiones de BD independientes por coroutine, un refactor bastante más invasivo para un beneficio marginal (las escrituras son rápidas; el cuello de botella real es la latencia de red de Meta, ya atacada).
+- Verificado con la suite existente (`tests/test_audit_fixes.py::test_real_sync_parses_meta_entities` y afines, que ejercen `_sync_real_data` completo contra un limiter fake) — sin cambios de comportamiento, solo de orden/paralelismo de las llamadas HTTP.
 
 ### 🟡 P-2 · Estado en memoria del proceso
 - **Explicación**: el `ConnectionManager` de WebSocket y `temp_tokens` viven en memoria del proceso FastAPI. Con múltiples réplicas del backend, un cliente conectado a la réplica A no recibe un broadcast originado en B salvo por el pubsub (que sí resuelve WS, pero no el token temporal).
@@ -115,7 +116,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | S-3 | 🟠 | Blocklist JWT fail-open | Bajo | ✅ Resuelto |
 | M-1 | 🟠 | Consolidar clientes Meta | Medio | ✅ Resuelto |
 | M-2 | 🟠 | Reglas por tenant | Alto | ✅ Resuelto |
-| P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
+| P-1 | 🟠 | Paralelizar sync | Medio | ✅ Resuelto |
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
 | S-4, S-5 | 🟡 | Endurecimiento | Bajo | ✅ Resuelto |
 | M-3 | 🟡 | Modelos marginales | Bajo | ✅ Resuelto |
