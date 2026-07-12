@@ -87,10 +87,10 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 ## 5. Producto / IA
 
-### 🟡 IA-1 · Ejecución real de modificaciones aún no ejercida a gran escala
-- **Explicación**: `MetaCampaignModifier` y la Saga tienen caminos reales bien construidos (backup, rollback, reglas de seguridad), pero el write-back está apagado por defecto y validado solo con cuenta piloto.
-- **Impacto**: riesgo residual al encender `ENABLE_META_WRITEBACK` en todo el parque.
-- **Propuesta**: seguir el checklist de `F-2` (allowlist), y añadir tests de integración contra un entorno de sandbox de Meta.
+### ✅ IA-1 · Ejecución real de modificaciones aún no ejercida a gran escala — RESUELTO (documentación)
+- **Explicación (histórica)**: `MetaCampaignModifier` y la Saga tienen caminos reales bien construidos (backup, rollback, reglas de seguridad), pero el write-back está apagado por defecto y validado solo con cuenta piloto.
+- **Resolución**: checklist operativo de encendido gradual documentado en [09-seguridad §3b](09-seguridad.md) — pre-requisitos para elegir la cuenta piloto, pasos de activación (allowlist nunca vacío en el primer encendido), qué monitorear la primera semana (`AIAction.status`/`rollback_error`, gasto real, Sentry), y criterio de rollback de la propia activación.
+- **No incluido**: tests de integración contra un sandbox real de Meta — Meta no ofrece un sandbox equivalente al de otros proveedores (Stripe, etc.) para la Marketing API; la cobertura real de este camino es, por diseño, el checklist ejecutado contra una cuenta piloto de bajo riesgo, documentado explícitamente en 09-seguridad §3b junto con el motivo.
 
 ### ✅ UX-1 · El "Estado" de una campaña se mostraba de dos formas distintas — RESUELTO
 - **Explicación (histórica)**: la lista `/campaigns` usaba `metaStatusBadge` (Activa/Pausada/Archivada/Eliminada, español) y separaba una columna "Rendimiento"; pero la tabla "Resumen de Campañas Activas" del dashboard seguía pintando el `status` crudo en inglés (`ACTIVE`→verde, resto→ámbar). Ver [21-producto-datos-visualizados](21-producto-datos-visualizados.md) §2.4.
@@ -119,7 +119,8 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | M-3 | 🟡 | Modelos marginales | Bajo | ✅ Resuelto |
 | M-4 | 🟡 | Tipos generados desde OpenAPI | Bajo | ✅ Resuelto |
 | P-2 | 🟡 | Estado en memoria (WS) | Bajo | ✅ Resuelto (por verificación) |
-| O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
+| IA-1 | 🟡 | Checklist write-back | Bajo | ✅ Resuelto |
+| O-2 | 🟡 | Migraciones init-container | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-2 | 🟡 | reject_reason expuesto | Trivial | ✅ Resuelto |
 | UX-1 | 🟡 | StatusBadge único | Bajo | ✅ Resuelto |

@@ -78,7 +78,7 @@ flowchart LR
 
 - [x] **UX-1** — ✅ Hecho. Nuevo `frontend/components/StatusBadge.tsx` (envuelve `metaStatusBadge`+`badgeIcon`), usado en `(dashboard)/page.tsx` (reemplaza el badge `ACTIVE`/inglés) y `campaigns/page.tsx` (reemplaza el uso inline de `metaStatusBadge`). Verificado en navegador real: ambas pantallas muestran ahora "✓ Activa" idéntico. `tsc --noEmit`/`npm test`/`npm run build` limpios.
 - [x] **UX-3** — ✅ Hecho. `(dashboard)/page.tsx` llama `api.getBriefData(7)` y muestra el primer `finding` + la primera `recommendation` en una tarjeta nueva, con link a `/reporte` para el resto. Deterministas (`ReportBuilder._findings`/`_recommendations`), no dependen de que la Capa 3 (LLM) haya corrido. Verificado en navegador real con datos sincronizados reales.
-- [ ] **IA-1** — checklist de encendido de write-back (`F-2` allowlist) + tests de integración contra sandbox de Meta.
+- [x] **IA-1** — ✅ Hecho (documentación). Checklist operativo de encendido gradual en [09-seguridad §3b](09-seguridad.md): pre-requisitos para la cuenta piloto, pasos de activación, qué monitorear, criterio de rollback de la activación. Tests de integración contra sandbox de Meta explícitamente **no incluidos** y documentado el motivo: Meta no ofrece un sandbox equivalente para la Marketing API — la cobertura real de este camino es el checklist ejecutado contra una cuenta piloto de bajo riesgo, no una suite automatizada.
 - [ ] **O-2** — migraciones en init-container antes de arrancar el API.
 
 ## Tabla maestra
@@ -98,6 +98,7 @@ flowchart LR
 | P-2 | 🟡 | 4 | Bajo | 0 | ✅ Hecho (verificación) |
 | UX-1 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
 | UX-3 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
-| IA-1, O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
+| IA-1 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
+| O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
 
 **Quick wins** para arrancar con impulso: UX-2, S-3, S-4, M-3 (todos bajos, sin dependencias más allá de CI).

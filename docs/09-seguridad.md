@@ -34,6 +34,33 @@ flowchart TD
 - Regla de oro: las campañas se crean siempre `PAUSED` (`TENANT_CAMPAIGN_RULES["default_status"]`); la activación es manual en Ads Manager.
 - El resultado de una modificación marca `simulated: true/false` para que el frontend no asuma que se aplicó de verdad (`P-1`).
 
+### 3b. Checklist de encendido de write-back (`IA-1`, resuelto — documentación)
+
+`MetaCampaignModifier`/la Saga de creación tienen los caminos reales bien construidos (backup + rollback automático en `AIExecutor.execute_action`, reglas de negocio en `CampaignValidator`), pero **nunca se han ejercido en producción con dinero real de un cliente** — solo contra cuentas simuladas o, cuando mucho, una piloto. Este es el runbook para encenderlo por primera vez en una cuenta real, no una prueba automatizada (ver la nota al final sobre por qué).
+
+**Pre-requisitos (antes de tocar cualquier flag):**
+1. Elegir la cuenta piloto: la de **menor gasto diario** entre las conectadas, idealmente con presupuesto tope bajo (`AdAccount.spend_cap`) — el radio de impacto de un bug debe ser mínimo.
+2. Confirmar con el dueño de esa cuenta que sabe que va a recibir escrituras reales de la IA (pausas, cambios de presupuesto/placements, creación de campañas) y que puede revisar Ads Manager esa semana.
+3. Revisar en `/ai-usage` y `/diagnostics` que las últimas propuestas de `AIAction` para esa cuenta tengan sentido (presupuestos, placements, razones) — si el motor viene proponiendo disparates para esa cuenta, no es la piloto correcta.
+
+**Activación gradual:**
+1. En `.env` (o el secreto de despliegue equivalente): `ENABLE_META_WRITEBACK=true` + `WRITEBACK_ACCOUNT_ALLOWLIST=<id_de_la_cuenta_piloto>` — **nunca** activar `ENABLE_META_WRITEBACK` con el allowlist vacío en el primer encendido (eso escribe real en **todo** el parque de una vez, ver el flowchart de arriba).
+2. Redesplegar backend + workers (`creation`/`ai` leen `settings` al arrancar el proceso).
+3. Aprobar **una sola** `AIAction` de bajo riesgo primero (`MODIFY_BUDGET` o `PAUSE_CAMPAIGN`; NO `CREATE_CAMPAIGN` en el primer intento — es la de mayor superficie, varios pasos de Saga encadenados).
+4. Verificar en Meta Ads Manager que el cambio se aplicó exactamente como dice `AIAction.execution_result` (no solo que "no dio error" — comparar valores).
+5. Verificar `APICallLog` de esa cuenta: el request/response real quedó auditado, sin errores silenciosos.
+
+**Qué monitorear la primera semana:**
+- `AIAction.status` de esa cuenta: cualquier `FAILED` con `execution_result.rollback_error` es una alarma — significa que el backup existía pero el rollback automático también falló (peor caso: estado divergente sin revertir).
+- Gasto real de la cuenta piloto (`AdAccount.amount_spent`, `AdAccountSpendMonthly`) — un salto inesperado tras una `MODIFY_BUDGET` real es la señal más directa de un bug en el cálculo del nuevo presupuesto.
+- Sentry (si `SENTRY_DSN` está configurado) para excepciones no capturadas en `creation`/`ai` queues durante ese período.
+
+**Criterio de rollback del propio encendido** (no del `AIAction` individual, sino de la campaña de activación): si aparece un solo `FAILED` con `rollback_error`, o una discrepancia entre lo que Meta muestra y `execution_result`, volver a `ENABLE_META_WRITEBACK=false` de inmediato y investigar antes de reintentar — no seguir ampliando el allowlist con el bug sin diagnosticar.
+
+**Solo tras 1-2 semanas sin incidentes en la piloto**: ampliar `WRITEBACK_ACCOUNT_ALLOWLIST` a más cuentas (una a la vez, no todas de golpe), y recién cuando haya confianza acumulada, vaciar el allowlist para cubrir el parque completo.
+
+**Nota sobre "tests de integración contra sandbox de Meta"** (mencionado en el hallazgo original): Meta no ofrece un sandbox público de la Marketing API equivalente al de otros proveedores (Stripe, etc.) — las "test ad accounts" de Meta para desarrollo tienen sus propias limitaciones y requieren una app de Meta aprobada y credenciales dedicadas, fuera del alcance de este repo/entorno. La cobertura real de este camino es, por diseño, el checklist de arriba ejecutado contra una cuenta piloto de bajo riesgo — no una suite automatizada, porque no existe un entorno de Meta seguro y determinista donde automatizarla.
+
 ## 4. Aislamiento multi-tenant
 
 - Cada endpoint filtra por `current_user.organization_id` (organización activa validada, `S-8`).
