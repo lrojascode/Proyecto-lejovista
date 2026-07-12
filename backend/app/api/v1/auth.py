@@ -10,6 +10,7 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse
+from app.schemas.response_schemas import MessageResponse
 from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
     decode_token, revoke_jti, is_revoked, get_current_user,
@@ -224,7 +225,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
         "user": enrich_user(user)
     }
 
-@router.post("/logout")
+@router.post("/logout", response_model=MessageResponse)
 async def logout(request: Request, response: Response):
     """Revoca el refresh token (S-9) y borra la cookie (S-2). Los access
     tokens caducan por expiración, no se revocan activamente."""

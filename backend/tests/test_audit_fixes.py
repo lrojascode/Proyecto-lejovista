@@ -1218,6 +1218,34 @@ async def test_action_approve_rejects_wrong_account(async_client: AsyncClient, d
     assert res.status_code == 404
 
 
+# --- UX-2: reject_reason/rejected_at expuestos en el historial de acciones ---
+@pytest.mark.asyncio
+async def test_action_reject_exposes_reason_in_response(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc1, _acc2 = await _make_org_and_two_accounts(db_session, slug="reject-reason-org")
+    action = AIAction(
+        ad_account_id=acc1.id, organization_id=org.id, action_type="MODIFY_BUDGET",
+        risk_level="LOW", title="Acción a rechazar", description="d", status="PROPOSED",
+    )
+    db_session.add(action)
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "rejectreason@example.com")
+    res = await async_client.post(
+        f"/api/v1/actions/{action.id}/approve",
+        json={"approve": False, "reject_reason": "CPL aún dentro del rango aceptable."},
+        headers={**headers, "X-Ad-Account-Id": acc1.id},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["reject_reason"] == "CPL aún dentro del rango aceptable."
+    assert body["rejected_at"] is not None
+
+    history = await async_client.get(
+        "/api/v1/actions/history", headers={**headers, "X-Ad-Account-Id": acc1.id}
+    )
+    assert history.json()[0]["reject_reason"] == "CPL aún dentro del rango aceptable."
+
+
 @pytest.mark.asyncio
 async def test_multiple_accounts_no_header_returns_400(async_client: AsyncClient, db_session: AsyncSession):
     org, acc1, acc2 = await _make_org_and_two_accounts(db_session, slug="noheader-multi")

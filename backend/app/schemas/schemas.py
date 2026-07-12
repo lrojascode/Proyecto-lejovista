@@ -168,6 +168,11 @@ class AIActionResponse(BaseModel):
     execution_result: Optional[Dict[str, Any]] = None
     estimated_impact: Optional[str] = None
     confidence: float
+    # (UX-2) El modelo ya guardaba ambos (ver ActionApprove más abajo y
+    # actions.py) pero el response no los exponía — el historial de acciones
+    # nunca podía mostrar cuándo ni por qué se rechazó una acción.
+    rejected_at: Optional[datetime] = None
+    reject_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

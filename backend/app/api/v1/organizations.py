@@ -14,11 +14,12 @@ from app.utils.security import get_current_user, require_role
 from app.workers.tasks import sync_ad_account
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
+from app.schemas.response_schemas import AiModelsResponse, BusinessPoliciesResponse
 from typing import List, Optional
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
-@router.get("/ai-models")
+@router.get("/ai-models", response_model=AiModelsResponse)
 async def get_available_ai_models(current_user: User = Depends(get_current_user)):
     """
     Modelos de IA que el selector de Preferencias debería ofrecer: solo los del
@@ -56,7 +57,7 @@ async def update_my_organization(
     await db.commit()
     return org
 
-@router.get("/my/policies")
+@router.get("/my/policies", response_model=BusinessPoliciesResponse)
 async def get_my_business_policies(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)

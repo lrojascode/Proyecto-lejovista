@@ -37,6 +37,10 @@ from app.workers.creation_tasks import (
     task_create_ad,
     task_handle_chain_error
 )
+from app.schemas.response_schemas import (
+    ApiCallHistoryEntry, SuggestionResponse, ImageUploadResponse, RiskPreviewResponse,
+    CampaignCreateAcceptedResponse, LearningLogResponse, MessageResponse,
+)
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -107,7 +111,7 @@ async def list_recent_campaign_snapshots(
 
     return responses
 
-@router.get("/api-call-history")
+@router.get("/api-call-history", response_model=List[ApiCallHistoryEntry])
 async def list_api_call_history(
     limit: int = 10,
     current_user: User = Depends(get_current_user),
@@ -164,7 +168,7 @@ async def get_campaign_history(
     res = await db.execute(q)
     return res.scalars().all()
 
-@router.post("/sync-trigger")
+@router.post("/sync-trigger", response_model=MessageResponse)
 async def trigger_manual_sync(
     current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db)
@@ -192,7 +196,7 @@ async def trigger_manual_sync(
     return {"message": f"Sincronización manual programada para {len(accounts)} cuentas de anuncios."}
 
 
-@router.get("/suggestion")
+@router.get("/suggestion", response_model=SuggestionResponse)
 async def get_campaign_suggestion(
     ad_account_id: str,
     product_name: str = "Producto",
@@ -267,7 +271,7 @@ _ALLOWED_IMAGE_TYPES = {
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8MB
 
 
-@router.post("/upload-image")
+@router.post("/upload-image", response_model=ImageUploadResponse)
 async def upload_campaign_image(
     file: UploadFile = File(...),
     current_user: User = Depends(require_role("OPERATOR")),
@@ -293,7 +297,7 @@ async def upload_campaign_image(
     return {"image_path": f"{current_user.organization_id}/{filename}"}
 
 
-@router.post("/risk-preview")
+@router.post("/risk-preview", response_model=RiskPreviewResponse)
 async def preview_campaign_risk(
     request: CampaignRiskPreviewRequest,
     current_user: User = Depends(require_role("OPERATOR")),
@@ -322,7 +326,7 @@ async def preview_campaign_risk(
     return {"risk_level": risk["level"], "risk_reasons": risk["reasons"]}
 
 
-@router.post("/", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/", status_code=status.HTTP_202_ACCEPTED, response_model=CampaignCreateAcceptedResponse)
 async def create_campaign(
     request: CampaignCreateRequest,
     current_user: User = Depends(require_role("OPERATOR")),
@@ -480,7 +484,7 @@ async def get_campaign_draft_status(
     return draft
 
 
-@router.get("/learning-history")
+@router.get("/learning-history", response_model=List[LearningLogResponse])
 async def get_learning_history(
     limit: int = 20,
     current_user: User = Depends(get_current_user),

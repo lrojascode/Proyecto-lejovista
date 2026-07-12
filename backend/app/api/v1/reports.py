@@ -14,11 +14,12 @@ from app.services.report_cache import get_report
 from app.services.kpi_period import get_kpis_with_deltas
 from app.services.pdf_report import render_report_pdf
 from app.utils.security import get_current_user, get_active_ad_account_id
+from app.schemas.response_schemas import BriefDataResponse, KpisSummaryResponse, SpendHistoryResponse
 from typing import Optional
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
-@router.get("/brief-data")
+@router.get("/brief-data", response_model=BriefDataResponse)
 async def get_master_brief_data(
     window_days: int = 30,
     current_user: User = Depends(get_current_user),
@@ -119,7 +120,7 @@ async def download_report_pdf(
     )
 
 
-@router.get("/kpis-summary")
+@router.get("/kpis-summary", response_model=KpisSummaryResponse)
 async def get_kpis_summary(
     current_user: User = Depends(get_current_user),
     ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
@@ -159,7 +160,7 @@ async def get_kpis_summary(
     }
 
 
-@router.get("/spend-history")
+@router.get("/spend-history", response_model=SpendHistoryResponse)
 async def get_spend_history(
     current_user: User = Depends(get_current_user),
     ad_account_id: Optional[str] = Depends(get_active_ad_account_id),

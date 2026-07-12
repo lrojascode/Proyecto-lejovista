@@ -14,11 +14,12 @@ from app.database import get_db
 from app.models.user import User
 from app.models.ai_token_usage import AITokenUsage
 from app.utils.security import get_current_user
+from app.schemas.response_schemas import AiUsageResponse
 
 router = APIRouter(prefix="/ai-usage", tags=["ai-usage"])
 
 
-@router.get("")
+@router.get("", response_model=AiUsageResponse)
 async def get_ai_usage(
     days: int = 30,
     current_user: User = Depends(get_current_user),
