@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -8,10 +8,11 @@ from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
-from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse, RefreshRequest
+from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse
 from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
     decode_token, revoke_jti, is_revoked, get_current_user,
+    set_refresh_cookie, clear_refresh_cookie, REFRESH_COOKIE_NAME,
 )
 from app.utils.throttle import enforce_rate_limit
 from app.config import settings
@@ -54,7 +55,9 @@ def enrich_user(user: User):
     }
 
 @router.post("/signup", response_model=TokenResponse)
-async def signup(user_in: UserCreate, request: Request, db: AsyncSession = Depends(get_db)):
+async def signup(
+    user_in: UserCreate, request: Request, response: Response, db: AsyncSession = Depends(get_db)
+):
     # Sin esto, cualquiera con la URL puede spamear registros (más relevante
     # una vez expuesta la app vía túnel/internet).
     await enforce_rate_limit("signup", get_client_ip(request), max_attempts=5, window_seconds=3600)
@@ -125,22 +128,24 @@ async def signup(user_in: UserCreate, request: Request, db: AsyncSession = Depen
     # MissingGreenlet): fijamos el valor ya conocido como "committed".
     set_committed_value(user, "organizations", [org_user])
 
+    set_refresh_cookie(response, request, refresh_token)
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": enrich_user(user)
     }
 
 @router.post("/login", response_model=TokenResponse)
-async def login(login_data: UserLogin, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(
+    login_data: UserLogin, request: Request, response: Response, db: AsyncSession = Depends(get_db)
+):
     # Corta fuerza bruta de contraseña; permite ráfagas legítimas (typos).
     await enforce_rate_limit("login", get_client_ip(request), max_attempts=10, window_seconds=300)
 
     q = select(User).options(selectinload(User.organizations)).where(User.email == login_data.email)
     res = await db.execute(q)
     user = res.scalar_one_or_none()
-    
+
     if not user or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -151,18 +156,24 @@ async def login(login_data: UserLogin, request: Request, db: AsyncSession = Depe
     access_token = create_access_token(subject=user.id, org=active_org)
     refresh_token = create_refresh_token(subject=user.id, org=active_org)
 
+    set_refresh_cookie(response, request, refresh_token)
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": enrich_user(user)
     }
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    """Emite un nuevo par de tokens a partir de un refresh token válido (S-9).
-    Rota el refresh (revoca el anterior) para mitigar reuso de tokens robados."""
-    data = decode_token(payload.refresh_token)
+async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Emite un nuevo par de tokens a partir del refresh token de la cookie
+    httpOnly (S-2/S-9). Rota el refresh (revoca el anterior) para mitigar
+    reuso de tokens robados. El JS del cliente nunca ve el refresh token —
+    solo el navegador lo adjunta automáticamente vía cookie."""
+    raw_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not raw_token:
+        raise HTTPException(status_code=401, detail="No hay sesión activa (falta el refresh token).")
+
+    data = decode_token(raw_token)
     if not data or data.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Refresh token inválido.")
     if await is_revoked(data.get("jti")):
@@ -178,20 +189,25 @@ async def refresh(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
 
     # Rotación: revocar el refresh usado y emitir uno nuevo.
     await revoke_jti(data.get("jti"), settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+    new_refresh_token = create_refresh_token(subject=user.id, org=org)
 
+    set_refresh_cookie(response, request, new_refresh_token)
     return {
         "access_token": create_access_token(subject=user.id, org=org),
-        "refresh_token": create_refresh_token(subject=user.id, org=org),
         "token_type": "bearer",
         "user": enrich_user(user)
     }
 
 @router.post("/logout")
-async def logout(payload: RefreshRequest):
-    """Revoca el refresh token (S-9). Los access tokens caducan por expiración."""
-    data = decode_token(payload.refresh_token)
-    if data and data.get("jti"):
-        await revoke_jti(data["jti"], settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+async def logout(request: Request, response: Response):
+    """Revoca el refresh token (S-9) y borra la cookie (S-2). Los access
+    tokens caducan por expiración, no se revocan activamente."""
+    raw_token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if raw_token:
+        data = decode_token(raw_token)
+        if data and data.get("jti"):
+            await revoke_jti(data["jti"], settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+    clear_refresh_cookie(response, request)
     return {"message": "Sesión cerrada."}
 
 @router.get("/me", response_model=UserResponse)

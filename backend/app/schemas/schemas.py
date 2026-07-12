@@ -11,7 +11,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
     full_name: str
-    organization_slug: str # Crear org si no existe, o asignar
+    organization_slug: str  # Funda una organización nueva (S-1: no une a una existente)
     organization_name: str
 
 class UserResponse(BaseModel):
@@ -25,13 +25,12 @@ class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 class TokenResponse(BaseModel):
+    # (S-2) El refresh token viaja SOLO como cookie httpOnly — nunca en el
+    # cuerpo JSON, para que no quede alcanzable desde JavaScript (localStorage)
+    # ante una vulnerabilidad XSS.
     access_token: str
     token_type: str
     user: UserResponse
-    refresh_token: Optional[str] = None
-
-class RefreshRequest(BaseModel):
-    refresh_token: str
 
 # --- ORGANIZATION SCHEMAS ---
 class OrganizationResponse(BaseModel):

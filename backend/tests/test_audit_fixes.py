@@ -341,7 +341,9 @@ async def test_active_tenant_switch_via_header(async_client: AsyncClient, db_ses
     assert me_b.json()["organization_id"] == org_b.id
 
 
-# --- S-9: refresh token emite un access token nuevo y usable ---
+# --- S-9/S-2: refresh token emite un access token nuevo y usable. Viaja como
+# cookie httpOnly (nunca en el body JSON) — el cliente de test la recibe/envía
+# automáticamente vía su cookie jar, igual que haría un navegador real. ---
 @pytest.mark.asyncio
 async def test_refresh_token_flow(async_client: AsyncClient):
     signup = {
@@ -350,11 +352,10 @@ async def test_refresh_token_flow(async_client: AsyncClient):
     }
     res = await async_client.post("/api/v1/auth/signup", json=signup)
     body = res.json()
-    assert body.get("refresh_token")  # signup ya entrega refresh token
+    assert "refresh_token" not in body  # (S-2) nunca en el cuerpo JSON
+    assert async_client.cookies.get("refresh_token")  # sí como cookie httpOnly
 
-    refresh_res = await async_client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": body["refresh_token"]}
-    )
+    refresh_res = await async_client.post("/api/v1/auth/refresh")
     assert refresh_res.status_code == 200
     new_access = refresh_res.json()["access_token"]
     assert new_access and new_access != body["access_token"]
@@ -366,16 +367,62 @@ async def test_refresh_token_flow(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_refresh_without_cookie_rejected(async_client: AsyncClient):
+    res = await async_client.post("/api/v1/auth/refresh")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_refresh_rejects_access_token(async_client: AsyncClient):
-    # Un access token no debe servir como refresh token (type mismatch).
+    # Un access token no debe servir como refresh token (type mismatch), aunque
+    # llegue con la forma correcta (cookie).
     signup = {
         "email": "rf2@example.com", "password": "securepassword123",
         "full_name": "U", "organization_slug": "rf2-org", "organization_name": "RF2",
     }
     res = await async_client.post("/api/v1/auth/signup", json=signup)
     access = res.json()["access_token"]
-    bad = await async_client.post("/api/v1/auth/refresh", json={"refresh_token": access})
+    async_client.cookies.set("refresh_token", access)
+    bad = await async_client.post("/api/v1/auth/refresh")
     assert bad.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_logout_clears_cookie_and_revokes(async_client: AsyncClient, mocker):
+    # La revocación real vive en Redis (revoke_jti/is_revoked, fail-open si no
+    # responde — ver S-3). Sin un Redis real en el entorno de test, la
+    # revocación se ignoraría en silencio y este test no probaría nada — se
+    # simula un Redis en memoria para ejercer la revocación de verdad.
+    store: dict = {}
+
+    class _FakeRedis:
+        async def set(self, key, value, ex=None):
+            store[key] = value
+
+        async def get(self, key):
+            return store.get(key)
+
+        async def aclose(self):
+            pass
+
+    mocker.patch("app.utils.security.aioredis.Redis.from_url", return_value=_FakeRedis())
+
+    signup = {
+        "email": "logout@example.com", "password": "securepassword123",
+        "full_name": "Logout User", "organization_slug": "logout-org", "organization_name": "Logout Org",
+    }
+    await async_client.post("/api/v1/auth/signup", json=signup)
+    issued_refresh_token = async_client.cookies.get("refresh_token")
+    assert issued_refresh_token
+
+    logout_res = await async_client.post("/api/v1/auth/logout")
+    assert logout_res.status_code == 200
+
+    # El refresh emitido en el signup ya no sirve tras logout (jti revocado),
+    # aunque se reenvíe explícitamente (simula un atacante que lo capturó antes).
+    async_client.cookies.set("refresh_token", issued_refresh_token)
+    refresh_res = await async_client.post("/api/v1/auth/refresh")
+    assert refresh_res.status_code == 401
 
 
 # --- P-2: el sync captura breakdowns de género, dispositivo y geografía ---

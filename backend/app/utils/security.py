@@ -7,7 +7,7 @@ import logging
 import redis.asyncio as aioredis
 from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
-from fastapi import Depends, HTTPException, status, Request
+from fastapi import Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
@@ -22,6 +22,58 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=Fa
 
 # Token temporal: key -> (user_id, expiration_timestamp)
 temp_tokens: Dict[str, Tuple[str, float]] = {}
+
+# (S-2) El refresh token viaja como cookie httpOnly — nunca en el cuerpo JSON
+# ni en localStorage — para que una vulnerabilidad XSS no pueda leerlo con
+# `document.cookie` ni con JS en general.
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+def _refresh_cookie_domain(request: Request) -> Optional[str]:
+    """El `Domain` de la cookie debe abarcar los dos subdominios (frontend en
+    `<slug>.BASE_DOMAIN`, API en `api.BASE_DOMAIN`) SOLO cuando el host real de
+    la request pertenece a ese esquema. En modo túnel/single-host (Nginx
+    reenvía /api bajo el mismo hostname que el frontend, sin relación con
+    BASE_DOMAIN) fijar un Domain explícito que no coincide con el host visto
+    haría que el navegador rechace la cookie entera — mejor no fijar Domain y
+    dejar que aplique solo al host exacto (funciona igual, es el mismo origen)."""
+    base_host = settings.BASE_DOMAIN.split(":")[0]
+    host = (request.headers.get("host") or "").split(":")[0]
+    if base_host and (host == base_host or host.endswith(f".{base_host}")):
+        return base_host
+    return None
+
+
+def _is_secure_request(request: Request) -> bool:
+    """Nginx reenvía X-Forwarded-Proto (ver nginx/conf.d/*.conf) — la conexión
+    real del navegador puede ser HTTPS aunque uvicorn solo vea HTTP plano
+    detrás del proxy. En local (sin proxy) esto cae a request.url.scheme."""
+    return (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto", "").lower() == "https"
+    )
+
+
+def set_refresh_cookie(response: Response, request: Request, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
+        path=REFRESH_COOKIE_PATH,
+        domain=_refresh_cookie_domain(request),
+        secure=_is_secure_request(request),
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def clear_refresh_cookie(response: Response, request: Request) -> None:
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        domain=_refresh_cookie_domain(request),
+    )
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
