@@ -126,3 +126,22 @@ async def test_suggest_respects_explicit_budget_hint(db_session: AsyncSession):
     suggestion = await CampaignSuggester(db_session).suggest(acc, budget_hint=350.0)
 
     assert suggestion["suggested_budget"] == 350.0
+
+
+@pytest.mark.asyncio
+async def test_suggest_uses_org_campaign_rules_override(db_session: AsyncSession):
+    """M-2: una org con `campaign_rules_overrides` configurado recibe sus
+    propios objective/optimization_goal/destination_type, no los globales."""
+    org, acc = await _make_org_and_account(db_session, slug="suggest-org-override")
+    org.campaign_rules_overrides = {
+        "objective": "OUTCOME_TRAFFIC",
+        "optimization_goal": "LINK_CLICKS",
+        "destination_type": "WEBSITE",
+    }
+    await db_session.commit()
+
+    suggestion = await CampaignSuggester(db_session).suggest(acc)
+
+    assert suggestion["objective"] == "OUTCOME_TRAFFIC"
+    assert suggestion["optimization_goal"] == "LINK_CLICKS"
+    assert suggestion["destination_type"] == "WEBSITE"

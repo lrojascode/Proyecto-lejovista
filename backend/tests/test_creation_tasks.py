@@ -485,6 +485,91 @@ async def test_task_create_creative_uses_video_data_when_video_provided(ad_accou
 
 # --- Fase 6: error a mitad de la Saga — progreso parcial + estado FAILED coherente ---
 
+# --- M-2: reglas de campaña por tenant (Organization.campaign_rules_overrides) ---
+
+@pytest.mark.asyncio
+async def test_task_create_campaign_uses_org_objective_override(ad_account, db_session, mocker):
+    org, acc = ad_account
+    org.campaign_rules_overrides = {"objective": "OUTCOME_TRAFFIC"}
+    db_session.add(org)
+    await db_session.commit()
+
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    run_in_thread(task_create_campaign, _base_context(acc))
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    assert payload["objective"] == "OUTCOME_TRAFFIC"
+
+
+@pytest.mark.asyncio
+async def test_task_create_campaign_uses_global_default_when_org_has_no_override(ad_account, mocker):
+    """Sin overrides configurados, el comportamiento no cambia (M-2)."""
+    org, acc = ad_account
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    run_in_thread(task_create_campaign, _base_context(acc))
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    assert payload["objective"] == "OUTCOME_LEADS"  # TENANT_CAMPAIGN_RULES["objective"]
+
+
+@pytest.mark.asyncio
+async def test_task_create_adset_uses_org_optimization_goal_override(ad_account, db_session, mocker):
+    org, acc = ad_account
+    org.campaign_rules_overrides = {
+        "optimization_goal": "LINK_CLICKS",
+        "bid_strategy": "LOWEST_COST_WITH_BID_CAP",
+    }
+    db_session.add(org)
+    await db_session.commit()
+
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    context = _base_context(acc, campaign_id="mock_camp_1", campaign_name="X_MSJ_TEST")
+    run_in_thread(task_create_adset, context)
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    assert payload["optimization_goal"] == "LINK_CLICKS"
+    assert payload["bid_strategy"] == "LOWEST_COST_WITH_BID_CAP"
+    # Regla de oro del playbook (#3, no personalizable): sigue PAUSED.
+    assert payload["status"] == "PAUSED"
+
+
+@pytest.mark.asyncio
+async def test_task_create_adset_uses_org_geo_and_placements_override(ad_account, db_session, mocker):
+    import json
+    org, acc = ad_account
+    org.campaign_rules_overrides = {
+        "default_geo_region_key": "1234",
+        "required_placements": ["facebook_marketplace"],
+    }
+    db_session.add(org)
+    await db_session.commit()
+
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    context = _base_context(acc, campaign_id="mock_camp_1", campaign_name="X_MSJ_TEST")
+    run_in_thread(task_create_adset, context)
+
+    _, _endpoint, payload = mock_call_api.call_args[0]
+    targeting = json.loads(payload["targeting"])
+    assert targeting["geo_locations"]["regions"] == [{"key": "1234"}]
+    assert "facebook_marketplace" in targeting["facebook_positions"]
+
+
 @pytest.mark.asyncio
 async def test_saga_mid_chain_failure_preserves_partial_progress_and_marks_failed(
     campaign_draft, mocker, db_session

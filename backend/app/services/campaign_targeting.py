@@ -69,12 +69,16 @@ def device_targeting(best_device: Optional[str]) -> Dict[str, Any]:
     return {}
 
 
-def _facebook_positions(excluded_placements: List[str]) -> List[str]:
+def _facebook_positions(excluded_placements: List[str], rules: Optional[Dict[str, Any]] = None) -> List[str]:
     """Allowlist de posiciones de Facebook menos las que el histórico marcó como
     desperdicio (gasto y 0 conversiones). Las `required_placements` del tenant
-    (p. ej. facebook_reels) nunca se quitan."""
-    base = ["feed", "story"] + list(TENANT_CAMPAIGN_RULES["required_placements"])
-    required = {p.lower() for p in TENANT_CAMPAIGN_RULES["required_placements"]}
+    (p. ej. facebook_reels) nunca se quitan.
+
+    `rules` (M-2): reglas resueltas para la org (`get_campaign_rules_for_org`);
+    por defecto usa `TENANT_CAMPAIGN_RULES` (compat con llamadas existentes)."""
+    rules = rules or TENANT_CAMPAIGN_RULES
+    base = ["feed", "story"] + list(rules["required_placements"])
+    required = {p.lower() for p in rules["required_placements"]}
 
     def norm(p: str) -> str:
         # 'facebook_facebook_profile_feed' -> 'profile_feed'; 'facebook_feed' -> 'feed'.
@@ -97,19 +101,24 @@ def build_targeting(
     best_age_range: Optional[str] = None,
     best_device: Optional[str] = None,
     excluded_placements: Optional[List[str]] = None,
+    rules: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Targeting completo del AdSet a partir de las señales del histórico ganador,
-    con fallback a los defaults conservadores de siempre."""
+    con fallback a los defaults conservadores de siempre.
+
+    `rules` (M-2): reglas resueltas para la org (`get_campaign_rules_for_org`);
+    por defecto usa `TENANT_CAMPAIGN_RULES` (compat con llamadas existentes)."""
+    rules = rules or TENANT_CAMPAIGN_RULES
     age_min, age_max = parse_age_range(best_age_range)
     if age_min is None:
         age_min, age_max = _DEFAULT_AGE_MIN, _DEFAULT_AGE_MAX
 
     targeting: Dict[str, Any] = {
-        "geo_locations": {"regions": [{"key": TENANT_CAMPAIGN_RULES["default_geo_region_key"]}]},
+        "geo_locations": {"regions": [{"key": rules["default_geo_region_key"]}]},
         "age_min": age_min,
         "age_max": age_max,
         "publisher_platforms": ["facebook"],
-        "facebook_positions": _facebook_positions(excluded_placements or []),
+        "facebook_positions": _facebook_positions(excluded_placements or [], rules),
         # Advantage+ audience: Meta expande a partir de estas señales; la edad y
         # el dispositivo siguen actuando como restricción dura.
         "targeting_automation": {"advantage_audience": 1},

@@ -59,3 +59,23 @@ def test_excluded_placements_ignore_non_facebook():
     # Placements de otras plataformas no afectan las posiciones de Facebook.
     positions = _facebook_positions(["instagram_instagram_search", "audience_network_an_classic"])
     assert "feed" in positions and "story" in positions
+
+
+# --- M-2: reglas por tenant (parámetro `rules` opcional, override por org) ---
+
+def test_build_targeting_uses_custom_rules_geo_and_placements():
+    custom_rules = {
+        "default_geo_region_key": "9999",
+        "required_placements": ["facebook_marketplace"],
+    }
+    t = build_targeting(excluded_placements=[], rules=custom_rules)
+    assert t["geo_locations"]["regions"] == [{"key": "9999"}]
+    assert "facebook_marketplace" in t["facebook_positions"]
+    assert "facebook_reels" not in t["facebook_positions"]  # no es el required de este tenant
+
+
+def test_facebook_positions_uses_custom_required_placements():
+    custom_rules = {"required_placements": ["facebook_marketplace"]}
+    positions = _facebook_positions(["facebook_marketplace"], rules=custom_rules)
+    # required_placements nunca se excluye, ni siquiera si el histórico lo marcó.
+    assert "facebook_marketplace" in positions

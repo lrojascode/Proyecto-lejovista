@@ -5,7 +5,7 @@ statistics.py. Este módulo los reúne en un solo lugar y expone un punto de
 extensión (`get_thresholds_for_org`) para, más adelante, leer overrides por
 organización o vertical desde la base de datos.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, replace
 from typing import Optional
 
 
@@ -45,13 +45,23 @@ class AIThresholds:
 DEFAULT_THRESHOLDS = AIThresholds()
 
 
+_THRESHOLD_FIELDS = {f.name for f in fields(AIThresholds)}
+
+
 def get_thresholds_for_org(organization: Optional[object] = None) -> AIThresholds:
     """Devuelve los umbrales aplicables a una organización.
 
-    Punto de extensión: hoy retorna los defaults; en el futuro puede leer
-    overrides por organización/vertical (p. ej. una tabla TenantRules).
+    M-2: lee `Organization.ai_thresholds_overrides` (JSON, vacío por
+    defecto) y superpone solo las claves presentes sobre `DEFAULT_THRESHOLDS`
+    — una org sin overrides configurados se comporta exactamente igual que
+    antes. Claves desconocidas se ignoran (no rompe si alguien guarda un
+    override con un nombre de campo viejo/typo).
     """
-    return DEFAULT_THRESHOLDS
+    overrides = getattr(organization, "ai_thresholds_overrides", None) or {}
+    valid = {k: v for k, v in overrides.items() if k in _THRESHOLD_FIELDS}
+    if not valid:
+        return DEFAULT_THRESHOLDS
+    return replace(DEFAULT_THRESHOLDS, **valid)
 
 
 def compute_target_cpl(

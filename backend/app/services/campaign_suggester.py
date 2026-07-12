@@ -4,10 +4,11 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
+from app.models.organization import Organization
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.services.report_cache import get_report
 from app.services.campaign_learning import assess_maturity, build_analysis
-from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
+from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
 
 logger = logging.getLogger("lejovista.suggester")
 
@@ -34,6 +35,9 @@ class CampaignSuggester:
 
     async def suggest(self, ad_account: AdAccount, budget_hint: Optional[float] = None) -> Dict[str, Any]:
         report = await get_report(self.db, ad_account)
+        # M-2: reglas de campaña resueltas para la org (con overrides si los tiene).
+        org = await self.db.get(Organization, ad_account.organization_id)
+        rules = get_campaign_rules_for_org(org)
 
         campaigns = report["campaigns"]
         ads = report["ads"]
@@ -115,9 +119,9 @@ class CampaignSuggester:
             "has_history": best is not None,
             "maturity": maturity,
             "analysis": analysis,
-            "objective": TENANT_CAMPAIGN_RULES["objective"],
-            "optimization_goal": TENANT_CAMPAIGN_RULES["optimization_goal"],
-            "destination_type": TENANT_CAMPAIGN_RULES["destination_type"],
+            "objective": rules["objective"],
+            "optimization_goal": rules["optimization_goal"],
+            "destination_type": rules["destination_type"],
             "suggested_budget": suggested_budget,
             "suggested_days": 7,
             "excluded_placements": excluded_placements,

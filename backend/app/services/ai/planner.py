@@ -14,7 +14,7 @@ from app.services.campaign_suggester import CampaignSuggester
 from app.services.campaign_targeting import build_targeting, _facebook_positions
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
-from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
+from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
 
 logger = logging.getLogger("lejovista.planner")
 
@@ -125,6 +125,12 @@ class AIPlanner:
         c_id = insight.campaign_id
         adset_ids = adset_ids or []
 
+        # M-2: reglas de campaña resueltas para la org (con overrides si los
+        # tiene) — se resuelven una sola vez, las usan tanto MODIFY_PLACEMENTS
+        # (placements permitidos) como CREATE_CAMPAIGN (targeting).
+        org = await self.db.get(Organization, ad_account.organization_id)
+        rules = get_campaign_rules_for_org(org)
+
         # Valores por defecto
         risk = "LOW"
         title = ""
@@ -227,7 +233,7 @@ class AIPlanner:
             # posiciones concretas en facebook_positions — antes se enviaba
             # "facebook_reels" como si fuera un publisher_platform, valor
             # inválido para ese campo (bug A-4).
-            new_positions = _facebook_positions([flagged_placement])
+            new_positions = _facebook_positions([flagged_placement], rules)
 
             title = f"Optimizar Placements (remover {flagged_placement.replace('_', ' ')})"
             description = (
@@ -255,7 +261,6 @@ class AIPlanner:
             # (3A, sin LLM, deriva de datos reales) + copy generado por el LLM (3B).
             # Reemplaza el stub que hardcodeaba "THHN"/Lima/S/.2.50 para cualquier cuenta.
             suggestion = await CampaignSuggester(self.db).suggest(ad_account)
-            org = await self.db.get(Organization, ad_account.organization_id)
             product_name = existing_campaign_name or "Producto"
             copy = await OpenRouterClient().suggest_campaign_copy(
                 org, ad_account, product_name=product_name,
@@ -299,6 +304,7 @@ class AIPlanner:
                     best_age_range=suggestion.get("best_age_range"),
                     best_device=suggestion.get("best_device"),
                     excluded_placements=suggestion.get("excluded_placements") or [],
+                    rules=rules,
                 ),
                 "creative": {
                     # 3.4: el copy v2 trae 2 variantes de headline/primary_text

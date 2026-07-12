@@ -8,8 +8,9 @@ from app.workers.tasks import run_async
 from app.database import async_session
 from app.config import settings
 from app.models.ad_account import AdAccount
+from app.models.organization import Organization
 from app.models.campaign_draft import CampaignDraft
-from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
+from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
 from app.services.brand_code import derive_brand_code as _brand_code
 from app.services.campaign_targeting import build_targeting
 from app.services.creative_builder import CreativeBuilder
@@ -30,6 +31,13 @@ async def _get_ad_account(db, ad_account_id: str) -> AdAccount:
         # Fallo permanente: no existe la cuenta, no tiene sentido reintentar.
         raise Exception(f"AdAccount {ad_account_id} no encontrada.")
     return acc
+
+
+async def _get_campaign_rules(db, acc: AdAccount) -> Dict[str, Any]:
+    """M-2: reglas de campaña resueltas para la org de `acc` (con overrides
+    si los tiene)."""
+    org = await db.get(Organization, acc.organization_id)
+    return get_campaign_rules_for_org(org)
 
 
 
@@ -140,6 +148,7 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
     async def _impl():
         async with async_session() as db:
             acc = await _get_ad_account(db, context["ad_account_id"])
+            rules = await _get_campaign_rules(db, acc)
 
             product_name = context["product_name"]
             month_year = datetime.now().strftime("%b%Y").upper()
@@ -148,9 +157,9 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             payload = {
                 "name": campaign_name,
-                "objective": TENANT_CAMPAIGN_RULES["objective"],
+                "objective": rules["objective"],
                 "buying_type": "AUCTION",
-                "status": TENANT_CAMPAIGN_RULES["default_status"],
+                "status": rules["default_status"],
                 "special_ad_categories": "[]",
             }
 
@@ -190,6 +199,7 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
     async def _impl():
         async with async_session() as db:
             acc = await _get_ad_account(db, context["ad_account_id"])
+            rules = await _get_campaign_rules(db, acc)
             campaign_id = context["campaign_id"]
 
             start_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+0000")
@@ -198,16 +208,16 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
             payload = {
                 "name": f"{context['campaign_name']}_AS01",
                 "campaign_id": campaign_id,
-                "optimization_goal": TENANT_CAMPAIGN_RULES["optimization_goal"],
-                "destination_type": TENANT_CAMPAIGN_RULES["destination_type"],
+                "optimization_goal": rules["optimization_goal"],
+                "destination_type": rules["destination_type"],
                 "billing_event": "IMPRESSIONS",
-                "bid_strategy": TENANT_CAMPAIGN_RULES["bid_strategy"],
+                "bid_strategy": rules["bid_strategy"],
                 "lifetime_budget": int(context["budget"] * 100),  # Meta espera centavos
                 "start_time": start_time,
                 "end_time": end_time,
                 # Regla de oro del playbook (#3): todo se crea PAUSED. La activación
                 # la hace el humano manualmente en Ads Manager — nunca por API.
-                "status": TENANT_CAMPAIGN_RULES["default_status"],
+                "status": rules["default_status"],
                 # Targeting optimizado desde el histórico ganador (Ajuste 2):
                 # edad/dispositivo/placements salen del `CampaignSuggester`, no
                 # hardcodeados. Fallback a defaults si la cuenta no tiene histórico.
@@ -215,6 +225,7 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                     best_age_range=context.get("best_age_range"),
                     best_device=context.get("best_device"),
                     excluded_placements=context.get("excluded_placements") or [],
+                    rules=rules,
                 )),
                 "promoted_object": json.dumps({
                     "page_id": context["page_id"],
@@ -303,6 +314,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
     async def _impl():
         async with async_session() as db:
             acc = await _get_ad_account(db, context["ad_account_id"])
+            rules = await _get_campaign_rules(db, acc)
 
             brand = _brand_code(acc)
             ad_name = f"{brand}_AD_{context['product_name']}_{datetime.now().strftime('%b%Y').upper()}"
@@ -311,7 +323,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "adset_id": context["adset_id"],
                 "creative": json.dumps({"creative_id": context["creative_id"]}),
                 # Regla de oro del playbook (#3): todo se crea PAUSED.
-                "status": TENANT_CAMPAIGN_RULES["default_status"],
+                "status": rules["default_status"],
             }
 
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
