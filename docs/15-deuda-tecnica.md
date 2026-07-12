@@ -100,10 +100,9 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Explicación (histórica)**: al rechazar una `AIAction` se persistía `reject_reason` (y `rejected_at`), pero `AIActionResponse` no los exponía, así que el historial de acciones nunca mostraba cuándo ni por qué se rechazó algo.
 - **Resolución**: ambos campos agregados a `AIActionResponse` (`app/schemas/schemas.py`). Sin cambios de frontend — `/actions` ya tenía el JSX listo (`Razón: {act.reject_reason}`), solo esperaba el dato. Test: `test_action_reject_exposes_reason_in_response` en `backend/tests/test_audit_fixes.py`.
 
-### 🟡 UX-3 · `findings`/`recommendations` no llegan al dashboard
-- **Explicación**: el contenido más accionable (frases deterministas de "lo más importante" y "qué hacer") solo se renderiza en `/reporte`, no en el home donde el cliente entra primero.
-- **Impacto**: el mejor insight del sistema queda a un clic de distancia de la pantalla principal.
-- **Propuesta**: exponer 1–2 findings/recommendations en el dashboard (el dato ya viaja en `brief-data`).
+### ✅ UX-3 · `findings`/`recommendations` no llegaban al dashboard — RESUELTO
+- **Explicación (histórica)**: el contenido más accionable (frases deterministas de "lo más importante" y "qué hacer", `ReportBuilder._findings`/`_recommendations`) solo se renderizaba en `/reporte`, no en el home donde el cliente entra primero.
+- **Resolución**: `(dashboard)/page.tsx` ahora llama `api.getBriefData(7)` (mismo endpoint que ya usaba `/reporte`, ventana de 7 días para alinear con el resto de KPIs del dashboard) y muestra el primer `finding` + la primera `recommendation` en una tarjeta nueva ("Lo más importante del Master Brief"), con link "Ver reporte completo →" a `/reporte` para el resto. Verificado en navegador real: la tarjeta aparece con datos reales derivados del histórico sincronizado (deterministas, sin depender de que el LLM haya corrido — `ReportBuilder._findings`/`_recommendations` no dependen de la Capa 3). `tsc --noEmit`/`npm test`/`npm run build` limpios.
 
 ## 6. Resumen priorizado
 
@@ -124,6 +123,6 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-2 | 🟡 | reject_reason expuesto | Trivial | ✅ Resuelto |
 | UX-1 | 🟡 | StatusBadge único | Bajo | ✅ Resuelto |
-| UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
+| UX-3 | 🟡 | findings/recommendations en dashboard | Bajo | ✅ Resuelto |
 
 Ver el detalle de ejecución y el resto de sprints en [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md).

@@ -77,7 +77,7 @@ flowchart LR
 ## Sprint 5 · Producto/UX + Ops
 
 - [x] **UX-1** — ✅ Hecho. Nuevo `frontend/components/StatusBadge.tsx` (envuelve `metaStatusBadge`+`badgeIcon`), usado en `(dashboard)/page.tsx` (reemplaza el badge `ACTIVE`/inglés) y `campaigns/page.tsx` (reemplaza el uso inline de `metaStatusBadge`). Verificado en navegador real: ambas pantallas muestran ahora "✓ Activa" idéntico. `tsc --noEmit`/`npm test`/`npm run build` limpios.
-- [ ] **UX-3** — subir 1–2 `findings`/`recommendations` al dashboard (el dato ya viaja en `brief-data`).
+- [x] **UX-3** — ✅ Hecho. `(dashboard)/page.tsx` llama `api.getBriefData(7)` y muestra el primer `finding` + la primera `recommendation` en una tarjeta nueva, con link a `/reporte` para el resto. Deterministas (`ReportBuilder._findings`/`_recommendations`), no dependen de que la Capa 3 (LLM) haya corrido. Verificado en navegador real con datos sincronizados reales.
 - [ ] **IA-1** — checklist de encendido de write-back (`F-2` allowlist) + tests de integración contra sandbox de Meta.
 - [ ] **O-2** — migraciones en init-container antes de arrancar el API.
 
@@ -97,6 +97,7 @@ flowchart LR
 | P-1 | 🟠 | 4 | Medio | 0 | ✅ Hecho |
 | P-2 | 🟡 | 4 | Bajo | 0 | ✅ Hecho (verificación) |
 | UX-1 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
-| UX-3, IA-1, O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
+| UX-3 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
+| IA-1, O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
 
 **Quick wins** para arrancar con impulso: UX-2, S-3, S-4, M-3 (todos bajos, sin dependencias más allá de CI).

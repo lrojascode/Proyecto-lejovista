@@ -107,8 +107,8 @@ Los `findings` y `recommendations` son la pieza de producto más subestimada: co
 
 Hallazgos del audit que no son bugs de código pero sí deuda de experiencia — candidatos a backlog (registrados también en [15-deuda-tecnica](15-deuda-tecnica.md)):
 
-1. **Estado mostrado de dos formas**: dashboard (string crudo en inglés) vs lista de campañas (`metaStatusBadge` en español + Rendimiento). Unificar en un solo componente de estado.
-2. **`findings`/`recommendations` solo viven en `/reporte`**: son el mejor contenido "accionable" del sistema y no aparecen en el dashboard, donde el cliente entra primero. Oportunidad de subir 1–2 al home.
+1. ✅ **Estado mostrado de dos formas — resuelto (UX-1)**: `components/StatusBadge.tsx` unifica dashboard y lista de campañas (ambos muestran ahora `metaStatusBadge`).
+2. ✅ **`findings`/`recommendations` solo vivían en `/reporte` — resuelto (UX-3)**: el dashboard ahora muestra 1 finding + 1 recommendation (vía `api.getBriefData(7)`), con link al reporte completo.
 3. **Sin drill-down**: los gráficos del dashboard y las filas del reporte no enlazan al detalle de la campaña (`/campaigns/[id]`). El cliente ve "esta campaña es cara" pero no puede hacer clic para investigar.
 4. ✅ **`reject_reason` no se mostraba — resuelto (UX-2)**: `AIActionResponse` ya expone `reject_reason`/`rejected_at`; el historial de acciones los muestra.
 5. **Parámetros de la sugerencia sin usar**: `/campaigns/suggestion` devuelve `objective`/`optimization_goal`/`destination_type`/`winning_ad_copy` que la UI ignora (no hay selector para editarlos). Ya no son constantes globales — pueden variar por organización (M-2, resuelto) — pero la UI de creación aún no ofrece una forma de verlos/editarlos por tenant.
