@@ -55,6 +55,7 @@ backend/media/
 **/ENV/
 **/env/
 **/.pytest_cache/
+**/.coverage
 **/.ipynb_checkpoints/
 **/*.egg-info/
 **/.mypy_cache/

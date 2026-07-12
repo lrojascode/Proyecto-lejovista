@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  # Valores de test (no secretos reales) — mismos que backend/conftest.py.
+  SECRET_KEY: ci-secret-key-solo-para-pruebas-1234567890
+  ENCRYPTION_KEY: sHEU494awg7HtPuuIPg989QiYv0fUh0_kdmnGVa31N8=
+  MOCK_SERVICES: "true"
+  ENABLE_META_WRITEBACK: "false"
+
+jobs:
+  backend:
+    name: Backend (pytest + alembic)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lejovista
+          POSTGRES_PASSWORD: localpassword123
+          POSTGRES_DB: lejovista
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      # Librerías nativas de WeasyPrint (5.3, F-3.2) — mismas que backend/Dockerfile.
+      - name: Install system dependencies (WeasyPrint)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0
+
+      - name: Install Python dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt
+
+      # Valida que la cadena de migraciones aplica limpia sobre Postgres real
+      # (los tests de pytest usan SQLite — ver conftest.py — así que esto es
+      # lo único que ejercita el dialecto de producción).
+      - name: Run Alembic migrations against Postgres
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://lejovista:localpassword123@localhost:5432/lejovista
+        run: alembic upgrade head
+
+      - name: Run tests with coverage
+        working-directory: backend
+        run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=80
+
+  frontend:
+    name: Frontend (typecheck + jest + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        run: npm test -- --ci
+
+      - name: Build
+        run: npm run build
