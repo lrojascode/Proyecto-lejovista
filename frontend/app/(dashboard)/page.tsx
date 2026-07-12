@@ -70,6 +70,11 @@ export default function DashboardPage() {
   const [businessPolicies, setBusinessPolicies] = useState<BusinessPolicies | null>(null);
   const [kpisSummary, setKpisSummary] = useState<KpisSummary | null>(null);
   const [topAlerts, setTopAlerts] = useState<AIInsight[]>([]);
+  // UX-3: 1 hallazgo + 1 recomendación del Master Brief en el dashboard —
+  // antes solo vivían en /reporte, a un clic de la pantalla donde el
+  // cliente entra primero.
+  const [briefFindings, setBriefFindings] = useState<string[]>([]);
+  const [briefRecommendations, setBriefRecommendations] = useState<string[]>([]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -113,6 +118,13 @@ export default function DashboardPage() {
       setTopAlerts(sorted.slice(0, 3));
     } catch (e) {
       console.error("Error fetching insights:", e);
+    }
+    try {
+      const brief = await api.getBriefData(7);
+      setBriefFindings(brief?.report?.findings || []);
+      setBriefRecommendations(brief?.report?.recommendations || []);
+    } catch (e) {
+      console.error("Error fetching brief findings:", e);
     }
   };
 
@@ -282,6 +294,30 @@ export default function DashboardPage() {
               <p style={{ fontSize: 13, color: "var(--color-fog)" }}>{a.description.slice(0, 90)}{a.description.length > 90 ? "…" : ""}</p>
             </Link>
           ))}
+        </div>
+      )}
+
+      {/* UX-3: hallazgo + recomendación del Master Brief — antes solo visibles en /reporte. */}
+      {hasData && (briefFindings.length > 0 || briefRecommendations.length > 0) && (
+        <div className="glass-card" style={{ padding: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 590 }}>Lo más importante del Master Brief</h2>
+            <Link href="/reporte" style={{ color: "var(--color-fog)", fontSize: 13 }}>Ver reporte completo →</Link>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+            {briefFindings[0] && (
+              <div style={{ borderLeft: "2px solid var(--color-amber)", paddingLeft: 12 }}>
+                <p style={{ fontSize: 12, color: "var(--color-fog)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.02em" }}>Hallazgo</p>
+                <p style={{ fontSize: 14, color: "var(--color-mist)", lineHeight: 1.5 }}>{briefFindings[0]}</p>
+              </div>
+            )}
+            {briefRecommendations[0] && (
+              <div style={{ borderLeft: "2px solid var(--color-pulse-green)", paddingLeft: 12 }}>
+                <p style={{ fontSize: 12, color: "var(--color-fog)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.02em" }}>Recomendación</p>
+                <p style={{ fontSize: 14, color: "var(--color-mist)", lineHeight: 1.5 }}>{briefRecommendations[0]}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
