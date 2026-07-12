@@ -5,7 +5,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.ai_action import AIAction
 from app.schemas.schemas import AIActionResponse, ActionApprove
-from app.utils.security import get_current_user, get_active_ad_account_id
+from app.utils.security import get_current_user, get_active_ad_account_id, require_role
 from app.workers.tasks import execute_action_task
 import datetime
 from typing import List, Optional
@@ -58,7 +58,7 @@ async def list_action_history(
 async def approve_or_reject_action(
     action_id: str,
     payload: ActionApprove,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):

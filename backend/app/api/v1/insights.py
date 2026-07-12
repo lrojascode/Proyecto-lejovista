@@ -6,7 +6,7 @@ from app.models.user import User
 from app.models.ai_insight import AIInsight
 from app.models.ad_account import AdAccount
 from app.schemas.schemas import AIInsightResponse
-from app.utils.security import get_current_user, get_active_ad_account_id
+from app.utils.security import get_current_user, get_active_ad_account_id, require_role
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import run_ai_analysis
 from typing import List, Optional
@@ -37,7 +37,7 @@ async def list_active_insights(
 @router.post("/{insight_id}/dismiss")
 async def dismiss_insight(
     insight_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
 ):
@@ -58,7 +58,7 @@ async def dismiss_insight(
 
 @router.post("/analyze-trigger")
 async def trigger_manual_analysis(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db)
 ):
     """

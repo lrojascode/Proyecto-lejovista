@@ -10,7 +10,7 @@ from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse,
     MetaPageResponse, MetaPageWhatsAppUpdate,
 )
-from app.utils.security import get_current_user
+from app.utils.security import get_current_user, require_role
 from app.workers.tasks import sync_ad_account
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
@@ -42,7 +42,7 @@ async def get_my_organization(
 @router.put("/my", response_model=OrganizationResponse)
 async def update_my_organization(
     org_update: OrganizationUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db)
 ):
     org = await db.get(Organization, current_user.organization_id)
@@ -96,7 +96,7 @@ async def list_my_ad_accounts(
 @router.post("/my/ad-accounts/{ad_account_id}/archive", response_model=AdAccountResponse)
 async def archive_ad_account(
     ad_account_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -119,7 +119,7 @@ async def archive_ad_account(
 @router.post("/my/ad-accounts/{ad_account_id}/restore", response_model=AdAccountResponse)
 async def restore_ad_account(
     ad_account_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db)
 ):
     """Revierte el archivado de archive_ad_account."""
@@ -156,7 +156,7 @@ async def list_my_pages(
 async def set_page_whatsapp_number(
     page_id: str,
     payload: MetaPageWhatsAppUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -180,7 +180,7 @@ async def set_page_whatsapp_number(
 @router.post("/my/ad-accounts", response_model=AdAccountResponse)
 async def connect_ad_account(
     acc_in: AdAccountCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db)
 ):
     # 1. Comprobar si ya está conectado el mismo ad account para la misma organización

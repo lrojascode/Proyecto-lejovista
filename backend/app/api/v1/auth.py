@@ -74,19 +74,30 @@ async def signup(user_in: UserCreate, request: Request, db: AsyncSession = Depen
             detail="El correo electrónico ya está registrado."
         )
 
-    # 2. Comprobar si la organización slug ya existe
+    # 2. Comprobar si la organización slug ya existe. (S-1) Signup solo puede
+    # FUNDAR una organización nueva: no existe flujo de invitación, así que
+    # antes cualquiera que adivinara/conociera el slug de un tenant ajeno
+    # (visible en el subdominio) podía registrarse contra él y el código de
+    # abajo lo vinculaba como ADMIN de esa organización — toma de cuenta sin
+    # autenticación. Sin invitaciones, unirse a una org existente por slug no
+    # es una operación segura; se rechaza explícitamente.
     q_org = select(Organization).where(Organization.slug == user_in.organization_slug)
     res_org = await db.execute(q_org)
     org = res_org.scalar_one_or_none()
-    
-    if not org:
-        # Crear nueva organización (Tenant)
-        org = Organization(
-            slug=user_in.organization_slug,
-            name=user_in.organization_name
+
+    if org:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Ya existe una organización con ese identificador. Pide que un administrador te invite.",
         )
-        db.add(org)
-        await db.flush() # Para obtener el ID generado
+
+    # Crear nueva organización (Tenant)
+    org = Organization(
+        slug=user_in.organization_slug,
+        name=user_in.organization_name
+    )
+    db.add(org)
+    await db.flush() # Para obtener el ID generado
 
     # 3. Crear usuario
     user = User(

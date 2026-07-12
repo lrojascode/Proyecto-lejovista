@@ -172,6 +172,46 @@ async def get_current_user(
     return user
 
 
+# (S-1) Jerarquía de roles de OrganizationUser.role: ADMIN por encima de
+# OPERATOR por encima de VIEWER. `require_role(min_role)` exige ese rol o uno
+# de rango superior en la organización ACTIVA de la sesión (misma resolución
+# de tenant que get_current_user/S-8) — antes el rol se guardaba pero ningún
+# endpoint lo verificaba, así que un VIEWER tenía en la práctica permisos de
+# ADMIN.
+ROLE_RANK = {"VIEWER": 0, "OPERATOR": 1, "ADMIN": 2}
+
+
+def require_role(min_role: str):
+    async def _dependency(
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        from sqlalchemy import select
+        from app.models.organization_user import OrganizationUser
+
+        org_id = current_user.organization_id
+        if not org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No perteneces a ninguna organización activa.",
+            )
+
+        q = select(OrganizationUser.role).where(
+            OrganizationUser.user_id == current_user.id,
+            OrganizationUser.organization_id == org_id,
+        )
+        role = (await db.execute(q)).scalar_one_or_none()
+
+        if role is None or ROLE_RANK.get(role, -1) < ROLE_RANK[min_role]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Esta acción requiere el rol {min_role} o superior en la organización.",
+            )
+        return current_user
+
+    return _dependency
+
+
 async def get_active_ad_account_id(
     request: Request,
     current_user: User = Depends(get_current_user),

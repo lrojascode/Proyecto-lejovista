@@ -7,7 +7,7 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ad_account import AdAccount
 from app.models.api_call_log import APICallLog
 from app.schemas.schemas import CampaignSnapshotResponse
-from app.utils.security import get_current_user, get_active_ad_account_id
+from app.utils.security import get_current_user, get_active_ad_account_id, require_role
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List, Optional
@@ -166,7 +166,7 @@ async def get_campaign_history(
 
 @router.post("/sync-trigger")
 async def trigger_manual_sync(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -270,7 +270,7 @@ _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8MB
 @router.post("/upload-image")
 async def upload_campaign_image(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
 ):
     """Sube una foto para usar en la creación de campaña (reemplaza pegar una
     URL a mano). Se guarda en MEDIA_ROOT/{organization_id}/{uuid}.{ext} — el
@@ -296,7 +296,7 @@ async def upload_campaign_image(
 @router.post("/risk-preview")
 async def preview_campaign_risk(
     request: CampaignRiskPreviewRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db),
 ):
     """Ajuste 1: calcula el nivel de riesgo con los valores ACTUALES del
@@ -325,7 +325,7 @@ async def preview_campaign_risk(
 @router.post("/", status_code=status.HTTP_202_ACCEPTED)
 async def create_campaign(
     request: CampaignCreateRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db)
 ):
     """
