@@ -42,7 +42,7 @@ function DeltaBadge({ pct, goodWhen }: { pct: number | null | undefined; goodWhe
   );
 }
 
-function timeAgo(iso: string | null): string {
+function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "nunca";
   const diffMs = Date.now() - new Date(iso).getTime();
   const mins = Math.floor(diffMs / 60000);

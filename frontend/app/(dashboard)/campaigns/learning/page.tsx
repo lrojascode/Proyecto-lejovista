@@ -15,8 +15,8 @@ type LearningEntry = {
   product: string;
   risk_level: "LOW" | "MEDIUM" | "HIGH" | string;
   status: string;
-  params: Record<string, any> | null;
-  analysis: {
+  params?: Record<string, any> | null;
+  analysis?: {
     summary?: string;
     mode?: string;
     converged?: boolean;
@@ -28,9 +28,9 @@ type LearningEntry = {
     evaluation_window_days?: number;
     confidence?: string;
   } | null;
-  maturity: { converged?: boolean; mode?: string; reason?: string } | null;
-  outcome: Record<string, any> | null;
-  created_at: string | null;
+  maturity?: { converged?: boolean; mode?: string; reason?: string } | null;
+  outcome?: Record<string, any> | null;
+  created_at?: string | null;
 };
 
 const RISK_BADGE: Record<string, { cls: string; label: string }> = {
@@ -53,7 +53,7 @@ function ModeBadge({ mode, converged }: { mode?: string; converged?: boolean }) 
   );
 }
 
-function OutcomeBlock({ outcome, windowDays }: { outcome: Record<string, any> | null; windowDays?: number }) {
+function OutcomeBlock({ outcome, windowDays }: { outcome?: Record<string, any> | null; windowDays?: number }) {
   if (!outcome) {
     return (
       <div className="card-subtle" style={{ marginTop: "0.75rem" }}>

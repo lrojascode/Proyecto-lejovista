@@ -323,17 +323,23 @@ export default function Actions() {
                       </p>
                     )}
                     
-                    {act.status === "COMPLETED" && act.execution_result && (
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                        {act.execution_result.simulated ? (
-                          <span style={{ color: "var(--color-amber)" }}>
-                            Simulación — no se aplicó en Meta (write-back desactivado).
-                          </span>
-                        ) : (
-                          <>Aplicado en Meta · ID: <code>{act.execution_result.campaign_id || act.execution_result.id || "OK"}</code></>
-                        )}
-                      </div>
-                    )}
+                    {act.status === "COMPLETED" && act.execution_result && (() => {
+                      // execution_result es un JSON libre (varía según el tipo de
+                      // acción) — el backend lo tipa como Dict[str, Any], sin forma
+                      // fija que declarar aquí.
+                      const result = act.execution_result as Record<string, any>;
+                      return (
+                        <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                          {result.simulated ? (
+                            <span style={{ color: "var(--color-amber)" }}>
+                              Simulación — no se aplicó en Meta (write-back desactivado).
+                            </span>
+                          ) : (
+                            <>Aplicado en Meta · ID: <code>{result.campaign_id || result.id || "OK"}</code></>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })

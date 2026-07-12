@@ -175,7 +175,10 @@ export default function NewCampaignPage() {
     api.getCampaignDraft(id)
       .then((draft) => {
         if (draft.status === "CREATED") {
-          setResultCampaignId(draft.payload?.result?.campaign_id || null);
+          // payload es JSON libre (Dict[str, Any] en el backend) — result se
+          // va llenando paso a paso por la Saga, sin forma fija que declarar.
+          const payload = draft.payload as { result?: { campaign_id?: string } } | undefined;
+          setResultCampaignId(payload?.result?.campaign_id || null);
           setStatus("success");
         } else if (draft.status === "FAILED") {
           setErrorMessage(draft.error_message || "La creación falló en Meta.");

@@ -365,11 +365,15 @@ export default function Reporte() {
               <th style={th}>Alcance</th><th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th>
             </tr></thead>
             <tbody>
-              {r.adsets.map((a: ReportAdset) => (
+              {r.adsets.map((a: ReportAdset) => {
+                // targeting es JSON libre (Dict[str, Any] en el backend) —
+                // sin forma fija que declarar en el schema compartido.
+                const targeting = a.targeting as { advantage_audience?: boolean; geo?: string[] } | undefined;
+                return (
                 <tr key={a.adset_id}>
                   <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{a.name}</td>
                   <td style={{ ...td, color: "var(--text-secondary)", fontSize: "0.78rem" }}>
-                    {a.targeting?.advantage_audience ? "Advantage+" : "Intereses"} · {(a.targeting?.geo || []).join(", ")}
+                    {targeting?.advantage_audience ? "Advantage+" : "Intereses"} · {(targeting?.geo || []).join(", ")}
                   </td>
                   <td style={td}>{money(a.spend)}</td>
                   <td style={td}>{num(a.reach)}</td>
@@ -377,7 +381,8 @@ export default function Reporte() {
                   <td style={td}>{a.conversations}</td>
                   <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>{money(a.cost_per_conv)}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
