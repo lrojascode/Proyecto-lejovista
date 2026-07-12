@@ -34,6 +34,22 @@ services:
     mem_limit: 320m
     cpus: 0.5
 
+  # O-2: mismo one-shot de migraciones que docker-compose.prod.yml — corre
+  # `alembic upgrade head` y termina antes de que `backend` arranque, en vez
+  # de depender de que alguien lo corra a mano tras el primer `up`.
+  # `restart: "no"` explícito (con `unless-stopped` reiniciaría en bucle).
+  migrate:
+    build: ./backend
+    image: proyectolejovista-backend:local
+    command: alembic upgrade head
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - ./backend:/app
+
   backend:
     # Se construye UNA sola imagen; los workers y beat la reutilizan (image:).
     build: ./backend
@@ -42,6 +58,8 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:

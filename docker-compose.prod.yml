@@ -27,12 +27,32 @@ services:
     volumes:
       - redis_data:/data
 
+  # O-2: antes `alembic upgrade head` era un paso manual tras cada `pull`
+  # (riesgo real de desplegar código nuevo contra un esquema viejo si alguien
+  # lo olvidaba). Contenedor de un solo uso que corre las migraciones y
+  # termina (exit 0) antes de que `backend` arranque — `restart: "no"`
+  # explícito: con `unless-stopped` Compose lo reiniciaría en bucle tras
+  # cada salida exitosa, que es exactamente lo que NO queremos para un
+  # one-shot. Seguro en despliegues multi-réplica: es un único contenedor,
+  # no una migración corriendo N veces en paralelo desde cada réplica de
+  # `backend`.
+  migrate:
+    image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
+    command: alembic upgrade head
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+
   backend:
     # Imagen única construida y publicada con ./build-push.sh. Los workers y beat
     # reutilizan exactamente esta misma imagen (solo cambia el command).
     image: ${IMAGE_PREFIX:-ghcr.io/lrojascode}/proyectolejovista-backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
