@@ -118,6 +118,7 @@ Tres modos de despliegue soportados:
 - Tema oscuro con tokens CSS (`--color-obsidian`, `--color-paper`, `--color-ash`, `--color-graphite`, `--text-secondary`, …) en `globals.css`.
 - **Accesibilidad** (`E-6`): los badges no dependen solo del color — `lib/badge.ts` añade un ícono redundante (`✓ ⚠ ✕ ✦`).
 - Distinción explícita entre **estado real de Meta** (`metaStatusBadge`: Activa/Pausada/Archivada/Eliminada) y **evaluación de rendimiento** de la IA (GANADORA/CARA/…), que antes se confundían en la columna "Estado".
+- **`components/StatusBadge.tsx`** (UX-1, resuelto): componente único sobre `metaStatusBadge`/`badgeIcon`, usado tanto en `campaigns/page.tsx` como en `(dashboard)/page.tsx` — antes el dashboard pintaba el `status` crudo en inglés con una regla de color distinta (`ACTIVE`→verde, resto→ámbar) a la de la lista de campañas.
 
 ## 9. Tipos compartidos (`lib/types.ts`) — generados desde OpenAPI (M-4)
 

@@ -92,10 +92,9 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Impacto**: riesgo residual al encender `ENABLE_META_WRITEBACK` en todo el parque.
 - **Propuesta**: seguir el checklist de `F-2` (allowlist), y añadir tests de integración contra un entorno de sandbox de Meta.
 
-### 🟡 UX-1 · El "Estado" de una campaña se muestra de dos formas distintas
-- **Explicación**: la lista `/campaigns` usa `metaStatusBadge` (Activa/Pausada/Archivada/Eliminada, español) y separa una columna "Rendimiento"; pero la tabla "Resumen de Campañas Activas" del dashboard sigue pintando el `status` crudo en inglés (`ACTIVE`→verde, resto→ámbar). Ver [21-producto-datos-visualizados](21-producto-datos-visualizados.md) §2.4.
-- **Impacto**: inconsistencia visual; el mismo concepto se lee distinto en dos pantallas, y el dashboard no distingue estado real de rendimiento.
-- **Propuesta**: extraer un componente `StatusBadge` único y usarlo en ambas vistas.
+### ✅ UX-1 · El "Estado" de una campaña se mostraba de dos formas distintas — RESUELTO
+- **Explicación (histórica)**: la lista `/campaigns` usaba `metaStatusBadge` (Activa/Pausada/Archivada/Eliminada, español) y separaba una columna "Rendimiento"; pero la tabla "Resumen de Campañas Activas" del dashboard seguía pintando el `status` crudo en inglés (`ACTIVE`→verde, resto→ámbar). Ver [21-producto-datos-visualizados](21-producto-datos-visualizados.md) §2.4.
+- **Resolución**: nuevo componente `frontend/components/StatusBadge.tsx` (envuelve `metaStatusBadge`+`badgeIcon` de `lib/badge.ts`), usado ahora en ambas vistas — `app/(dashboard)/campaigns/page.tsx` (reemplaza el uso inline de `metaStatusBadge`) y `app/(dashboard)/page.tsx` (reemplaza el badge `ACTIVE`→verde/resto→ámbar en inglés). Verificado en navegador real (`cliente1.localhost`, org de prueba con 3 campañas sincronizadas vía mock): ambas pantallas muestran ahora exactamente "✓ Activa" para el mismo estado. `tsc --noEmit`, `npm test` (14 tests) y `npm run build` limpios.
 
 ### ✅ UX-2 · El motivo de rechazo de una acción no se muestra — RESUELTO
 - **Explicación (histórica)**: al rechazar una `AIAction` se persistía `reject_reason` (y `rejected_at`), pero `AIActionResponse` no los exponía, así que el historial de acciones nunca mostraba cuándo ni por qué se rechazó algo.
@@ -124,6 +123,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-2 | 🟡 | reject_reason expuesto | Trivial | ✅ Resuelto |
-| UX-1, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
+| UX-1 | 🟡 | StatusBadge único | Bajo | ✅ Resuelto |
+| UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
 
 Ver el detalle de ejecución y el resto de sprints en [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md).
