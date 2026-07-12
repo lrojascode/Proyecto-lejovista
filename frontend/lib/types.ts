@@ -16,10 +16,10 @@ export interface User {
 }
 
 export interface TokenResponse {
+  // (S-2) El refresh token viaja solo como cookie httpOnly, nunca aquí.
   access_token: string;
   token_type: string;
   user: User;
-  refresh_token?: string | null;
 }
 
 // --- ORGANIZATION / AD ACCOUNT ---

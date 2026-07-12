@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
 import { getTenantSlugFromHostname } from "@/lib/config";
-import { api } from "@/lib/api";
+import { api, hasAccessToken } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 import { AdAccountProvider, useAdAccount } from "@/components/providers/AdAccountProvider";
 import {
@@ -57,43 +57,45 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [pathname]);
 
   useEffect(() => {
-    // Verificar autenticación local
-    const token = localStorage.getItem("token");
-    const userStr = localStorage.getItem("user");
-
-    if (!token || !userStr) {
-      safeRedirect("/login");
-      return;
-    }
-
-    try {
-      const user = JSON.parse(userStr);
+    // (S-2) El access token vive en memoria (lib/api.ts) y no sobrevive a un
+    // reload por su cuenta. Si ya lo tenemos (venimos de login/signup en esta
+    // misma pestaña, sin reload de por medio) basta con confirmarlo contra
+    // /auth/me — forzar un refresh aquí sería redundante y, peor, descartaría
+    // una sesión recién obtenida si la cookie de refresh no acompañara la
+    // request (p. ej. cruzando de un subdominio de tenant a otro host de API
+    // en desarrollo local). Sin token en memoria (reload real / pestaña
+    // nueva), sí hace falta renovar desde la cookie httpOnly del refresh.
+    let cancelled = false;
+    const afterAuth = (user: { full_name: string; organization_id?: string | null } | null) => {
+      if (cancelled) return;
+      if (!user) {
+        safeRedirect("/login");
+        return;
+      }
       setUserName(user.full_name);
       setOrgId(user.organization_id || "");
-
       // Capturar subdominio (solo si es un subdominio real de BASE_DOMAIN;
       // en modo single-host o cualquier otro host esto da null y se usa
       // el nombre de fallback, puramente cosmético).
       setOrgSlug(getTenantSlugFromHostname(window.location.hostname) || "cliente1");
-    } catch (e) {
-      safeRedirect("/login");
-      return;
-    }
+      setLoading(false);
+    };
 
-    setLoading(false);
+    if (hasAccessToken()) {
+      api.getMe().then(afterAuth).catch(() => afterAuth(null));
+    } else {
+      api.bootstrapSession().then(afterAuth);
+    }
+    return () => { cancelled = true; };
   }, []);
 
   const handleLogout = () => {
-    // Revocar el refresh token en el backend (S-9), sin bloquear el logout local.
-    const refreshToken = localStorage.getItem("refresh_token");
-    if (refreshToken) {
-      api.logout(refreshToken).catch(() => {});
-    }
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("active_ad_account_id");
-    safeRedirect("/login");
+    // Best-effort: revoca el refresh en el backend y limpia la sesión local
+    // (access token en memoria + user) sin bloquear el logout.
+    api.logout().catch(() => {}).finally(() => {
+      localStorage.removeItem("active_ad_account_id");
+      safeRedirect("/login");
+    });
   };
 
   if (loading) {

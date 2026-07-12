@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { safeRedirect } from "@/lib/navigation";
 
 export default function Login() {
+  const router = useRouter();
   const [tenantSlug, setTenantSlug] = useState("");
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
@@ -35,11 +36,12 @@ export default function Login() {
     setLoading(true);
 
     try {
-      let response;
+      // login/signup guardan la sesión ellos mismos (S-2: access token en
+      // memoria, refresh token como cookie httpOnly que pone el backend).
       if (isLogin) {
-        response = await api.login({ email, password });
+        await api.login({ email, password });
       } else {
-        response = await api.signup({
+        await api.signup({
           email,
           password,
           full_name: fullName,
@@ -48,13 +50,12 @@ export default function Login() {
         });
       }
 
-      // Guardar sesión
-      localStorage.setItem("token", response.access_token);
-      if (response.refresh_token) localStorage.setItem("refresh_token", response.refresh_token);
-      localStorage.setItem("user", JSON.stringify(response.user));
-      
-      // Redirigir al dashboard principal del tenant
-      safeRedirect("/");
+      // (S-2) Navegación del lado del cliente, NO window.location: el access
+      // token que acaba de guardar api.login/signup vive en memoria (lib/api.ts)
+      // y una recarga completa lo perdería, obligando a un refresh contra la
+      // cookie httpOnly justo en el peor momento (recién logueado). El router
+      // de Next preserva el módulo JS entre esta página y el dashboard.
+      router.push("/");
     } catch (err: any) {
       setError(err.message || "Credenciales incorrectas.");
     } finally {

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { getAccessToken } from "@/lib/api";
 
 // Este contexto exporta el último evento recibido para que los componentes reaccionen
 type WSEvent = {
@@ -37,8 +38,10 @@ export const WebSocketProvider = ({ children, tenantId }: { children: ReactNode;
     const connect = () => {
       // Usar variable de entorno en prod, en local asume puerto 8000
       const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
-      // El backend exige el JWT por query param y valida la pertenencia al tenant
-      const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+      // El backend exige el JWT por query param y valida la pertenencia al
+      // tenant. (S-2) El access token vive en memoria (lib/api.ts) — el
+      // layout ya completó bootstrapSession() antes de montar este provider.
+      const token = getAccessToken();
       const qs = token ? `?token=${encodeURIComponent(token)}` : "";
       ws = new WebSocket(`${wsUrl}/ws/notifications/${tenantId}${qs}`);
 

@@ -2,7 +2,6 @@ import '@testing-library/jest-dom'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import Login from '../app/(auth)/login/page'
 import { api } from '../lib/api'
-import { safeRedirect } from '../lib/navigation'
 
 // Mock the API module
 jest.mock('../lib/api', () => ({
@@ -12,9 +11,12 @@ jest.mock('../lib/api', () => ({
   }
 }))
 
-// Mock the navigation module
-jest.mock('../lib/navigation', () => ({
-  safeRedirect: jest.fn()
+// (S-2) La página ya no navega con window.location — usa el router de Next
+// para preservar el access token en memoria (lib/api.ts) entre login y el
+// dashboard, en vez de perderlo en una recarga completa.
+const mockPush = jest.fn()
+jest.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mockPush }),
 }))
 
 describe('Login Page', () => {
@@ -50,7 +52,10 @@ describe('Login Page', () => {
     expect(screen.getByRole('button', { name: /Iniciar Sesión/i })).toBeInTheDocument()
   })
 
-  it('calls login API and stores session on success', async () => {
+  it('calls login API and navigates to the dashboard on success', async () => {
+    // (S-2) api.login guarda la sesión (access token en memoria, user en
+    // localStorage) — responsabilidad de lib/api.ts, no de esta página. Aquí
+    // solo se prueba que la página llama a login y navega al éxito.
     const mockResponse = {
       access_token: 'fake-token-123',
       user: { id: 1, email: 'test@example.com', full_name: 'Test User' }
@@ -61,14 +66,12 @@ describe('Login Page', () => {
 
     fireEvent.change(screen.getByPlaceholderText('correo@empresa.com'), { target: { value: 'test@example.com' } })
     fireEvent.change(screen.getByPlaceholderText('••••••••'), { target: { value: 'password123' } })
-    
+
     fireEvent.click(screen.getByRole('button', { name: /Iniciar Sesión/i }))
 
     await waitFor(() => {
       expect(api.login).toHaveBeenCalledWith({ email: 'test@example.com', password: 'password123' })
-      expect(localStorage.getItem('token')).toBe('fake-token-123')
-      expect(JSON.parse(localStorage.getItem('user') || '{}').full_name).toBe('Test User')
-      expect(safeRedirect).toHaveBeenCalledWith('/')
+      expect(mockPush).toHaveBeenCalledWith('/')
     })
   })
 })

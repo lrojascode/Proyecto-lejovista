@@ -5,26 +5,62 @@ import type {
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
 } from "./types";
 
-// Intenta renovar el access token usando el refresh token guardado (S-9).
-async function tryRefresh(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-  const refreshToken = localStorage.getItem("refresh_token");
-  if (!refreshToken) return false;
+// (S-2) El access token vive SOLO en memoria del módulo, nunca en
+// localStorage — una vulnerabilidad XSS que ejecute JS puede leerlo mientras
+// la pestaña esté abierta (inevitable, es lo que la sesión necesita para
+// operar), pero no puede exfiltrarlo leyendo localStorage/almacenamiento
+// persistente, ni sobrevive a un F5 o una pestaña nueva por su cuenta — para
+// eso existe el refresh silencioso de abajo. El refresh token nunca toca JS:
+// viaja como cookie httpOnly que el navegador adjunta solo.
+let accessToken: string | null = null;
+
+export function getAccessToken(): string | null {
+  return accessToken;
+}
+
+export function hasAccessToken(): boolean {
+  return accessToken !== null;
+}
+
+function setSession(data: TokenResponse) {
+  accessToken = data.access_token;
+  if (typeof window !== "undefined" && data.user) {
+    localStorage.setItem("user", JSON.stringify(data.user));
+  }
+}
+
+function clearSession() {
+  accessToken = null;
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("user");
+  }
+}
+
+// Pide un access token nuevo a partir de la cookie httpOnly del refresh
+// (el navegador la adjunta solo — `credentials: "include"`). Devuelve la
+// respuesta completa (para el bootstrap de sesión al cargar la página) o
+// `null` si no hay sesión válida.
+async function refreshSession(): Promise<TokenResponse | null> {
   try {
     const res = await fetch(`${getApiUrl()}/api/v1/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      credentials: "include",
     });
-    if (!res.ok) return false;
-    const data = await res.json();
-    localStorage.setItem("token", data.access_token);
-    if (data.refresh_token) localStorage.setItem("refresh_token", data.refresh_token);
-    if (data.user) localStorage.setItem("user", JSON.stringify(data.user));
-    return true;
+    if (!res.ok) return null;
+    const data: TokenResponse = await res.json();
+    setSession(data);
+    return data;
   } catch {
-    return false;
+    return null;
   }
+}
+
+// Se llama una vez al montar el layout autenticado: intenta renovar la sesión
+// desde la cookie de refresh (sobrevive a recargar la página, ya que el access
+// token en memoria no persiste). Si no hay cookie válida, no hay sesión.
+export async function bootstrapSession(): Promise<User | null> {
+  const data = await refreshSession();
+  return data?.user ?? null;
 }
 
 // Interfaz para solicitudes HTTP genéricas
@@ -35,7 +71,6 @@ async function apiRequest<T = any>(
   customHeaders: Record<string, string> = {},
   retry: boolean = true
 ): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const baseUrl = getApiUrl();
   const url = `${baseUrl}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
 
@@ -44,8 +79,8 @@ async function apiRequest<T = any>(
     ...customHeaders,
   };
 
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+  if (accessToken) {
+    headers["Authorization"] = `Bearer ${accessToken}`;
   }
 
   // Si estamos en un subdominio real de BASE_DOMAIN, inyectamos el tenant
@@ -60,9 +95,13 @@ async function apiRequest<T = any>(
     if (adAccountId) headers["X-Ad-Account-Id"] = adAccountId;
   }
 
+  // (S-2) credentials: "include" para que el navegador adjunte la cookie
+  // httpOnly del refresh en /auth/refresh y /auth/logout (el resto de
+  // endpoints la ignoran, pero no hace daño enviarla).
   const config: RequestInit = {
     method,
     headers,
+    credentials: "include",
   };
 
   if (body) {
@@ -71,15 +110,13 @@ async function apiRequest<T = any>(
 
   try {
     const response = await fetch(url, config);
-    
+
     if (response.status === 401 && typeof window !== "undefined" && !endpoint.includes("/auth/")) {
-      // Intentar renovar el token una vez antes de expulsar al usuario (S-9).
-      if (retry && (await tryRefresh())) {
+      // Intentar renovar la sesión una vez antes de expulsar al usuario (S-9).
+      if (retry && (await refreshSession())) {
         return apiRequest<T>(endpoint, method, body, customHeaders, false);
       }
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      localStorage.removeItem("refresh_token");
+      clearSession();
       // Evitar redirects infinitos si ya está en login
       if (!window.location.pathname.includes("/login")) {
         window.location.href = "/login";
@@ -115,10 +152,9 @@ async function apiRequest<T = any>(
 // esa siempre serializa el body a JSON y fija Content-Type: application/json.
 // El navegador debe fijar el boundary del multipart él mismo.
 async function apiUploadRequest<T = any>(endpoint: string, formData: FormData): Promise<T> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const url = `${getApiUrl()}${endpoint}`;
   const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
   if (typeof window !== "undefined") {
     const slug = getTenantSlugFromHostname(window.location.hostname);
     if (slug) headers["X-Tenant-Slug"] = slug;
@@ -126,7 +162,7 @@ async function apiUploadRequest<T = any>(endpoint: string, formData: FormData): 
     if (adAccountId) headers["X-Ad-Account-Id"] = adAccountId;
   }
 
-  const response = await fetch(url, { method: "POST", headers, body: formData });
+  const response = await fetch(url, { method: "POST", headers, body: formData, credentials: "include" });
   if (!response.ok) {
     const errorText = await response.text();
     let errorMessage = "No se pudo subir el archivo.";
@@ -143,10 +179,9 @@ async function apiUploadRequest<T = any>(endpoint: string, formData: FormData): 
 // que siempre parsea la respuesta como JSON) — pide el blob con los mismos
 // headers de auth/tenant/cuenta activa y dispara la descarga en el navegador.
 async function downloadReportPdf(windowDays: number = 30): Promise<void> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const url = `${getApiUrl()}/api/v1/reports/pdf?window_days=${windowDays}`;
   const headers: Record<string, string> = {};
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
   if (typeof window !== "undefined") {
     const slug = getTenantSlugFromHostname(window.location.hostname);
     if (slug) headers["X-Tenant-Slug"] = slug;
@@ -154,7 +189,7 @@ async function downloadReportPdf(windowDays: number = 30): Promise<void> {
     if (adAccountId) headers["X-Ad-Account-Id"] = adAccountId;
   }
 
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, { headers, credentials: "include" });
   if (!response.ok) {
     let errorMessage = "No se pudo generar el PDF.";
     try {
@@ -181,10 +216,28 @@ async function downloadReportPdf(windowDays: number = 30): Promise<void> {
 
 export const api = {
   // --- AUTH ---
-  login: (data: any) => apiRequest<TokenResponse>("/api/v1/auth/login", "POST", data),
-  signup: (data: any) => apiRequest<TokenResponse>("/api/v1/auth/signup", "POST", data),
+  // login/signup guardan la sesión ellos mismos (access token en memoria,
+  // user en localStorage) — el refresh token nunca pasa por aquí, lo pone el
+  // navegador directo desde la cookie httpOnly que fija el backend.
+  login: async (data: any) => {
+    const res = await apiRequest<TokenResponse>("/api/v1/auth/login", "POST", data);
+    setSession(res);
+    return res;
+  },
+  signup: async (data: any) => {
+    const res = await apiRequest<TokenResponse>("/api/v1/auth/signup", "POST", data);
+    setSession(res);
+    return res;
+  },
   getMe: () => apiRequest<User>("/api/v1/auth/me", "GET"),
-  logout: (refreshToken: string) => apiRequest("/api/v1/auth/logout", "POST", { refresh_token: refreshToken }),
+  logout: async () => {
+    try {
+      await apiRequest("/api/v1/auth/logout", "POST");
+    } finally {
+      clearSession();
+    }
+  },
+  bootstrapSession,
 
   // --- ORGANIZATIONS & ACCOUNTS ---
   getOrg: () => apiRequest<Organization>("/api/v1/organizations/my", "GET"),
