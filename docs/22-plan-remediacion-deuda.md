@@ -79,7 +79,9 @@ flowchart LR
 - [x] **UX-1** — ✅ Hecho. Nuevo `frontend/components/StatusBadge.tsx` (envuelve `metaStatusBadge`+`badgeIcon`), usado en `(dashboard)/page.tsx` (reemplaza el badge `ACTIVE`/inglés) y `campaigns/page.tsx` (reemplaza el uso inline de `metaStatusBadge`). Verificado en navegador real: ambas pantallas muestran ahora "✓ Activa" idéntico. `tsc --noEmit`/`npm test`/`npm run build` limpios.
 - [x] **UX-3** — ✅ Hecho. `(dashboard)/page.tsx` llama `api.getBriefData(7)` y muestra el primer `finding` + la primera `recommendation` en una tarjeta nueva, con link a `/reporte` para el resto. Deterministas (`ReportBuilder._findings`/`_recommendations`), no dependen de que la Capa 3 (LLM) haya corrido. Verificado en navegador real con datos sincronizados reales.
 - [x] **IA-1** — ✅ Hecho (documentación). Checklist operativo de encendido gradual en [09-seguridad §3b](09-seguridad.md): pre-requisitos para la cuenta piloto, pasos de activación, qué monitorear, criterio de rollback de la activación. Tests de integración contra sandbox de Meta explícitamente **no incluidos** y documentado el motivo: Meta no ofrece un sandbox equivalente para la Marketing API — la cobertura real de este camino es el checklist ejecutado contra una cuenta piloto de bajo riesgo, no una suite automatizada.
-- [ ] **O-2** — migraciones en init-container antes de arrancar el API.
+- [x] **O-2** — ✅ Hecho. Servicio `migrate` de un solo uso (`docker-compose.yml` y `docker-compose.prod.yml`, misma imagen que `backend`, `restart: "no"` explícito) corre `alembic upgrade head` y termina antes de que `backend` arranque (`depends_on: condition: service_completed_successfully`). Seguro en despliegues multi-réplica (un único contenedor migra). Validado con `docker compose config` en ambos archivos; documentado en 14-deployment y 05-base-de-datos.
+
+**Sprint 5 completo — el plan de remediación de deuda técnica (Sprint 0 a 5) está cerrado en su totalidad.**
 
 ## Tabla maestra
 
@@ -99,6 +101,6 @@ flowchart LR
 | UX-1 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
 | UX-3 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
 | IA-1 | 🟡 | 5 | Bajo | 0 | ✅ Hecho |
-| O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
+| O-2 | 🟡 | 5 | Bajo-Medio | 0 | ✅ Hecho |
 
-**Quick wins** para arrancar con impulso: UX-2, S-3, S-4, M-3 (todos bajos, sin dependencias más allá de CI).
+**Los 22 hallazgos del plan (Sprint 0 a 5) están resueltos.** Ver [15-deuda-tecnica](15-deuda-tecnica.md) §6 para el resumen priorizado final.

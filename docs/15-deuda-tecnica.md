@@ -76,10 +76,9 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Hallazgo real durante la implementación**: al ejercer `alembic upgrade head` contra Postgres real por primera vez (los tests de pytest usan SQLite vía `Base.metadata.create_all`, nunca habían corrido la cadena de migraciones), la migración `a70ab36472b6_add_payload_json_to_sync_jobs.py` fallaba con `NameError: name 'Text' is not defined` (usaba `Text()` sin importar, en vez de `sa.Text()`) — un bug real, invisible hasta ahora porque nada lo ejercía. Corregido en el mismo cambio. Confirma exactamente el riesgo que este hallazgo advertía.
 - CD (despliegue automático) queda fuera de este alcance — el pipeline valida, no despliega.
 
-### 🟡 O-2 · Migraciones como paso manual del deploy
-- **Explicación**: `alembic upgrade head` es manual tras cada `pull`.
-- **Impacto**: riesgo de olvidar migrar tras un deploy.
-- **Propuesta**: entrypoint/init-container que corra las migraciones antes de arrancar el API (con cuidado en despliegues multi-réplica). Planificado para el Sprint 5 de [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md).
+### ✅ O-2 · Migraciones como paso manual del deploy — RESUELTO
+- **Explicación (histórica)**: `alembic upgrade head` era manual tras cada `pull` — riesgo de olvidar migrar tras un deploy.
+- **Resolución**: servicio `migrate` de un solo uso en `docker-compose.yml` y `docker-compose.prod.yml` (misma imagen que `backend`, `command: alembic upgrade head`, `restart: "no"` explícito). `backend` depende de él con `condition: service_completed_successfully`, así que arranca solo tras aplicar el esquema. Seguro en despliegues multi-réplica: un único contenedor migra, no cada réplica de `backend` compitiendo por aplicarla. Validado con `docker compose config` en ambos archivos. Documentado en [14-deployment §2/§3/§6](14-deployment.md) y [05-base-de-datos §7](05-base-de-datos.md).
 
 ### ✅ O-3 · Cobertura de tests no medida — RESUELTO
 - **Explicación (histórica)**: no había umbral de cobertura ni reporte.
@@ -120,7 +119,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | M-4 | 🟡 | Tipos generados desde OpenAPI | Bajo | ✅ Resuelto |
 | P-2 | 🟡 | Estado en memoria (WS) | Bajo | ✅ Resuelto (por verificación) |
 | IA-1 | 🟡 | Checklist write-back | Bajo | ✅ Resuelto |
-| O-2 | 🟡 | Migraciones init-container | Bajo-Medio | Pendiente |
+| O-2 | 🟡 | Migraciones init-container | Bajo-Medio | ✅ Resuelto |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-2 | 🟡 | reject_reason expuesto | Trivial | ✅ Resuelto |
 | UX-1 | 🟡 | StatusBadge único | Bajo | ✅ Resuelto |

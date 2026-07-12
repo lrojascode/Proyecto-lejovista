@@ -8,6 +8,7 @@ Una sola imagen de **backend** se reutiliza para el API, los 3 workers y beat (s
 |----------|--------|-----|
 | `db` | `postgres:16-alpine` | Base de datos |
 | `redis` | `redis:7-alpine` (`--requirepass`, `--maxmemory 256mb`) | Broker, cache, pubsub |
+| `migrate` | ídem imagen de `backend` | Contenedor de un solo uso: `alembic upgrade head`, corre y termina antes que `backend` (`O-2`) |
 | `backend` | `proyectolejovista-backend` | API (uvicorn) |
 | `celery-worker-sync` | ídem | Cola `sync` (concurrency 2) |
 | `celery-worker-ai` | ídem | Cola `ai` (concurrency 1) |
@@ -27,8 +28,9 @@ Una sola imagen de **backend** se reutiliza para el API, los 3 workers y beat (s
 ```bash
 cp .env.example .env      # generar SECRET_KEY y ENCRYPTION_KEY
 docker compose up -d
-docker compose exec backend alembic upgrade head
 ```
+
+`alembic upgrade head` ya no es un paso aparte (`O-2`, resuelto): el servicio `migrate` lo corre automáticamente y `backend` espera a que termine (`depends_on: migrate: condition: service_completed_successfully`) antes de arrancar.
 
 ## 3. Producción (`docker-compose.prod.yml`)
 
@@ -41,9 +43,10 @@ BASE_DOMAIN=tudominio.com ./build-push.sh
 # En el VPS:
 docker compose -f docker-compose.prod.yml pull
 docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 docker image prune -f
 ```
+
+Igual que en local, el `pull`+`up -d` ya deja el esquema al día — el servicio `migrate` corre `alembic upgrade head` una sola vez (no una por réplica) antes de que `backend` levante.
 
 - `IMAGE_PREFIX` / `IMAGE_TAG` se leen del `.env` (default `ghcr.io/lrojascode` / `latest`).
 - El backend **no** publica puertos al host (acceso solo vía Nginx).
@@ -84,7 +87,8 @@ Plantilla con TLS y subdominios reales (a completar por dominio).
 
 ## 6. Migraciones en producción
 
-- `AUTO_CREATE_TABLES=false`. El esquema se aplica con `alembic upgrade head` (paso manual del deploy).
+- `AUTO_CREATE_TABLES=false`. El esquema se aplica con `alembic upgrade head`.
+- **Automático desde el `up -d` (`O-2`, resuelto)**: el servicio `migrate` (misma imagen que `backend`, `restart: "no"`) corre la migración y termina antes de que `backend` arranque (`depends_on: condition: service_completed_successfully`) — ya no es un paso manual que se pueda olvidar tras un `pull`. Seguro en despliegues multi-réplica: un único contenedor migra, no cada réplica de `backend` compitiendo por aplicarla a la vez.
 - Ver la cadena de migraciones en [05-base-de-datos](05-base-de-datos.md).
 
 ## 7. Observabilidad en producción

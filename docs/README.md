@@ -38,15 +38,14 @@ cp .env.example .env
 # En local dejar MOCK_SERVICES=true (no requiere credenciales de Meta ni de IA).
 
 # 2. Levantar todo el stack (db, redis, backend, 3 workers, beat, frontend, nginx)
+# El servicio `migrate` aplica `alembic upgrade head` automáticamente antes
+# de que `backend` arranque (O-2) — ya no hace falta correrlo a mano.
 docker compose up -d
 
-# 3. Aplicar migraciones (AUTO_CREATE_TABLES=false en prod; en local puede usarse create_all)
-docker compose exec backend alembic upgrade head
-
-# 4. (Opcional) Sembrar un tenant de prueba
+# 3. (Opcional) Sembrar un tenant de prueba
 docker compose exec backend python scripts/seed_tenant.py --org "Demo" --token xxx --account-id act_123 --page-id 111
 
-# 5. Abrir la app
+# 4. Abrir la app
 #    http://localhost:3000  (landing)   ·   http://cliente1.localhost  (tenant)
 #    http://api.localhost/docs          (OpenAPI, si ENABLE_API_DOCS=true)
 ```

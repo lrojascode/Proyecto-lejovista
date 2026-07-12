@@ -102,6 +102,7 @@ erDiagram
 
 - Configuración **async** (`alembic/env.py` usa `async_engine_from_config` + `NullPool`); `target_metadata = Base.metadata`; URL tomada de `settings.DATABASE_URL`.
 - En **producción**: `AUTO_CREATE_TABLES=false` y el esquema se gestiona con `alembic upgrade head`. `create_all` solo en dev/test.
+- **Aplicación automática al desplegar (`O-2`, resuelto)**: antes `alembic upgrade head` era un paso manual tras cada `pull` — fácil de olvidar. Ambos `docker-compose.yml` y `docker-compose.prod.yml` tienen un servicio `migrate` de un solo uso (misma imagen que `backend`, `command: alembic upgrade head`, `restart: "no"` explícito para que no reintente en bucle tras un `exit 0`) que corre y termina **antes** de que `backend` arranque (`depends_on: migrate: condition: service_completed_successfully`). Seguro en despliegues multi-réplica: es un único contenedor el que migra, no cada réplica de `backend` compitiendo por aplicar la migración a la vez.
 
 ### Cadena de migraciones (orden lineal)
 
@@ -134,6 +135,8 @@ Cada migración cuenta la evolución del producto: breakdowns extra, tablas de r
 docker compose exec backend alembic revision --autogenerate -m "descripcion"
 docker compose exec backend alembic upgrade head
 ```
+
+> El segundo comando es para aplicar la migración de inmediato durante el desarrollo (sin reiniciar el stack). En un despliegue real ya no hace falta correrlo a mano: el servicio `migrate` (arriba) la aplica automáticamente al hacer `docker compose up`.
 
 > Buenas prácticas presentes como skills del repo (`sqlalchemy-alembic-expert-*`): índices concurrentes, evitar cambios de tipo bloqueantes, separar FKs/constraints en pasos. Revisar antes de migrar tablas grandes en producción.
 
