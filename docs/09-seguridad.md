@@ -92,7 +92,18 @@ Todos los limitadores basados en Redis son **fail-open**. La IP del cliente se t
 - Alcance deliberadamente acotado: solo `is_revoked` (la lectura de la blocklist) cambió de fail-open a fail-closed. `revoke_jti` (la escritura, en logout/rotación) sigue siendo best-effort — si Redis cae justo al revocar, el token queda vivo hasta su expiración natural; endurecer esto tendría el efecto secundario de que un `logout` pueda fallar visiblemente por una caída de Redis, un trade-off de UX que no se tomó en este cambio. El resto de la capa Redis (rate limiting, cooldown, cache) sigue fail-open a propósito — es soporte, no la fuente de verdad de la sesión.
 - **Hallazgo real durante la implementación**: al hacer este cambio, varios tests de `/auth/refresh` empezaron a fallar — resultó que corrían con Redis genuinamente inalcanzable en el entorno de test (fail-open lo ocultaba en silencio: is_revoked devolvía `False` y el refresh se aceptaba igual). Se agregó un fake Redis en memoria por test (mismo patrón que `tests/test_throttle.py`) a los tests que necesitan que la revocación funcione de verdad.
 
+## 9e. `X-Forwarded-For` solo desde un peer confiable (S-4) — resuelto
+
+- `get_client_ip` (`app/api/v1/auth.py`) ya no confía en `X-Forwarded-For` incondicionalmente. Solo lo usa si el peer directo de la conexión (`request.client.host`) es una IP privada/loopback — en este deployment, el backend nunca se publica al host/internet (`expose`, no `ports`, en `docker-compose.prod.yml`); el único que puede hablarle directo es Nginx, dentro de la red interna de docker. Si el peer directo fuera una IP pública (backend expuesto por error, sin el proxy), se ignora el header y se usa el peer directo — evita que cualquiera evada el rate limit de signup/login mandando un `X-Forwarded-For` inventado.
+- Tests en `backend/tests/test_client_ip.py`.
+
+## 9f. Prompt injection desde datos de Meta (S-5) — resuelto
+
+- El texto que se interpola como **texto libre** en los prompts del LLM (`app/services/ai/llm.py`) — nombre de organización/cuenta en el Master Brief; `product_name` y nombre/copy de la campaña ganadora en la generación de copy — ahora se envuelve en delimitadores explícitos (`_delimit_untrusted`, marcadores `<<<DATO_EXTERNO_NO_CONFIABLE>>>...<<<FIN_DATO_EXTERNO>>>`) antes de mandarlo al modelo. El `system_prompt` de ambas llamadas incluye una regla explícita: todo lo que esté entre esos delimitadores es **dato**, nunca una instrucción, sin importar lo que diga.
+- El resto de los datos del brief (campañas, KPIs, segmentación) viaja dentro de bloques `json.dumps(...)` — el escapado de JSON ya evita que un nombre de campaña "rompa" la estructura del prompt; el delimitador se añadió específicamente donde faltaba esa protección estructural (interpolación como texto plano).
+- No es sanitización (no se filtran caracteres): campañas y copy pueden tener emojis, puntuación y texto libre legítimo. Es "spotlighting" — marcar la frontera entre instrucción y dato para que el modelo la respete.
+- Tests en `backend/tests/test_campaign_copy_llm.py::test_suggest_campaign_copy_delimits_untrusted_content` y `backend/tests/test_master_brief_v2.py::test_org_and_account_name_delimited_against_prompt_injection`.
+
 ## 10. Límites conocidos (ver detalle en [15](15-deuda-tecnica.md))
 
-- **`X-Forwarded-For` no verificado**: confiable solo detrás del propio Nginx.
-- **Prompt injection**: los datos de Meta (nombres de campaña, copy) se inyectan en prompts del LLM; el system prompt mitiga (regla de no inventar cifras) pero no hay sanitización específica anti-inyección.
+Ninguno pendiente en la categoría de seguridad — ver [15-deuda-tecnica §1](15-deuda-tecnica.md) para el historial completo (S-1 a S-5, todos resueltos) y el resto de categorías (arquitectura, rendimiento, operación, producto) con hallazgos aún abiertos.

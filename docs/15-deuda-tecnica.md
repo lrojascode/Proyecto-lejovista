@@ -25,15 +25,13 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Resolución**: `is_revoked` ahora es fail-**closed** — levanta `RevocationCheckUnavailable` si Redis no responde, y `POST /auth/refresh` responde `503` en vez de aceptar la renovación a ciegas. Alcance acotado a propósito: solo la lectura de la blocklist (`is_revoked`); la escritura (`revoke_jti`, en logout/rotación) sigue best-effort/fail-open. El resto de la capa Redis (rate limiting, cooldown, cache) también sigue fail-open. Ver [09-seguridad §9d](09-seguridad.md).
 - **Hallazgo real durante la implementación**: varios tests de `/auth/refresh` corrían con Redis genuinamente inalcanzable en el entorno de test — el fail-open anterior lo ocultaba en silencio. Se agregó un fake Redis en memoria por test (mismo patrón que `tests/test_throttle.py`) donde la revocación real importaba para la aserción.
 
-### 🟡 S-4 · `X-Forwarded-For` sin lista de proxies confiables
-- **Explicación**: `get_client_ip` toma el primer valor de `X-Forwarded-For`; es spoofeable si algo distinto de Nginx llega al backend.
-- **Impacto**: evasión del rate limit por IP (solo relevante si el backend queda expuesto sin el proxy).
-- **Propuesta**: confiar solo en el proxy conocido; documentar que el backend no debe exponerse directo.
+### ✅ S-4 · `X-Forwarded-For` sin lista de proxies confiables — RESUELTO
+- **Explicación (histórica)**: `get_client_ip` tomaba el primer valor de `X-Forwarded-For` incondicionalmente; era spoofeable si algo distinto de Nginx llegaba al backend.
+- **Resolución**: solo se confía en el header si el peer directo (`request.client.host`) es una IP privada/loopback — el esquema de red del deployment (backend con `expose`, no `ports`, solo alcanzable por Nginx) garantiza que ese sea normalmente el caso. Si el peer directo fuera público, se ignora el header. Tests en `backend/tests/test_client_ip.py`.
 
-### 🟡 S-5 · Prompt injection desde datos de Meta
-- **Explicación**: nombres de campaña y copy reales se inyectan en prompts del LLM. El system prompt mitiga (no inventar cifras) pero no hay sanitización anti-inyección.
-- **Impacto**: un nombre de campaña malicioso podría intentar manipular la narrativa. Bajo, porque la salida es texto informativo, no acciones.
-- **Propuesta**: delimitar/escapar el contenido no confiable en el prompt; mantener el determinismo de las decisiones (ya se hace).
+### ✅ S-5 · Prompt injection desde datos de Meta — RESUELTO
+- **Explicación (histórica)**: nombres de campaña y copy reales se inyectaban en prompts del LLM como texto plano, sin delimitar. El system prompt mitigaba la alucinación numérica pero no había defensa específica anti-inyección.
+- **Resolución**: el texto que se interpola como texto libre (nombre de org/cuenta, `product_name`, nombre/copy de la campaña ganadora) se envuelve en delimitadores explícitos (`_delimit_untrusted`, `app/services/ai/llm.py`) y el `system_prompt` instruye tratar ese contenido siempre como dato, nunca como instrucción. Los datos que ya viajaban como `json.dumps(...)` (campañas, KPIs, segmentación) no se tocaron — el escapado de JSON ya los protegía estructuralmente. Ver [09-seguridad §9f](09-seguridad.md).
 
 ## 2. Arquitectura y mantenibilidad
 
@@ -119,7 +117,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |
 | P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
-| S-4, S-5 | 🟡 | Endurecimiento | Bajo | Pendiente |
+| S-4, S-5 | 🟡 | Endurecimiento | Bajo | ✅ Resuelto |
 | M-3, M-4, P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-1, UX-2, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |

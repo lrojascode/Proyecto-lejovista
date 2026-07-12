@@ -41,8 +41,10 @@ flowchart LR
 - [x] **S-3 · Blocklist fail-open 🟠** — ✅ Hecho. `is_revoked` (`app/utils/security.py`) es fail-**closed**: levanta `RevocationCheckUnavailable` si Redis no responde; `POST /auth/refresh` responde 503 en vez de aceptar el refresh a ciegas. `revoke_jti` (escritura) y el resto de la capa Redis siguen fail-open a propósito.
   - **Hallazgo real durante la implementación**: el cambio rompió varios tests de `/auth/refresh` que corrían con Redis genuinamente inalcanzable en el entorno de test — el fail-open anterior lo ocultaba en silencio (is_revoked devolvía `False`, el refresh se aceptaba igual). Se agregó un fake Redis en memoria por test (mismo patrón que `tests/test_throttle.py`), no un fixture global — se investigó y descartó una fixture global (`fakeredis` + autouse) por romper la convención ya establecida del repo de fakes locales por archivo, usados también para probar fail-open a propósito en otros mecanismos.
   - Tests nuevos: `test_refresh_fails_closed_when_redis_unavailable` en `backend/tests/test_audit_fixes.py`.
-- [ ] **S-4 🟡** — `X-Forwarded-For` solo desde el proxy conocido. *Bajo.*
-- [ ] **S-5 🟡** — delimitar/escapar el contenido de Meta (nombres de campaña, copy) en los prompts del LLM. *Bajo.*
+- [x] **S-4 🟡** — ✅ Hecho. `get_client_ip` (`app/api/v1/auth.py`) solo confía en `X-Forwarded-For` si el peer directo es una IP privada/loopback (Nginx, dentro de la red de docker — el backend nunca se publica al host en prod, `expose` no `ports`). Si el peer directo fuera público, se ignora el header. Tests en `backend/tests/test_client_ip.py` (4 tests).
+- [x] **S-5 🟡** — ✅ Hecho. El texto libre interpolado en los prompts del LLM (nombre de org/cuenta, `product_name`, nombre/copy de la campaña ganadora) se envuelve en delimitadores explícitos (`_delimit_untrusted`, `app/services/ai/llm.py`); el `system_prompt` de ambas llamadas (Master Brief y copy de campaña) instruye tratar ese contenido como dato, nunca como instrucción. Los datos que ya viajaban en bloques `json.dumps(...)` no se tocaron (el escapado de JSON ya los protegía). Tests: `test_suggest_campaign_copy_delimits_untrusted_content`, `test_org_and_account_name_delimited_against_prompt_injection`.
+
+**Sprint 1 completo — los 5 hallazgos de seguridad (S-1 a S-5) están resueltos.**
 
 ## Sprint 2 · Limpieza de arquitectura + quick wins
 
@@ -77,7 +79,7 @@ flowchart LR
 | S-1 | 🔴 | 1 | Medio | 0 | ✅ Hecho |
 | S-2 | 🟠 | 1 | Medio | 0 | ✅ Hecho |
 | S-3 | 🟠 | 1 | Bajo | 0 | ✅ Hecho |
-| S-4, S-5 | 🟡 | 1 | Bajo | 0 | Pendiente |
+| S-4, S-5 | 🟡 | 1 | Bajo | 0 | ✅ Hecho |
 | M-1, M-3 | 🟠🟡 | 2 | Bajo-Medio | 0 | Pendiente |
 | M-4, UX-2 | 🟡 | 2 | Bajo | 0 | Pendiente |
 | M-2 | 🟠 | 3 | **Alto** | 1, 2 | Pendiente |
