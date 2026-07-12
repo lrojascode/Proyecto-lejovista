@@ -1,11 +1,9 @@
 from datetime import datetime, timedelta
-from typing import Optional, Union, Any, Dict, Tuple
+from typing import Optional, Union, Any, Dict
 import jwt
 import uuid
-import time
 import logging
 import redis.asyncio as aioredis
-from jwt.exceptions import InvalidTokenError
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status, Request, Response
 from fastapi.security import OAuth2PasswordBearer
@@ -19,9 +17,6 @@ logger = logging.getLogger("lejovista.security")
 # Usamos bcrypt para hashes de contraseñas
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/login", auto_error=False)
-
-# Token temporal: key -> (user_id, expiration_timestamp)
-temp_tokens: Dict[str, Tuple[str, float]] = {}
 
 # (S-2) El refresh token viaja como cookie httpOnly — nunca en el cuerpo JSON
 # ni en localStorage — para que una vulnerabilidad XSS no pueda leerlo con
@@ -159,24 +154,6 @@ async def is_revoked(jti: str) -> bool:
         except Exception:
             pass
 
-def create_temp_token(user_id: str, expires_in: int = 30) -> str:
-    token = str(uuid.uuid4())
-    temp_tokens[token] = (user_id, time.time() + expires_in)
-    return token
-
-def consume_temp_token(token: str) -> Optional[str]:
-    now = time.time()
-    # Limpieza perezosa de expirados
-    expired = [k for k, v in list(temp_tokens.items()) if v[1] < now]
-    for k in expired:
-        temp_tokens.pop(k, None)
-        
-    val = temp_tokens.pop(token, None)
-    if val:
-        user_id, expiration = val
-        if expiration >= now:
-            return user_id
-    return None
 
 async def get_current_user(
     request: Request,

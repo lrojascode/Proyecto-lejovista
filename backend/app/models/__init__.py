@@ -11,9 +11,6 @@ from app.models.organization_user import OrganizationUser
 from app.models.meta_credential import MetaCredential
 from app.models.meta_page import MetaPage
 from app.models.campaign_draft import CampaignDraft
-from app.models.campaign import Campaign
-from app.models.campaign_metrics_history import CampaignMetricsHistory
-from app.models.action_log import ActionLog
 from app.models.adset_snapshot import AdsetSnapshot
 from app.models.ad_snapshot import AdSnapshot
 from app.models.meta_creative import MetaCreative
@@ -38,9 +35,6 @@ __all__ = [
     "MetaCredential",
     "MetaPage",
     "CampaignDraft",
-    "Campaign",
-    "CampaignMetricsHistory",
-    "ActionLog",
     "AdsetSnapshot",
     "AdSnapshot",
     "MetaCreative",
