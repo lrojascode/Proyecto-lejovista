@@ -13,10 +13,12 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Resolución**: dependencia `require_role(min_role)` en `app/utils/security.py` (jerarquía `ADMIN > OPERATOR > VIEWER`, reconsulta la BD en cada request). Aplicada a los ~12 endpoints de escritura de organizaciones/cuentas, campañas, insights y acciones — ver la tabla en [08-autenticacion §7](08-autenticacion.md). Tests en `backend/tests/test_rbac.py` (jerarquía en ambos sentidos + membresía faltante).
 - **Hallazgo relacionado descubierto al implementar**: `POST /auth/signup` vinculaba como `ADMIN` a cualquiera que se registrara con el slug de una organización **ya existente** (sin invitación, sin verificación) — el propio flujo de signup era una vía de escalada de privilegios que habría dejado el RBAC recién construido sin efecto. Corregido: signup ahora solo puede fundar una organización nueva; devuelve 400 si el slug ya existe.
 
-### 🟠 S-2 · Tokens JWT en `localStorage`
-- **Explicación**: `access`/`refresh` viven en `localStorage`, accesibles a cualquier script (XSS).
-- **Impacto**: una vulnerabilidad XSS permite robar la sesión y el refresh (7 días).
-- **Propuesta**: cookies `httpOnly`+`Secure`+`SameSite` para el refresh, o al menos CSP estricta. Evaluar acortar la vida del refresh.
+### ✅ S-2 · Tokens JWT en `localStorage` — RESUELTO
+- **Explicación (histórica)**: `access`/`refresh` vivían en `localStorage`, accesibles a cualquier script (XSS).
+- **Resolución**: el access token pasó a vivir en memoria del módulo `frontend/lib/api.ts` (nunca persistido); el refresh token viaja **solo** como cookie `httpOnly`+`SameSite=Lax` (+`Secure` si HTTPS) que fija el backend (`set_refresh_cookie`, `app/utils/security.py`) y nunca aparece en el cuerpo JSON. Detalle en [08-autenticacion §2](08-autenticacion.md) y [09-seguridad §9c](09-seguridad.md).
+- **Bug real descubierto e corregido al implementar**: el guard del dashboard (`(dashboard)/layout.tsx`) siempre forzaba un refresh contra la cookie al montar, y la navegación post-login usaba `window.location` (recarga completa) — entre ambas cosas, el access token recién obtenido en login/signup se descartaba de inmediato y la sesión dependía SIEMPRE del refresh por cookie, incluso cuando ya había un token válido en memoria. Corregido: login/signup navegan con el router de Next (preserva memoria) y el guard solo refresca por cookie si no hay token ya en memoria.
+- **Limitación conocida y documentada** (no bloqueante): en desarrollo local con subdominios `*.localhost`, Chrome no las trata como el mismo "site" para `SameSite`, así que un reload de página en ese modo específico pierde la sesión (no ocurre en producción con dominio real ni en modo túnel). Ver [08-autenticacion](08-autenticacion.md) para el workaround.
+- CSP estricta **no** se implementó en este cambio (evaluado, pospuesto — ver nota de esfuerzo/riesgo en [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md)); la mitigación principal (cookies httpOnly) ya reduce el impacto de un XSS a robar solo el access token de vida corta, no la sesión completa de 7 días.
 
 ### 🟠 S-3 · Blocklist de JWT fail-open
 - **Explicación**: `is_revoked` devuelve `False` si Redis no responde. Un refresh revocado podría aceptarse durante una caída de Redis.
@@ -111,7 +113,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | ID | Gravedad | Área | Esfuerzo estimado | Estado |
 |----|----------|------|-------------------|--------|
 | S-1 | 🔴 | Autorización RBAC | Medio | ✅ Resuelto |
-| S-2 | 🟠 | Tokens en localStorage | Medio | Pendiente |
+| S-2 | 🟠 | Tokens en localStorage | Medio | ✅ Resuelto |
 | M-1 | 🟠 | Consolidar clientes Meta | Medio | Pendiente |
 | M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |
 | P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |

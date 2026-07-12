@@ -41,11 +41,12 @@ app/
 - Los **grupos de rutas** `(auth)` y `(dashboard)` no afectan la URL; separan layouts.
 - Casi todas las páginas del dashboard son **client components** (`"use client"`) porque dependen de `localStorage` (token) y de estado interactivo.
 
-## 3. Autenticación en el cliente
+## 3. Autenticación en el cliente (S-2)
 
-- Tras login/signup se guardan en `localStorage`: `token`, `refresh_token`, `user`.
-- El **guard** vive en `(dashboard)/layout.tsx`: si no hay `token`/`user`, redirige a `/login` con `safeRedirect` (`window.location.replace`).
-- El cliente API (`lib/api.ts`) adjunta `Authorization: Bearer <token>` y, ante un `401`, intenta **un** refresh (`tryRefresh`) antes de expulsar al usuario y limpiar el storage.
+- El **access token** vive en una variable de módulo dentro de `lib/api.ts` (`getAccessToken`/`hasAccessToken`) — nunca en `localStorage`. El **refresh token** es una cookie `httpOnly` que el backend fija; el frontend nunca la lee ni la maneja directamente, solo llama a `/auth/refresh` con `credentials: "include"` y el navegador la adjunta solo. Solo `user` (no sensible) sigue en `localStorage`.
+- **Login/signup** (`(auth)/login/page.tsx`) navegan al dashboard con el `router` de Next (`router.push("/")`), **no** `window.location` — una recarga completa destruiría el access token recién obtenido en memoria antes de que el dashboard llegue a usarlo.
+- El **guard** vive en `(dashboard)/layout.tsx`: si ya hay un access token en memoria (se acaba de loguear, misma pestaña), lo confirma con `GET /auth/me`; si no (recarga de página, pestaña nueva), intenta renovar la sesión con `api.bootstrapSession()` (`POST /auth/refresh` vía la cookie). Sin sesión válida en ningún caso, `safeRedirect("/login")` (`window.location.replace` — aquí sí es correcto, es una salida, no hay estado en memoria que preservar).
+- El cliente API (`lib/api.ts`) adjunta `Authorization: Bearer <access>` y, ante un `401`, intenta **un** refresh antes de expulsar al usuario y limpiar la sesión.
 
 ```mermaid
 sequenceDiagram
@@ -55,16 +56,18 @@ sequenceDiagram
     P->>API: api.getInsights()
     API->>BE: GET /insights (Bearer access, X-Tenant-Slug, X-Ad-Account-Id)
     alt 401
-        API->>BE: POST /auth/refresh (refresh_token)
+        API->>BE: POST /auth/refresh (cookie httpOnly, sin body)
         alt refresh OK
-            BE-->>API: nuevo access+refresh
+            BE-->>API: nuevo access (+ Set-Cookie refresh nuevo)
             API->>BE: reintenta GET /insights
         else refresh falla
-            API->>P: limpia storage → /login
+            API->>P: limpia sesión → /login
         end
     end
     BE-->>P: datos
 ```
+
+> Limitación conocida en desarrollo local con subdominios `*.localhost` (Chrome no las trata como el mismo "site"): ver [08-autenticacion](08-autenticacion.md).
 
 ## 4. Cliente API (`lib/api.ts`)
 

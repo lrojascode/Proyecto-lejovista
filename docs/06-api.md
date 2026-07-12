@@ -24,12 +24,12 @@ Códigos frecuentes: `400` (regla de negocio), `401` (sin/mal token), `403` (ten
 | Método | Ruta | Body | Notas |
 |--------|------|------|-------|
 | POST | `/auth/signup` | `UserCreate` | **Funda** una organización nueva + usuario `ADMIN`. 400 si el slug ya pertenece a una org existente (S-1 — no hay flujo de invitación). Rate-limit 5/h por IP. Slugs reservados: `api, www, admin, localhost, static` |
-| POST | `/auth/login` | `UserLogin` | Rate-limit 10/5min por IP. Devuelve access+refresh |
-| POST | `/auth/refresh` | `{refresh_token}` | Rota el refresh (revoca el usado, `S-9`) |
-| POST | `/auth/logout` | `{refresh_token}` | Revoca el refresh en Redis |
+| POST | `/auth/login` | `UserLogin` | Rate-limit 10/5min por IP. Devuelve `access_token`; fija el refresh como cookie `httpOnly` (S-2) |
+| POST | `/auth/refresh` | *(sin body)* | Lee el refresh de la cookie `httpOnly`; rota (revoca el usado, fija cookie nueva, `S-9`). 401 sin cookie válida |
+| POST | `/auth/logout` | *(sin body)* | Revoca el refresh (leído de la cookie) en Redis y borra la cookie |
 | GET | `/auth/me` | — | Usuario actual enriquecido (rol de la org activa) |
 
-Respuesta de signup/login/refresh: `TokenResponse { access_token, refresh_token, token_type, user }`.
+Respuesta de signup/login/refresh: `TokenResponse { access_token, token_type, user }` — el refresh token **nunca** viaja en el cuerpo (S-2), solo como cookie `httpOnly` (`Path=/api/v1/auth`).
 
 ## 4. Organizaciones y cuentas — `/api/v1/organizations`
 

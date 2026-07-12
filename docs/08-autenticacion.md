@@ -11,31 +11,47 @@ Implementada en `app/utils/security.py`, `app/api/v1/auth.py` y consumida como d
 
 ## 2. Flujo de sesión
 
+(S-2) El **access token** viaja en el cuerpo JSON y vive **en memoria** del módulo `frontend/lib/api.ts` — nunca en `localStorage`. El **refresh token** nunca aparece en el cuerpo JSON: viaja **solo como cookie `httpOnly`** que el navegador adjunta automáticamente. Ninguno de los dos es alcanzable desde JavaScript ante una vulnerabilidad XSS de la forma en que `localStorage` lo era.
+
 ```mermaid
 sequenceDiagram
-    participant U as Usuario
+    participant U as Usuario (navegador)
     participant API as /auth
     participant R as Redis (blocklist)
 
     U->>API: POST /auth/signup o /login
-    API-->>U: access + refresh (+ user)
-    Note over U: guarda ambos en localStorage
+    API-->>U: body: access_token (+ user)\nSet-Cookie: refresh_token (httpOnly)
+    Note over U: access_token en memoria (lib/api.ts).<br/>La cookie la gestiona el navegador, JS nunca la lee.
 
-    U->>API: request con Bearer access
-    alt access expiró (401)
-        U->>API: POST /auth/refresh (refresh)
+    U->>API: request con Bearer access_token
+    alt access expiró (401), o recarga de página (memoria vacía)
+        U->>API: POST /auth/refresh (credentials: include — sin body)
         API->>R: revoca jti del refresh usado (rotación, S-9)
-        API-->>U: nuevo access + nuevo refresh
+        API-->>U: nuevo access_token + Set-Cookie con refresh nuevo
     end
 
-    U->>API: POST /auth/logout (refresh)
+    U->>API: POST /auth/logout (credentials: include — sin body)
     API->>R: revoca jti (blocklist con TTL)
+    API-->>U: borra la cookie (Set-Cookie con Max-Age=0)
 ```
 
 - **Signup** (`/auth/signup`): valida slug reservado y unicidad de email; **funda una organización nueva** (`Organization` + `User` + `OrganizationUser(ADMIN)`). Rate-limit 5/hora por IP. (S-1) Si el slug ya pertenece a una organización existente, devuelve 400 — no existe flujo de invitación, así que unirse a una org por slug ya no es posible desde signup: antes, cualquiera que conociera/adivinara el slug de un tenant ajeno (visible en el subdominio) podía registrarse contra él y quedaba vinculado como **ADMIN** de esa organización sin verificación alguna.
 - **Login** (`/auth/login`): verifica password; emite tokens con la primera organización como activa. Rate-limit 10/5min por IP.
-- **Refresh** (`/auth/refresh`): valida `type=="refresh"` y que el `jti` no esté revocado; **rota** (revoca el usado, emite nuevo par) — mitiga reuso de tokens robados.
-- **Logout** (`/auth/logout`): revoca el `jti` del refresh (los access caducan solos).
+- **Refresh** (`/auth/refresh`): lee el refresh de `request.cookies` (no de un body — nada que enviar, el navegador ya lo adjuntó); valida `type=="refresh"` y que el `jti` no esté revocado; **rota** (revoca el usado, emite nuevo par, fija cookie nueva) — mitiga reuso de tokens robados. 401 si no hay cookie.
+- **Logout** (`/auth/logout`): revoca el `jti` del refresh leído de la cookie y la borra (los access caducan solos, no se revocan activamente).
+
+### Cookie del refresh (`set_refresh_cookie`, `app/utils/security.py`)
+
+| Atributo | Valor | Por qué |
+|---|---|---|
+| `HttpOnly` | siempre | Inalcanzable desde JS — el objetivo central de S-2. |
+| `Path` | `/api/v1/auth` | El navegador no la envía a endpoints que no la necesitan. |
+| `Max-Age` | `REFRESH_TOKEN_EXPIRE_MINUTES * 60` | Espejo del claim `exp` del JWT. |
+| `Secure` | `true` si la request llegó por HTTPS (directo o vía `X-Forwarded-Proto`, que Nginx ya reenvía) | En local (HTTP plano) sería descartada por el navegador si fuera `true` siempre. |
+| `Domain` | el host base (`BASE_DOMAIN`) **solo si** el `Host` de la request pertenece a ese esquema de subdominios; si no (túnel/single-host, hostname ajeno a `BASE_DOMAIN`), se omite y la cookie queda scoped al host exacto | Fijar un `Domain` que no coincide con el host visto hace que el navegador **rechace la cookie entera** — crítico para no romper el modo túnel. |
+| `SameSite` | `Lax` | Cruza de `<slug>.BASE_DOMAIN` (frontend) a `api.BASE_DOMAIN` (backend) sigue siendo "same-site" (mismo eTLD+1) en un dominio real; `Lax` alcanza. |
+
+> **Limitación conocida de desarrollo local** (modo "2 subdominios" con `*.localhost`): Chrome no trata `cliente1.localhost` y `localhost` como el mismo "site" para efectos de `SameSite` (a diferencia de un dominio real como `lrojas.dev`, donde todos los subdominios sí comparten sitio). Esto significa que **recargar la página** mientras se navega un tenant vía subdominio local (`cliente1.localhost:3000`) no logra renovar la sesión desde la cookie — el refresh devuelve 401 y se redirige a `/login`, aunque en producción (dominio real) o en modo túnel/single-host (mismo origen) esto funciona correctamente. Verificado en vivo durante la implementación. Workarounds para probar el flujo completo de sesión localmente: usar `http://localhost:3000` sin subdominio, o el modo túnel. Dentro de la misma sesión de navegador (login → navegar → logout, sin recargar), el flujo funciona igual en cualquier modo, porque el access token vive en memoria y no depende de la cookie hasta que se pierde (recarga o pestaña nueva).
 
 ## 3. Revocación (blocklist en Redis)
 
@@ -90,4 +106,4 @@ Resuelve la **cuenta publicitaria** de la request (aislamiento multi-cuenta dent
 ## 9. Superficie de credenciales
 
 - El **token de Meta** nunca es una credencial de sesión del usuario; se cifra en `MetaCredential` y se usa solo server-side. Ver [09-seguridad](09-seguridad.md).
-- El frontend guarda `token`/`refresh_token` en `localStorage` (no cookies httpOnly) — implicaciones de XSS descritas en [09](09-seguridad.md).
+- (S-2, resuelto) El frontend ya **no** guarda ningún token en `localStorage`. El access token vive en memoria (`frontend/lib/api.ts`); el refresh token es una cookie `httpOnly`. Solo `user` (nombre, email, rol, organization_id — no sensible para XSS) sigue en `localStorage`, para mostrar la sesión sin un round-trip extra. Ver [09-seguridad](09-seguridad.md).

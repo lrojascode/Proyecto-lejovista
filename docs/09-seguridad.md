@@ -80,9 +80,14 @@ Todos los limitadores basados en Redis son **fail-open**. La IP del cliente se t
 
 `require_role(min_role)` (ver [08-autenticacion §7](08-autenticacion.md)) protege todos los endpoints de escritura de organizaciones/cuentas, campañas, insights y acciones con la jerarquía `ADMIN > OPERATOR > VIEWER`. Cierra también una escalada de privilegios relacionada: signup ya no permite unirse a una organización existente por slug (antes vinculaba al nuevo usuario como `ADMIN` de esa org sin invitación).
 
+## 9c. Tokens fuera de `localStorage` (S-2) — resuelto
+
+- El **access token** vive en memoria del módulo `frontend/lib/api.ts` (variable de módulo, no persistida). El **refresh token** viaja **solo** como cookie `HttpOnly` + `SameSite=Lax` (+ `Secure` cuando la conexión es HTTPS) fijada por el backend (`set_refresh_cookie`, `app/utils/security.py`) — nunca en el cuerpo JSON de `/auth/login`, `/auth/signup` ni `/auth/refresh`. Detalle completo del mecanismo y de la cookie en [08-autenticacion §2](08-autenticacion.md).
+- Reduce la superficie de robo de sesión por XSS: un script inyectado ya no puede leer el refresh token con `document.cookie` (bloqueado por `HttpOnly`) ni encontrarlo en `localStorage`. El access token sigue siendo legible en memoria mientras la pestaña esté abierta (inevitable — la sesión lo necesita para operar), pero no sobrevive a un reload ni queda en almacenamiento persistente.
+- **Limitación conocida**: en desarrollo local con el esquema de "2 subdominios" (`*.localhost`), Chrome no comparte "site" entre `<slug>.localhost` y `localhost`, así que el refresh vía cookie falla tras un reload en ese modo específico (no ocurre en producción con dominio real, ni en modo túnel/single-host). Ver detalle y workaround en [08-autenticacion](08-autenticacion.md).
+
 ## 10. Límites conocidos (ver detalle en [15](15-deuda-tecnica.md))
 
-- **Tokens en `localStorage`**: expuestos a XSS (no cookies httpOnly).
 - **Blocklist de JWT fail-open**: si Redis cae, un refresh revocado podría aceptarse.
 - **`X-Forwarded-For` no verificado**: confiable solo detrás del propio Nginx.
 - **Prompt injection**: los datos de Meta (nombres de campaña, copy) se inyectan en prompts del LLM; el system prompt mitiga (regla de no inventar cifras) pero no hay sanitización específica anti-inyección.
