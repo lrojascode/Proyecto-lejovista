@@ -52,10 +52,10 @@ backend/
 │   │   ├── report_cache.py     # Cache Redis del ReportBuilder
 │   │   ├── campaign_*.py       # suggester, validator, targeting, risk, learning, outcome
 │   │   ├── creative_builder.py # object_story_spec de Meta
-│   │   ├── meta_asset_repository.py, meta_api_client.py, meta_credential_service.py
+│   │   ├── meta_asset_repository.py
 │   │   ├── kpi_period.py, brand_code.py, policy_catalog.py
 │   │   ├── pdf_report.py, snapshot_archiver.py, notification_service.py
-│   │   ├── rate_limiter.py, audit_log_service.py
+│   │   ├── audit_log_service.py  # sin llamadores vivos, ver M-3 en 15-deuda-tecnica.md
 │   ├── workers/                # Celery
 │   │   ├── celery_app.py       # App Celery, colas, task_routes, beat_schedule
 │   │   ├── tasks.py            # sync, análisis, ejecución, outcomes, archivado
@@ -79,7 +79,7 @@ backend/
 | Subgrupo | Módulos | Doc |
 |----------|---------|-----|
 | **Motor de IA** | `ai/engine.py`, `ai/rules.py`, `ai/statistics.py`, `ai/thresholds.py`, `ai/planner.py`, `ai/executor.py`, `ai/llm.py`, `ai/token_tracking.py` | [18](18-motor-ia.md) |
-| **Meta Ads** | `meta_ads/sync.py`, `meta_ads/modifier.py`, `meta_ads/rate_limiter.py`, `meta_ads/exceptions.py`, `meta_api_client.py`, `meta_asset_repository.py`, `meta_credential_service.py` | [19](19-sincronizacion-meta.md) |
+| **Meta Ads** | `meta_ads/sync.py`, `meta_ads/modifier.py`, `meta_ads/rate_limiter.py`, `meta_ads/exceptions.py`, `meta_asset_repository.py` | [19](19-sincronizacion-meta.md) |
 | **Creación de campañas** | `campaign_suggester.py`, `campaign_validator.py`, `campaign_targeting.py`, `campaign_risk.py`, `creative_builder.py`, `brand_code.py`, `tenant_rules/campaign_defaults.py` | [20](20-creacion-campanas.md) |
 | **Aprendizaje** | `campaign_learning.py`, `campaign_outcome.py` | [18](18-motor-ia.md) |
 | **Reporting** | `report_builder.py`, `report_cache.py`, `kpi_period.py`, `pdf_report.py`, `policy_catalog.py` | [12](12-flujos.md) |

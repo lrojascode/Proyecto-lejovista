@@ -39,7 +39,6 @@ Las tablas calientes crecen sin límite, por eso existe el **archivado** (ver §
 | `sync_jobs` | Registro de cada sync | `payload_json` (JSONB) = Master Brief |
 | `api_call_logs` | Auditoría HTTP a Meta | token enmascarado |
 | `action_logs` | Auditoría de eventos de negocio | por org + timestamp |
-| `tenant_api_quotas` | Cuota de API por org/cuenta | únicos por org y por cuenta |
 | `meta_creatives` | Inventario de imágenes (adimages) | `uq_creative_acc_hash` |
 | `custom_audiences` | Audiencias personalizadas | `uq_audience_acc_external` |
 | `ai_token_usage` | Consumo de tokens por llamada LLM | por org/cuenta/feature |
@@ -124,10 +123,11 @@ f7ffe513f0fb  initial_schema_session_1        (base)
   → a3b8c1d4e7f2  ai_token_usage
   → b4c9d2e5f8a3  campaign_learning_logs
   → c8d3e5f1a9b4  ad_account_spend_monthly
-  → d2f6a8c3b1e7  organization_industry   (head)
+  → d2f6a8c3b1e7  organization_industry
+  → a4f8c2d6e9b1  drop_tenant_api_quotas  (head)
 ```
 
-Cada migración cuenta la evolución del producto: breakdowns extra, tablas de reporting P-2, archivado, presupuesto de adset (cuentas ABO), WhatsApp por página, copy de creativos, medición de tokens, aprendizaje, gasto mensual y rubro de negocio.
+Cada migración cuenta la evolución del producto: breakdowns extra, tablas de reporting P-2, archivado, presupuesto de adset (cuentas ABO), WhatsApp por página, copy de creativos, medición de tokens, aprendizaje, gasto mensual, rubro de negocio y, la más reciente, la limpieza de `tenant_api_quotas` (M-1 — tabla huérfana del cliente Meta viejo que nunca tuvo un lector/escritor real).
 
 ### Crear una migración
 

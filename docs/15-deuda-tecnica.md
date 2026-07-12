@@ -35,10 +35,10 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 ## 2. Arquitectura y mantenibilidad
 
-### 🟠 M-1 · Dos clientes de Meta y dos rate limiters coexistiendo
-- **Explicación**: `MetaAPIRateLimiter` (usado en todo el flujo real) y `MetaApiClient`+`services/rate_limiter.py`+`meta_credential_service.py` (alternativo, apenas usado). También hay `TenantApiQuota` que alimenta un limiter distinto.
-- **Impacto**: confusión sobre cuál es el camino canónico; código potencialmente muerto; dos estrategias de rate limit.
-- **Propuesta**: consolidar en un único cliente/limiter o documentar explícitamente el rol de cada uno y eliminar el no usado.
+### ✅ M-1 · Dos clientes de Meta y dos rate limiters coexistiendo — RESUELTO
+- **Explicación (histórica)**: `MetaAPIRateLimiter` (usado en todo el flujo real) convivía con `MetaApiClient`+`services/rate_limiter.py`+`meta_credential_service.py` (alternativo, "apenas usado").
+- **Resolución**: se confirmó con un grep exhaustivo (`from app.services.meta_api_client import`, etc.) que el segundo grupo no tenía **ningún** llamador fuera de sí mismo — ni en `app/`, ni en `tests/`. Se eliminaron los 3 archivos completos, junto con el modelo huérfano `TenantApiQuota` (tabla `tenant_api_quotas`, sin lector/escritor real tampoco) — migración `a4f8c2d6e9b1` (drop de la tabla, con downgrade fiel). Cobertura del backend subió de 84% a 86% solo por quitar código muerto sin cubrir. Ver [11-servicios-externos §1](11-servicios-externos.md).
+- **Hallazgo relacionado, no resuelto en este cambio**: `services/audit_log_service.py` (y el modelo `ActionLog` que solo él escribe) resultó ser código muerto de la misma familia — sin llamadores vivos. Se deja para [M-3](15-deuda-tecnica.md) por ser la misma categoría de hallazgo (modelo/servicio marginal), no por el cliente de Meta.
 
 ### 🟠 M-2 · Reglas de negocio globales presentadas como "por tenant"
 - **Explicación**: `TENANT_CAMPAIGN_RULES` (geo Lima, objetivo, placements) y `AIThresholds` son **globales**, con TODOs para moverlas a tabla por tenant. El país/moneda (`PEN`/Perú) está hardcodeado en varios lugares (engine, targeting, modifier con key `2771`).
@@ -46,7 +46,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Propuesta**: materializar `get_thresholds_for_org` y `TENANT_CAMPAIGN_RULES` contra una tabla de reglas por organización/vertical.
 
 ### 🟡 M-3 · Modelos con uso marginal
-- **Explicación**: `Campaign` + `CampaignMetricsHistory` parecen tener poco uso activo frente al modelo de snapshots; `create_temp_token`/`consume_temp_token` (dict en memoria) no tienen consumidores en los routers.
+- **Explicación**: `Campaign` + `CampaignMetricsHistory` parecen tener poco uso activo frente al modelo de snapshots; `create_temp_token`/`consume_temp_token` (dict en memoria) no tienen consumidores en los routers. Descubierto además al resolver M-1: `services/audit_log_service.py` (`AuditLogService.log_action`/`log_api_call`) y el modelo `ActionLog` que solo él escribe tampoco tienen ningún llamador vivo.
 - **Impacto**: código/esquema que puede confundir a un nuevo dev.
 - **Propuesta**: confirmar uso y eliminar/documentar; el token temporal en memoria además no funciona con múltiples réplicas.
 
@@ -113,7 +113,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | S-1 | 🔴 | Autorización RBAC | Medio | ✅ Resuelto |
 | S-2 | 🟠 | Tokens en localStorage | Medio | ✅ Resuelto |
 | S-3 | 🟠 | Blocklist JWT fail-open | Bajo | ✅ Resuelto |
-| M-1 | 🟠 | Consolidar clientes Meta | Medio | Pendiente |
+| M-1 | 🟠 | Consolidar clientes Meta | Medio | ✅ Resuelto |
 | M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |
 | P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |

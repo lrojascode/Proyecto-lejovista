@@ -4,12 +4,13 @@
 
 Integración central del producto. Versión configurable (`META_API_VERSION`, default `v25.0`).
 
-### Dos clientes HTTP conviven
+### Un único cliente HTTP (M-1, resuelto)
 
-| Cliente | Módulo | Uso real hoy |
-|---------|--------|--------------|
-| **`MetaAPIRateLimiter`** | `services/meta_ads/rate_limiter.py` | **El activo**: sync, modifier, creación, subida de imágenes. Soporta `call_api`, `call_api_paginated`, `call_api_multipart` |
-| `MetaApiClient` | `services/meta_api_client.py` | Cliente alternativo con `RateLimiter` Redis y `AuditLogService`. Poco/no usado en el flujo principal (ver [15](15-deuda-tecnica.md)) |
+Antes convivían dos: `MetaAPIRateLimiter` (el usado de verdad en todo el flujo real) y `MetaApiClient` + `services/rate_limiter.py` + `meta_credential_service.py` (un cliente alternativo sin llamadores vivos en ningún router/servicio ni test). Se confirmó que el segundo grupo no tenía ni un solo import fuera de sí mismo y se eliminó junto con el modelo huérfano `TenantApiQuota` (tabla `tenant_api_quotas`, migración `a4f8c2d6e9b1`). Ver [15-deuda-tecnica §M-1](15-deuda-tecnica.md).
+
+| Cliente | Módulo | Uso real |
+|---------|--------|----------|
+| **`MetaAPIRateLimiter`** | `services/meta_ads/rate_limiter.py` | El único: sync, modifier, creación, subida de imágenes, validador. Soporta `call_api`, `call_api_paginated`, `call_api_multipart` |
 
 ### `MetaAPIRateLimiter` — comportamiento
 
@@ -60,10 +61,11 @@ Un solo Redis con múltiples roles:
 | Cooldowns / rate limits | keys `cooldown:*`, `ratelimit:*` | `utils/throttle.py` |
 | Debounce de análisis | key `analysis_pending:{org}` | `workers/tasks.py` |
 | Blocklist de JWT | keys `revoked:{jti}` | `utils/security.py` |
-| Rate limit de Meta (uso) | keys `rate_limit:*` | `services/rate_limiter.py` |
 | Pub/Sub → WebSocket | canal `ws_notifications` | `notification_service.py`, `ws.py` |
 
-Todos los usos de Redis degradan **fail-open** salvo el broker de Celery (que es requisito duro para los workers).
+El rate limiting real de Meta (`MetaAPIRateLimiter`) es **puramente en memoria del proceso** — lee la cabecera `x-business-use-case-usage` de cada respuesta y decide su propia pausa, sin persistir estado en Redis. El `services/rate_limiter.py` que sí usaba Redis (keys `rate_limit:*`) era del cliente muerto eliminado en M-1.
+
+Todos los usos de Redis degradan **fail-open**, salvo el broker de Celery (requisito duro para los workers) y la blocklist de JWT para el refresh, que es **fail-closed** (S-3, ver [09-seguridad](09-seguridad.md)).
 
 ## 4. Sentry (opcional)
 

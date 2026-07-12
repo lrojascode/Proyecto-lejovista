@@ -87,9 +87,6 @@ Auditoría HTTP a Meta: `method`, `endpoint`, `params` (token enmascarado), `sta
 ### `ActionLog` (`action_logs`)
 Auditoría de eventos de negocio: `actor_id`, `action_type`, `meta_endpoint`, `status`, `details` (JSON), `timestamp`.
 
-### `TenantApiQuota` (`tenant_api_quotas`)
-Cuota de API por org/cuenta: `call_count`, `business_use_case_usage` (0-100 reportado por Meta), `last_updated`. *(Usado por `services/rate_limiter.py`; ver [15](15-deuda-tecnica.md) sobre convivencia con `MetaAPIRateLimiter`.)*
-
 ## 7. Convenciones de los modelos
 
 - **PK UUID string** en todas las tablas → portabilidad y no adivinable.
