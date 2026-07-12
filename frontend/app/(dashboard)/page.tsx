@@ -9,6 +9,7 @@ import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { api } from "@/lib/api";
 import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
+import { StatusBadge } from "@/components/StatusBadge";
 import type { CampaignSnapshot, ApiCallHistoryEntry, SpendHistoryMonth, BusinessPolicies, KpisSummary, AIInsight } from "@/lib/types";
 
 // Acentos de apoyo del design system — nunca acid-lime (reservado para acciones)
@@ -386,9 +387,7 @@ export default function DashboardPage() {
                       <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{(campaign.cost_per_conv_7d ?? campaign.cpl).toFixed(2)}</td>
                       <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{(campaign.spend_7d ?? campaign.spend).toFixed(2)}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>
-                        <span className={`badge ${campaign.status === 'ACTIVE' ? 'badge-success' : 'badge-warning'}`}>
-                          {badgeIcon(campaign.status === 'ACTIVE' ? 'badge-success' : 'badge-warning')} {campaign.status}
-                        </span>
+                        <StatusBadge status={campaign.status} />
                       </td>
                     </tr>
                   ))}

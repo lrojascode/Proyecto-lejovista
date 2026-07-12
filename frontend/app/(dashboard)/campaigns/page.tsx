@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import Link from "next/link";
-import { badgeIcon, metaStatusBadge } from "@/lib/badge";
+import { badgeIcon } from "@/lib/badge";
+import { StatusBadge } from "@/components/StatusBadge";
 import type { CampaignSnapshot } from "@/lib/types";
 
 export default function CampaignsList() {
@@ -101,8 +102,6 @@ export default function CampaignsList() {
                     badgeLabel = "Alerta";
                   }
 
-                  const statusBadge = metaStatusBadge(c.status);
-
                   return (
                     <tr key={c.id} style={{ borderBottom: "1px solid var(--border-color)" }}>
                       <td style={{ padding: "12px 8px" }}>
@@ -116,7 +115,7 @@ export default function CampaignsList() {
                       <td style={{ padding: "12px 8px", fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.frequency.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px" }}>
-                        <span className={statusBadge.cls}>{badgeIcon(statusBadge.cls)} {statusBadge.label}</span>
+                        <StatusBadge status={c.status} />
                       </td>
                       <td style={{ padding: "12px 8px" }}>
                         <span className={`badge ${badgeClass}`}>{badgeIcon(badgeClass)} {badgeLabel}</span>
