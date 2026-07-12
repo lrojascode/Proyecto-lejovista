@@ -69,20 +69,20 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 ## 4. Operación
 
-### 🟠 O-1 · Sin CI/CD versionado
-- **Explicación**: no hay pipeline (`.github/workflows`, etc.). Los tests existen pero no se corren automáticamente; el deploy es manual (`build-push.sh` + `pull`).
-- **Impacto**: regresiones pueden llegar a prod sin que los tests se ejecuten; deploy propenso a error humano.
-- **Propuesta**: CI que corra `pytest` + `npm test` + `alembic upgrade head` en un servicio efímero; opcional CD con tags.
+### ✅ O-1 · Sin CI/CD versionado — RESUELTO
+- **Explicación (histórica)**: no había pipeline (`.github/workflows`, etc.). Los tests existían pero no se corrían automáticamente; el deploy era manual (`build-push.sh` + `pull`).
+- **Resolución**: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) — job `backend` (instala dependencias de sistema de WeasyPrint, corre `alembic upgrade head` contra un servicio Postgres 16 efímero, y `pytest` con cobertura) + job `frontend` (`tsc --noEmit`, `npm test`, `npm run build`). Corre en push/PR a `main`.
+- **Hallazgo real durante la implementación**: al ejercer `alembic upgrade head` contra Postgres real por primera vez (los tests de pytest usan SQLite vía `Base.metadata.create_all`, nunca habían corrido la cadena de migraciones), la migración `a70ab36472b6_add_payload_json_to_sync_jobs.py` fallaba con `NameError: name 'Text' is not defined` (usaba `Text()` sin importar, en vez de `sa.Text()`) — un bug real, invisible hasta ahora porque nada lo ejercía. Corregido en el mismo cambio. Confirma exactamente el riesgo que este hallazgo advertía.
+- CD (despliegue automático) queda fuera de este alcance — el pipeline valida, no despliega.
 
 ### 🟡 O-2 · Migraciones como paso manual del deploy
 - **Explicación**: `alembic upgrade head` es manual tras cada `pull`.
 - **Impacto**: riesgo de olvidar migrar tras un deploy.
-- **Propuesta**: entrypoint/init-container que corra las migraciones antes de arrancar el API (con cuidado en despliegues multi-réplica).
+- **Propuesta**: entrypoint/init-container que corra las migraciones antes de arrancar el API (con cuidado en despliegues multi-réplica). Planificado para el Sprint 5 de [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md).
 
-### 🟡 O-3 · Cobertura de tests no medida
-- **Explicación**: no hay umbral de cobertura ni reporte.
-- **Impacto**: zonas sin cubrir invisibles.
-- **Propuesta**: `pytest --cov` con umbral mínimo en CI.
+### ✅ O-3 · Cobertura de tests no medida — RESUELTO
+- **Explicación (histórica)**: no había umbral de cobertura ni reporte.
+- **Resolución**: `pytest-cov` añadido a `requirements.txt`; CI corre `pytest -q --cov=app --cov-report=term-missing --cov-fail-under=80` (cobertura real medida: ~84%). Un PR que baje la cobertura del backend por debajo de 80% falla en CI.
 
 ## 5. Producto / IA
 
@@ -108,14 +108,17 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 ## 6. Resumen priorizado
 
-| ID | Gravedad | Área | Esfuerzo estimado |
-|----|----------|------|-------------------|
-| S-1 | 🔴 | Autorización RBAC | Medio |
-| S-2 | 🟠 | Tokens en localStorage | Medio |
-| M-1 | 🟠 | Consolidar clientes Meta | Medio |
-| M-2 | 🟠 | Reglas por tenant | Alto |
-| P-1 | 🟠 | Paralelizar sync | Medio |
-| O-1 | 🟠 | CI/CD | Bajo-Medio |
-| S-3, S-4, S-5 | 🟡 | Endurecimiento | Bajo |
-| M-3, M-4, P-2, O-2, O-3, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio |
-| UX-1, UX-2, UX-3 | 🟡 | Experiencia de producto | Bajo |
+| ID | Gravedad | Área | Esfuerzo estimado | Estado |
+|----|----------|------|-------------------|--------|
+| S-1 | 🔴 | Autorización RBAC | Medio | Pendiente |
+| S-2 | 🟠 | Tokens en localStorage | Medio | Pendiente |
+| M-1 | 🟠 | Consolidar clientes Meta | Medio | Pendiente |
+| M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |
+| P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
+| O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
+| S-3, S-4, S-5 | 🟡 | Endurecimiento | Bajo | Pendiente |
+| M-3, M-4, P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
+| O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
+| UX-1, UX-2, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
+
+Ver el detalle de ejecución y el resto de sprints en [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md).

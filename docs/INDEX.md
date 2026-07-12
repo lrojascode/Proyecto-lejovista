@@ -29,6 +29,7 @@ Documentación técnica generada a partir del análisis directo del código fuen
 | 19 | [Sincronización con Meta](19-sincronizacion-meta.md) | Pipeline de sync, rate limiting, mock vs real |
 | 20 | [Creación de campañas (Saga)](20-creacion-campanas.md) | Orquestación por pasos, sugeridor, validador, targeting, UX del formulario |
 | 21 | [Producto — datos visualizados](21-producto-datos-visualizados.md) | Qué dato ve el cliente, dónde y por qué: dashboard, lista y reporte; brechas de producto |
+| 22 | [Plan de remediación de deuda](22-plan-remediacion-deuda.md) | Plan de trabajo secuenciado (sprints) para cerrar los hallazgos de 15-deuda-tecnica |
 
 ## Cómo se mantiene esta documentación
 
