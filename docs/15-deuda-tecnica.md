@@ -20,10 +20,10 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Limitación conocida y documentada** (no bloqueante): en desarrollo local con subdominios `*.localhost`, Chrome no las trata como el mismo "site" para `SameSite`, así que un reload de página en ese modo específico pierde la sesión (no ocurre en producción con dominio real ni en modo túnel). Ver [08-autenticacion](08-autenticacion.md) para el workaround.
 - CSP estricta **no** se implementó en este cambio (evaluado, pospuesto — ver nota de esfuerzo/riesgo en [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md)); la mitigación principal (cookies httpOnly) ya reduce el impacto de un XSS a robar solo el access token de vida corta, no la sesión completa de 7 días.
 
-### 🟠 S-3 · Blocklist de JWT fail-open
-- **Explicación**: `is_revoked` devuelve `False` si Redis no responde. Un refresh revocado podría aceptarse durante una caída de Redis.
-- **Impacto**: ventana de reutilización de tokens robados/rotados si Redis está caído.
-- **Propuesta**: decidir conscientemente fail-open vs fail-closed para la blocklist; monitorear disponibilidad de Redis.
+### ✅ S-3 · Blocklist de JWT fail-open — RESUELTO
+- **Explicación (histórica)**: `is_revoked` devolvía `False` si Redis no respondía. Un refresh revocado podría aceptarse durante una caída de Redis.
+- **Resolución**: `is_revoked` ahora es fail-**closed** — levanta `RevocationCheckUnavailable` si Redis no responde, y `POST /auth/refresh` responde `503` en vez de aceptar la renovación a ciegas. Alcance acotado a propósito: solo la lectura de la blocklist (`is_revoked`); la escritura (`revoke_jti`, en logout/rotación) sigue best-effort/fail-open. El resto de la capa Redis (rate limiting, cooldown, cache) también sigue fail-open. Ver [09-seguridad §9d](09-seguridad.md).
+- **Hallazgo real durante la implementación**: varios tests de `/auth/refresh` corrían con Redis genuinamente inalcanzable en el entorno de test — el fail-open anterior lo ocultaba en silencio. Se agregó un fake Redis en memoria por test (mismo patrón que `tests/test_throttle.py`) donde la revocación real importaba para la aserción.
 
 ### 🟡 S-4 · `X-Forwarded-For` sin lista de proxies confiables
 - **Explicación**: `get_client_ip` toma el primer valor de `X-Forwarded-For`; es spoofeable si algo distinto de Nginx llega al backend.
@@ -114,11 +114,12 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 |----|----------|------|-------------------|--------|
 | S-1 | 🔴 | Autorización RBAC | Medio | ✅ Resuelto |
 | S-2 | 🟠 | Tokens en localStorage | Medio | ✅ Resuelto |
+| S-3 | 🟠 | Blocklist JWT fail-open | Bajo | ✅ Resuelto |
 | M-1 | 🟠 | Consolidar clientes Meta | Medio | Pendiente |
 | M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |
 | P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
-| S-3, S-4, S-5 | 🟡 | Endurecimiento | Bajo | Pendiente |
+| S-4, S-5 | 🟡 | Endurecimiento | Bajo | Pendiente |
 | M-3, M-4, P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-1, UX-2, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |

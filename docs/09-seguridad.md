@@ -86,8 +86,13 @@ Todos los limitadores basados en Redis son **fail-open**. La IP del cliente se t
 - Reduce la superficie de robo de sesión por XSS: un script inyectado ya no puede leer el refresh token con `document.cookie` (bloqueado por `HttpOnly`) ni encontrarlo en `localStorage`. El access token sigue siendo legible en memoria mientras la pestaña esté abierta (inevitable — la sesión lo necesita para operar), pero no sobrevive a un reload ni queda en almacenamiento persistente.
 - **Limitación conocida**: en desarrollo local con el esquema de "2 subdominios" (`*.localhost`), Chrome no comparte "site" entre `<slug>.localhost` y `localhost`, así que el refresh vía cookie falla tras un reload en ese modo específico (no ocurre en producción con dominio real, ni en modo túnel/single-host). Ver detalle y workaround en [08-autenticacion](08-autenticacion.md).
 
+## 9d. Blocklist de JWT fail-closed para el refresh (S-3) — resuelto
+
+- `is_revoked` (`app/utils/security.py`) ahora es **fail-closed**: si Redis no responde al consultar si un `jti` está revocado, levanta `RevocationCheckUnavailable` en vez de asumir "no revocado". `POST /auth/refresh` traduce esto en **503** — rechaza la renovación de sesión mientras dure la caída de Redis, en vez de aceptar un refresh potencialmente robado/rotado porque no había forma de verificarlo.
+- Alcance deliberadamente acotado: solo `is_revoked` (la lectura de la blocklist) cambió de fail-open a fail-closed. `revoke_jti` (la escritura, en logout/rotación) sigue siendo best-effort — si Redis cae justo al revocar, el token queda vivo hasta su expiración natural; endurecer esto tendría el efecto secundario de que un `logout` pueda fallar visiblemente por una caída de Redis, un trade-off de UX que no se tomó en este cambio. El resto de la capa Redis (rate limiting, cooldown, cache) sigue fail-open a propósito — es soporte, no la fuente de verdad de la sesión.
+- **Hallazgo real durante la implementación**: al hacer este cambio, varios tests de `/auth/refresh` empezaron a fallar — resultó que corrían con Redis genuinamente inalcanzable en el entorno de test (fail-open lo ocultaba en silencio: is_revoked devolvía `False` y el refresh se aceptaba igual). Se agregó un fake Redis en memoria por test (mismo patrón que `tests/test_throttle.py`) a los tests que necesitan que la revocación funcione de verdad.
+
 ## 10. Límites conocidos (ver detalle en [15](15-deuda-tecnica.md))
 
-- **Blocklist de JWT fail-open**: si Redis cae, un refresh revocado podría aceptarse.
 - **`X-Forwarded-For` no verificado**: confiable solo detrás del propio Nginx.
 - **Prompt injection**: los datos de Meta (nombres de campaña, copy) se inyectan en prompts del LLM; el system prompt mitiga (regla de no inventar cifras) pero no hay sanitización específica anti-inyección.

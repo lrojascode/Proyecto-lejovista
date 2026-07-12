@@ -55,8 +55,8 @@ sequenceDiagram
 
 ## 3. Revocación (blocklist en Redis)
 
-- `revoke_jti(jti, ttl)` → `SET revoked:{jti} 1 EX ttl`.
-- `is_revoked(jti)` → lectura. **Fail-open**: si Redis no responde, no bloquea (se prioriza disponibilidad sobre revocación estricta).
+- `revoke_jti(jti, ttl)` → `SET revoked:{jti} 1 EX ttl`. Sigue siendo **best-effort**: si Redis no responde al revocar (logout/rotación), se registra un warning pero no se falla la request — el token queda sin revocar hasta su expiración natural.
+- `is_revoked(jti)` → lectura. (S-3) **Fail-closed**: si Redis no responde, no se puede afirmar que el token NO esté revocado, así que se levanta `RevocationCheckUnavailable` y `POST /auth/refresh` responde **503** (no 401 — no es que el token sea inválido, es que no se pudo verificar) en vez de aceptar la renovación a ciegas. Es el único punto de la blocklist con este trade-off; el resto de mecanismos basados en Redis (rate limiting, cooldown, cache) siguen fail-open a propósito.
 - Los **access tokens no se revocan** activamente; se confía en su expiración corta relativa. La blocklist aplica a los refresh.
 
 ## 4. Dependencia `get_current_user`

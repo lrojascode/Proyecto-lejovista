@@ -38,7 +38,9 @@ flowchart LR
   - **CSP estricta**: evaluada pero NO implementada en este cambio — Next.js inyecta scripts inline para la hidratación del App Router que una CSP sin `nonce`/`unsafe-inline` rompería, y verificar esto con rigor (sin romper hidratación en ningún modo de despliegue) es un cambio propio, no una extensión natural de mover cookies. La mitigación principal (httpOnly) ya cubre el objetivo central de S-2.
   - Tests nuevos: `backend/tests/test_audit_fixes.py` (`test_refresh_token_flow`, `test_refresh_without_cookie_rejected`, `test_refresh_rejects_access_token`, `test_logout_clears_cookie_and_revokes` — este último con un Redis en memoria simulado para ejercer la revocación real). `frontend/__tests__/login.test.tsx` actualizado al nuevo contrato (sin asserts de `localStorage`, mockea `next/navigation`). Verificado end-to-end en navegador real (signup, login, dashboard, reload) contra un Postgres/Redis locales.
   - *Esfuerzo real: Medio-Alto (más que lo estimado, por el bug de navegación y la investigación de SameSite).*
-- [ ] **S-3 · Blocklist fail-open 🟠** — decisión consciente: fail-**closed** para el refresh (rechazar si Redis no responde), fail-open para el resto; healthcheck de Redis. *Bajo.*
+- [x] **S-3 · Blocklist fail-open 🟠** — ✅ Hecho. `is_revoked` (`app/utils/security.py`) es fail-**closed**: levanta `RevocationCheckUnavailable` si Redis no responde; `POST /auth/refresh` responde 503 en vez de aceptar el refresh a ciegas. `revoke_jti` (escritura) y el resto de la capa Redis siguen fail-open a propósito.
+  - **Hallazgo real durante la implementación**: el cambio rompió varios tests de `/auth/refresh` que corrían con Redis genuinamente inalcanzable en el entorno de test — el fail-open anterior lo ocultaba en silencio (is_revoked devolvía `False`, el refresh se aceptaba igual). Se agregó un fake Redis en memoria por test (mismo patrón que `tests/test_throttle.py`), no un fixture global — se investigó y descartó una fixture global (`fakeredis` + autouse) por romper la convención ya establecida del repo de fakes locales por archivo, usados también para probar fail-open a propósito en otros mecanismos.
+  - Tests nuevos: `test_refresh_fails_closed_when_redis_unavailable` en `backend/tests/test_audit_fixes.py`.
 - [ ] **S-4 🟡** — `X-Forwarded-For` solo desde el proxy conocido. *Bajo.*
 - [ ] **S-5 🟡** — delimitar/escapar el contenido de Meta (nombres de campaña, copy) en los prompts del LLM. *Bajo.*
 
@@ -74,7 +76,7 @@ flowchart LR
 | O-1, O-3 | 🟠🟡 | 0 | Bajo-Medio | — | ✅ Hecho |
 | S-1 | 🔴 | 1 | Medio | 0 | ✅ Hecho |
 | S-2 | 🟠 | 1 | Medio | 0 | ✅ Hecho |
-| S-3 | 🟠 | 1 | Bajo | 0 | Pendiente |
+| S-3 | 🟠 | 1 | Bajo | 0 | ✅ Hecho |
 | S-4, S-5 | 🟡 | 1 | Bajo | 0 | Pendiente |
 | M-1, M-3 | 🟠🟡 | 2 | Bajo-Medio | 0 | Pendiente |
 | M-4, UX-2 | 🟡 | 2 | Bajo | 0 | Pendiente |
