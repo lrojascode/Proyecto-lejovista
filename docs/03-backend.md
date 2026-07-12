@@ -121,9 +121,9 @@ Ver detalle en [12-flujos](12-flujos.md) y [18-motor-ia](18-motor-ia.md). Puntos
 
 ## 10. Cómo añadir un endpoint (guía rápida)
 
-1. Definir el schema Pydantic en `app/schemas/`.
-2. Crear la función en el router correspondiente de `app/api/v1/`, con dependencias `get_current_user` y (si es por cuenta) `get_active_ad_account_id`.
+1. Definir el `response_model` Pydantic en `app/schemas/schemas.py` (entidades del dominio) o `app/schemas/response_schemas.py` (formas de reporting/analítica — ver M-4 en [15-deuda-tecnica](15-deuda-tecnica.md)) — **todo** endpoint debe declarar su `response_model`, nunca devolver un dict plano sin schema.
+2. Crear la función en el router correspondiente de `app/api/v1/`, con dependencias `get_current_user` y (si es por cuenta) `get_active_ad_account_id`; si es de escritura, `require_role(min_role)` (ver [08-autenticacion](08-autenticacion.md)).
 3. Filtrar **siempre** por `current_user.organization_id` (y cuenta activa) — es el contrato de aislamiento.
 4. Delegar la lógica en un servicio de `app/services/`; para trabajo pesado, encolar en Celery en vez de bloquear el request.
 5. Si el cambio toca el esquema, generar una migración Alembic (ver [05](05-base-de-datos.md)).
-6. Actualizar el tipo espejo en `frontend/lib/types.ts` y el cliente en `frontend/lib/api.ts`.
+6. Correr `npm run generate-types` en `frontend/` (backend corriendo) para regenerar `lib/generated-api-types.ts` desde el `response_model` nuevo; si hace falta un alias corto nuevo, añadirlo en `frontend/lib/types.ts`. Ya no se edita el tipo a mano.

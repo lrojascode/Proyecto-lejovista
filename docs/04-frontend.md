@@ -119,9 +119,14 @@ Tres modos de despliegue soportados:
 - **Accesibilidad** (`E-6`): los badges no dependen solo del color — `lib/badge.ts` añade un ícono redundante (`✓ ⚠ ✕ ✦`).
 - Distinción explícita entre **estado real de Meta** (`metaStatusBadge`: Activa/Pausada/Archivada/Eliminada) y **evaluación de rendimiento** de la IA (GANADORA/CARA/…), que antes se confundían en la columna "Estado".
 
-## 9. Tipos compartidos (`lib/types.ts`)
+## 9. Tipos compartidos (`lib/types.ts`) — generados desde OpenAPI (M-4)
 
-Espejo manual de los schemas Pydantic del backend y de las formas de retorno de endpoints sin `response_model` (`ReportBuilder`, `kpi_period`, `ai_usage`, `learning-history`). Regla del propio archivo: **no inventar campos** que el backend no devuelve; si un endpoint cambia, este archivo se actualiza junto con él. Incluye una nota honesta de que `AIAction.reject_reason` está tipado pero el backend aún no lo expone en `AIActionResponse`.
+(M-4, resuelto) Ya no es un espejo manual. `frontend/lib/generated-api-types.ts` se genera con `npm run generate-types` (usa `openapi-typescript` contra `GET /openapi.json` del backend corriendo — configurable con `BACKEND_URL`) y contiene el schema completo, tal como lo declara el backend. `frontend/lib/types.ts` es una capa fina de **alias** sobre ese archivo (`export type CampaignSnapshot = components["schemas"]["CampaignSnapshotResponse"]`, etc.) — mantiene los nombres cortos que ya usan `lib/api.ts` y las páginas, sin que el resto del código tenga que cambiar.
+
+- Para que esto fuera posible, **todos** los endpoints que devolvían un dict plano sin schema (`ReportBuilder`, `kpi_period`, `ai_usage`, `learning-history`, `api-call-history`, `ai-models`, políticas de negocio, sugerencia de campaña, y las respuestas simples `{"message": ...}`) ganaron un `response_model` Pydantic nuevo en `app/schemas/response_schemas.py` — antes solo `frontend/lib/types.ts` documentaba esas formas, ahora `GET /openapi.json` también las expone correctamente.
+- **Regenerar**: con el backend corriendo, `npm run generate-types` (frontend). Si el backend cambia una forma de respuesta, el tipo se actualiza solo — ya no hay que editar `types.ts` a mano.
+- Los campos de tipo `Dict[str, Any]` (payload de campañas, targeting de adsets, execution_result de acciones) siguen siendo JSON libre por diseño (no tienen una forma fija que declarar) — generan `{[key: string]: unknown}` en TS; el código que los consume hace un cast local puntual (`as Record<string, any>` o una forma mínima esperada) donde necesita leer un campo específico.
+- `AIAction.reject_reason`/`rejected_at` (UX-2, resuelto): el backend ya los guardaba pero `AIActionResponse` no los exponía — el historial de acciones (`/actions`) ya tenía el JSX listo para mostrarlos (`Razón: {act.reject_reason}`), solo esperaba el dato.
 
 ## 10. Testing del frontend
 

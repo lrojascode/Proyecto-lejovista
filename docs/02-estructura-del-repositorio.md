@@ -43,8 +43,8 @@ backend/
 │   │   ├── reports.py          # brief-data, PDF, kpis-summary, spend-history
 │   │   ├── ai_usage.py         # consumo de tokens agregado
 │   │   └── ws.py               # WebSocket + Redis listener (pubsub→WS)
-│   ├── models/                 # 26 modelos SQLAlchemy (ver 07-modelos)
-│   ├── schemas/                # Pydantic: schemas.py, campaign_schemas.py
+│   ├── models/                 # 22 modelos SQLAlchemy (ver 07-modelos; 26 antes de M-1/M-3)
+│   ├── schemas/                # Pydantic: schemas.py, campaign_schemas.py, response_schemas.py (M-4)
 │   ├── services/               # Lógica de negocio (ver abajo)
 │   │   ├── ai/                 # Motor de IA: engine, rules, statistics, thresholds, planner, executor, llm, token_tracking
 │   │   ├── meta_ads/           # Integración Meta: sync, modifier, rate_limiter, exceptions
@@ -108,7 +108,8 @@ frontend/
 ├── lib/
 │   ├── api.ts                  # Cliente HTTP (fetch + refresh + headers de tenant/cuenta)
 │   ├── config.ts               # Resolución de API URL y tenant slug
-│   ├── types.ts                # Tipos espejo de los schemas del backend
+│   ├── types.ts                # Alias sobre generated-api-types.ts (M-4)
+│   ├── generated-api-types.ts  # Generado por `npm run generate-types` (openapi-typescript) — no editar a mano
 │   ├── badge.ts                # Badges de estado/rendimiento
 │   └── navigation.ts           # safeRedirect
 ├── middleware.ts               # Extrae subdominio → header x-tenant-slug

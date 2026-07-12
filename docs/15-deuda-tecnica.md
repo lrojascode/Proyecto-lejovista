@@ -49,10 +49,11 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Explicación (histórica)**: `Campaign` + `CampaignMetricsHistory` tenían poco uso activo frente al modelo de snapshots; `create_temp_token`/`consume_temp_token` (dict en memoria) no tenían consumidores en los routers; `services/audit_log_service.py` + el modelo `ActionLog` (descubiertos al resolver M-1) tampoco tenían ningún llamador vivo.
 - **Resolución**: confirmado con grep exhaustivo que ninguno de los cuatro tenía un consumidor real fuera de sí mismo. Se eliminaron `models/campaign.py`, `models/campaign_metrics_history.py`, `models/action_log.py`, `services/audit_log_service.py`, y las funciones `create_temp_token`/`consume_temp_token`/el dict `temp_tokens` de `app/utils/security.py`. Migración `b7e2f4a8c3d5` (drop de `campaign_metrics_history`, `campaigns`, `action_logs`, en ese orden por la FK; downgrade fiel, probado ida y vuelta contra Postgres real). Cobertura del backend subió a 86.74%.
 
-### 🟡 M-4 · Tipos frontend mantenidos a mano
-- **Explicación**: `frontend/lib/types.ts` es un espejo manual de los schemas del backend (ya documentado en el propio archivo). Un cambio de contrato puede desincronizarse silenciosamente (ej. `AIAction.reject_reason`, ya anotado).
-- **Impacto**: bugs de tipado sutiles entre front y back.
-- **Propuesta**: generar tipos desde el OpenAPI del backend (`openapi-typescript`).
+### ✅ M-4 · Tipos frontend mantenidos a mano — RESUELTO
+- **Explicación (histórica)**: `frontend/lib/types.ts` era un espejo manual de los schemas del backend. Un cambio de contrato podía desincronizarse en silencio (ej. `AIAction.reject_reason`, que sí llegó a pasar — ver UX-2 abajo).
+- **Resolución**: se agregó `response_model` Pydantic a **todos** los endpoints que devolvían un dict plano sin schema (nuevo `app/schemas/response_schemas.py`: `BriefDataResponse`, `KpisSummaryResponse`, `SpendHistoryResponse`, `AiUsageResponse`, `ApiCallHistoryEntry`, `SuggestionResponse`, `LearningLogResponse`, `AiModelsResponse`, `BusinessPoliciesResponse`, `MessageResponse` y afines), de modo que `GET /openapi.json` ahora describe el 100% del API real. `frontend/lib/generated-api-types.ts` se genera de ahí con `npm run generate-types` (`openapi-typescript`); `frontend/lib/types.ts` quedó como una capa fina de alias (`export type X = components["schemas"]["XResponse"]`) sobre ese archivo generado, preservando los nombres cortos que ya usaban `lib/api.ts` y las páginas. Verificado con `tsc --noEmit`, `npm test` y `npm run build` limpios contra el schema real.
+- Efecto colateral positivo: los tipos generados son más **estrictos** que los manuales (distinguen `Dict[str, Any]` como `{[key: string]: unknown}` en vez de `any`), lo que expuso 5 puntos donde el frontend accedía a JSON libre (`execution_result`, `payload.result`, `targeting`) sin narrowing — corregidos con un cast local puntual en cada uno.
+- Ver también UX-2 (resuelto en el mismo cambio, sección "Producto / IA" más abajo).
 
 ## 3. Escalabilidad y rendimiento
 
@@ -95,10 +96,9 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Impacto**: inconsistencia visual; el mismo concepto se lee distinto en dos pantallas, y el dashboard no distingue estado real de rendimiento.
 - **Propuesta**: extraer un componente `StatusBadge` único y usarlo en ambas vistas.
 
-### 🟡 UX-2 · El motivo de rechazo de una acción no se muestra
-- **Explicación**: al rechazar una `AIAction` se persiste `reject_reason`, pero `AIActionResponse` no lo expone (ya anotado en `types.ts` y M-4), así que el historial de acciones nunca muestra por qué se rechazó.
-- **Impacto**: se pierde trazabilidad de las decisiones humanas; loop de auditoría/aprendizaje incompleto.
-- **Propuesta**: añadir `reject_reason` a `AIActionResponse` y renderizarlo en `/actions` (historial).
+### ✅ UX-2 · El motivo de rechazo de una acción no se muestra — RESUELTO
+- **Explicación (histórica)**: al rechazar una `AIAction` se persistía `reject_reason` (y `rejected_at`), pero `AIActionResponse` no los exponía, así que el historial de acciones nunca mostraba cuándo ni por qué se rechazó algo.
+- **Resolución**: ambos campos agregados a `AIActionResponse` (`app/schemas/schemas.py`). Sin cambios de frontend — `/actions` ya tenía el JSX listo (`Razón: {act.reject_reason}`), solo esperaba el dato. Test: `test_action_reject_exposes_reason_in_response` en `backend/tests/test_audit_fixes.py`.
 
 ### 🟡 UX-3 · `findings`/`recommendations` no llegan al dashboard
 - **Explicación**: el contenido más accionable (frases deterministas de "lo más importante" y "qué hacer") solo se renderiza en `/reporte`, no en el home donde el cliente entra primero.
@@ -118,8 +118,10 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
 | S-4, S-5 | 🟡 | Endurecimiento | Bajo | ✅ Resuelto |
 | M-3 | 🟡 | Modelos marginales | Bajo | ✅ Resuelto |
-| M-4, P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
+| M-4 | 🟡 | Tipos generados desde OpenAPI | Bajo | ✅ Resuelto |
+| P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
-| UX-1, UX-2, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
+| UX-2 | 🟡 | reject_reason expuesto | Trivial | ✅ Resuelto |
+| UX-1, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
 
 Ver el detalle de ejecución y el resto de sprints en [22-plan-remediacion-deuda](22-plan-remediacion-deuda.md).

@@ -51,8 +51,12 @@ flowchart LR
 - [x] **M-1 · Consolidar cliente Meta 🟠** — ✅ Hecho. Canónico = `MetaAPIRateLimiter`. Eliminada la isla muerta confirmada sin llamadores vivos: `services/meta_api_client.py`, `services/rate_limiter.py`, `services/meta_credential_service.py`. También el modelo huérfano `TenantApiQuota` (tabla `tenant_api_quotas`, migración `a4f8c2d6e9b1` con downgrade fiel, probada en Postgres real ida y vuelta). Cobertura del backend 84%→86% solo por quitar código sin cubrir.
   - **Hallazgo adicional para M-3**: `services/audit_log_service.py` + el modelo `ActionLog` (solo él lo escribe) resultaron ser la misma categoría de código muerto — se dejan para el ítem M-3 de abajo.
 - [x] **M-3 · Modelos marginales 🟡** — ✅ Hecho. Confirmado con grep exhaustivo que ninguno tenía consumidor real: eliminados `models/campaign.py`, `models/campaign_metrics_history.py`, `models/action_log.py`, `services/audit_log_service.py`, y `create_temp_token`/`consume_temp_token`/`temp_tokens` de `app/utils/security.py` (import `time` también quedó sin uso, removido). Migración `b7e2f4a8c3d5` (drop de `campaign_metrics_history` → `campaigns` → `action_logs`, orden por FK; downgrade fiel, probado ida y vuelta contra Postgres real). Cobertura del backend: 86.34% → 86.74%.
-- [ ] **M-4 · Tipos desde OpenAPI 🟡** — script `openapi-typescript` que genere `frontend/lib/types.ts`; elimina la deriva manual. *Bajo.*
-- [ ] **UX-2 · `reject_reason` 🟡** *(quick win)* — añadir el campo a `AIActionResponse` (`schemas.py`) y renderizarlo en `/actions` (historial). *Trivial.*
+- [x] **M-4 · Tipos desde OpenAPI 🟡** — ✅ Hecho. Se agregó `response_model` Pydantic a **todos** los endpoints que devolvían dicts planos (nuevo `app/schemas/response_schemas.py`: `BriefDataResponse`, `KpisSummaryResponse`, `SpendHistoryResponse`, `AiUsageResponse`, `ApiCallHistoryEntry`, `SuggestionResponse`, `LearningLogResponse`, `AiModelsResponse`, `BusinessPoliciesResponse`, `MessageResponse` y afines) — antes eran la única razón por la que `frontend/lib/types.ts` no podía generarse solo. `frontend/lib/generated-api-types.ts` se genera con `npm run generate-types` (`openapi-typescript` contra `GET /openapi.json`); `lib/types.ts` quedó como alias fino sobre ese archivo, sin cambiar los nombres que ya usaban `lib/api.ts` y las páginas.
+  - **Esfuerzo real: mayor al estimado** ("Bajo" en el plan original) — declarar los `response_model` faltantes para que el OpenAPI schema fuera completo fue la mayor parte del trabajo, no la generación en sí.
+  - Efecto colateral: los tipos generados son más estrictos (`Dict[str, Any]` → `{[key: string]: unknown}`, no `any`), lo que expuso 5 puntos donde el frontend leía JSON libre sin narrowing (`execution_result`, `payload.result`, `targeting` en 3 páginas) — corregidos con un cast local puntual en cada uno. `tsc --noEmit`, `npm test` y `npm run build` limpios; verificado en navegador real.
+- [x] **UX-2 · `reject_reason` 🟡** *(quick win)* — ✅ Hecho. `reject_reason` y `rejected_at` agregados a `AIActionResponse` (`schemas.py`). Sin cambios de frontend — `/actions` ya tenía el JSX listo, solo esperaba el dato. Test: `test_action_reject_exposes_reason_in_response`.
+
+**Sprint 2 completo.**
 
 ## Sprint 3 · Reglas por tenant — `M-2 🟠 Alto` — *la pieza mayor*
 
@@ -83,7 +87,7 @@ flowchart LR
 | S-4, S-5 | 🟡 | 1 | Bajo | 0 | ✅ Hecho |
 | M-1 | 🟠 | 2 | Medio | 0 | ✅ Hecho |
 | M-3 | 🟡 | 2 | Bajo | 0 | ✅ Hecho |
-| M-4, UX-2 | 🟡 | 2 | Bajo | 0 | Pendiente |
+| M-4, UX-2 | 🟡 | 2 | Bajo | 0 | ✅ Hecho |
 | M-2 | 🟠 | 3 | **Alto** | 1, 2 | Pendiente |
 | P-1, P-2 | 🟠🟡 | 4 | Bajo-Medio | 0 | Pendiente |
 | UX-1, UX-3, IA-1, O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
