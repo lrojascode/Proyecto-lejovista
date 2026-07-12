@@ -64,10 +64,9 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **No incluido**: paralelizar las escrituras a BD entre sub-syncs (adsets/ads/inventario/páginas/breakdowns como fases completas) — requeriría separar fetch/write en cada uno y usar sesiones de BD independientes por coroutine, un refactor bastante más invasivo para un beneficio marginal (las escrituras son rápidas; el cuello de botella real es la latencia de red de Meta, ya atacada).
 - Verificado con la suite existente (`tests/test_audit_fixes.py::test_real_sync_parses_meta_entities` y afines, que ejercen `_sync_real_data` completo contra un limiter fake) — sin cambios de comportamiento, solo de orden/paralelismo de las llamadas HTTP.
 
-### 🟡 P-2 · Estado en memoria del proceso
-- **Explicación**: el `ConnectionManager` de WebSocket y `temp_tokens` viven en memoria del proceso FastAPI. Con múltiples réplicas del backend, un cliente conectado a la réplica A no recibe un broadcast originado en B salvo por el pubsub (que sí resuelve WS, pero no el token temporal).
-- **Impacto**: limita el escalado horizontal del backend.
-- **Propuesta**: el WS ya usa Redis pubsub (bien); eliminar el token en memoria o moverlo a Redis.
+### ✅ P-2 · Estado en memoria del proceso — RESUELTO (por verificación, sin cambio de código)
+- **Explicación (histórica)**: el `ConnectionManager` de WebSocket y `temp_tokens` vivían en memoria del proceso FastAPI. Con múltiples réplicas del backend, un cliente conectado a la réplica A no recibía un broadcast originado en B salvo por el pubsub (que sí resolvía WS, pero no el token temporal).
+- **Resolución**: `temp_tokens`/`create_temp_token`/`consume_temp_token` ya no existen — se eliminaron por completo en [M-3](15-deuda-tecnica.md) (Sprint 2), que confirmó con grep exhaustivo que no tenían ningún consumidor real. Eso deja solo la mitad del `ConnectionManager` de WS, que **ya estaba resuelta desde antes** (el propio hallazgo original lo decía: "el pubsub... sí resuelve WS"): `manager.active_connections` (`app/api/v1/ws.py`) es efectivamente estado local por réplica, pero cada réplica corre su propio `redis_listener()` suscrito al mismo canal (`ws_notifications`) que `NotificationService.notify_job_status` publica — un evento originado en cualquier réplica llega a **todas**, y cada una hace `broadcast_to_tenant` solo a sus conexiones locales. Es el patrón estándar de fan-out para WS horizontalmente escalado, no un parche pendiente. Confirmado con grep: `active_connections`/`ConnectionManager` no se referencian fuera de `ws.py` (sin lector cross-réplica que necesite el estado). El frontend ya reconecta automáticamente cada 3s (`WebSocketProvider`) ante cualquier caída de conexión (reinicio de réplica, rebalanceo), así que no hay pérdida de eventos observable por el usuario.
 
 ## 4. Operación
 
@@ -121,7 +120,8 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | S-4, S-5 | 🟡 | Endurecimiento | Bajo | ✅ Resuelto |
 | M-3 | 🟡 | Modelos marginales | Bajo | ✅ Resuelto |
 | M-4 | 🟡 | Tipos generados desde OpenAPI | Bajo | ✅ Resuelto |
-| P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
+| P-2 | 🟡 | Estado en memoria (WS) | Bajo | ✅ Resuelto (por verificación) |
+| O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-2 | 🟡 | reject_reason expuesto | Trivial | ✅ Resuelto |
 | UX-1, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |

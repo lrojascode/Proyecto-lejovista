@@ -70,7 +70,9 @@ flowchart LR
 ## Sprint 4 · Rendimiento
 
 - [x] **P-1 · Paralelizar sync 🟠** — ✅ Hecho. `_sync_real_data` (`app/services/meta_ads/sync.py`) identificaba ~12-15 llamadas HTTP a Meta secuenciales por cuenta. Se paralelizaron con `asyncio.gather` los pares/grupos de lecturas genuinamente independientes (ninguna escribe a `self.db` antes de que el fetch termine, así que no hay riesgo de carrera sobre la sesión de SQLAlchemy): campañas + insights de campaña, estructura + insights de adsets, estructura + insights de ads, imágenes + audiencias del inventario, y las 5 dimensiones de breakdown (antes 5 llamadas una tras otra — el mayor cuello de botella individual, ahora 1 round-trip). `MetaAPIRateLimiter.call_api` ya era seguro para invocación concurrente (cada llamada abre su propio `httpx.AsyncClient` y su propia sesión de log de auditoría). Reduce de ~16 a ~7 round-trips secuenciales por cuenta. Verificado con la suite existente (`test_audit_fixes.py::test_real_sync_parses_meta_entities` y afines) sin cambios de comportamiento. *No incluido: paralelizar las escrituras a BD entre sub-syncs (requeriría sesiones de BD independientes por coroutine) — el cuello de botella real era la latencia de red, no la escritura.*
-- [ ] **P-2 · Estado en memoria 🟡** — *(re-alcance necesario: el hallazgo original mencionaba `temp_tokens`, pero ese dict fue eliminado por completo en M-3 — Sprint 2 — junto con `create_temp_token`/`consume_temp_token`. Lo que queda pendiente es solo la mitad del `ConnectionManager` de WebSocket: verificar si su estado en memoria por proceso sigue siendo una limitación real de escalado horizontal ahora que ya no hay token temporal que mover a Redis.)*
+- [x] **P-2 · Estado en memoria 🟡** — ✅ Hecho, resuelto por verificación (sin cambio de código). El hallazgo original mencionaba mover `temp_tokens` a Redis, pero ese dict ya no existe — se eliminó por completo en M-3 (Sprint 2). Verificada la mitad restante (`ConnectionManager` de WS, `app/api/v1/ws.py`): `manager.active_connections` es estado local por réplica, pero cada réplica corre su propio `redis_listener()` suscrito al mismo canal Redis (`ws_notifications`) que `NotificationService.notify_job_status` publica desde cualquier réplica — un evento originado en A llega también a B, que hace `broadcast_to_tenant` solo sobre sus conexiones locales. Es el patrón estándar de fan-out para WS multi-réplica, no una limitación pendiente (el propio hallazgo original ya lo reconocía: "el pubsub... sí resuelve WS"). Confirmado con grep que `active_connections`/`ConnectionManager` no se referencian fuera de `ws.py`. El frontend reconecta automáticamente cada 3s ante cualquier corte.
+
+**Sprint 4 completo.**
 
 ## Sprint 5 · Producto/UX + Ops
 
@@ -93,7 +95,7 @@ flowchart LR
 | M-4, UX-2 | 🟡 | 2 | Bajo | 0 | ✅ Hecho |
 | M-2 | 🟠 | 3 | **Alto** | 1, 2 | ✅ Hecho |
 | P-1 | 🟠 | 4 | Medio | 0 | ✅ Hecho |
-| P-2 | 🟡 | 4 | Bajo | 0 | Pendiente |
+| P-2 | 🟡 | 4 | Bajo | 0 | ✅ Hecho (verificación) |
 | UX-1, UX-3, IA-1, O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
 
 **Quick wins** para arrancar con impulso: UX-2, S-3, S-4, M-3 (todos bajos, sin dependencias más allá de CI).
