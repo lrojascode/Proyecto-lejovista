@@ -102,7 +102,6 @@ flowchart TB
 - Loggers namespaced: `lejovista.main`, `lejovista.sync`, `lejovista.ai_engine`, `lejovista.llm`, `lejovista.planner`, `lejovista.executor`, `lejovista.security`, `lejovista.throttle`, `lejovista.tokens`, `lejovista.outcome`, `lejovista.archiver`, `lejovista.report_cache`, `celery.task`, etc.
 - **Auditoría persistida**:
   - `APICallLog` — cada llamada HTTP a Meta (endpoint, método, status, preview; el `access_token` se enmascara).
-  - `ActionLog` — eventos de negocio (`AuditLogService`).
   - `AITokenUsage` — consumo de tokens por funcionalidad.
 - Sentry captura excepciones en API y workers si está configurado (`D-2`).
 

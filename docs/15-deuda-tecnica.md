@@ -45,10 +45,9 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Impacto**: onboarding de un cliente fuera de Lima/Perú requiere cambios de código.
 - **Propuesta**: materializar `get_thresholds_for_org` y `TENANT_CAMPAIGN_RULES` contra una tabla de reglas por organización/vertical.
 
-### 🟡 M-3 · Modelos con uso marginal
-- **Explicación**: `Campaign` + `CampaignMetricsHistory` parecen tener poco uso activo frente al modelo de snapshots; `create_temp_token`/`consume_temp_token` (dict en memoria) no tienen consumidores en los routers. Descubierto además al resolver M-1: `services/audit_log_service.py` (`AuditLogService.log_action`/`log_api_call`) y el modelo `ActionLog` que solo él escribe tampoco tienen ningún llamador vivo.
-- **Impacto**: código/esquema que puede confundir a un nuevo dev.
-- **Propuesta**: confirmar uso y eliminar/documentar; el token temporal en memoria además no funciona con múltiples réplicas.
+### ✅ M-3 · Modelos con uso marginal — RESUELTO
+- **Explicación (histórica)**: `Campaign` + `CampaignMetricsHistory` tenían poco uso activo frente al modelo de snapshots; `create_temp_token`/`consume_temp_token` (dict en memoria) no tenían consumidores en los routers; `services/audit_log_service.py` + el modelo `ActionLog` (descubiertos al resolver M-1) tampoco tenían ningún llamador vivo.
+- **Resolución**: confirmado con grep exhaustivo que ninguno de los cuatro tenía un consumidor real fuera de sí mismo. Se eliminaron `models/campaign.py`, `models/campaign_metrics_history.py`, `models/action_log.py`, `services/audit_log_service.py`, y las funciones `create_temp_token`/`consume_temp_token`/el dict `temp_tokens` de `app/utils/security.py`. Migración `b7e2f4a8c3d5` (drop de `campaign_metrics_history`, `campaigns`, `action_logs`, en ese orden por la FK; downgrade fiel, probado ida y vuelta contra Postgres real). Cobertura del backend subió a 86.74%.
 
 ### 🟡 M-4 · Tipos frontend mantenidos a mano
 - **Explicación**: `frontend/lib/types.ts` es un espejo manual de los schemas del backend (ya documentado en el propio archivo). Un cambio de contrato puede desincronizarse silenciosamente (ej. `AIAction.reject_reason`, ya anotado).
@@ -118,7 +117,8 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
 | S-4, S-5 | 🟡 | Endurecimiento | Bajo | ✅ Resuelto |
-| M-3, M-4, P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
+| M-3 | 🟡 | Modelos marginales | Bajo | ✅ Resuelto |
+| M-4, P-2, O-2, IA-1 | 🟡 | Limpieza/operación | Bajo-Medio | Pendiente |
 | O-3 | 🟡 | Cobertura de tests | Bajo | ✅ Resuelto |
 | UX-1, UX-2, UX-3 | 🟡 | Experiencia de producto | Bajo | Pendiente |
 

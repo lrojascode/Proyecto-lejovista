@@ -55,7 +55,6 @@ backend/
 │   │   ├── meta_asset_repository.py
 │   │   ├── kpi_period.py, brand_code.py, policy_catalog.py
 │   │   ├── pdf_report.py, snapshot_archiver.py, notification_service.py
-│   │   ├── audit_log_service.py  # sin llamadores vivos, ver M-3 en 15-deuda-tecnica.md
 │   ├── workers/                # Celery
 │   │   ├── celery_app.py       # App Celery, colas, task_routes, beat_schedule
 │   │   ├── tasks.py            # sync, análisis, ejecución, outcomes, archivado
@@ -83,7 +82,7 @@ backend/
 | **Creación de campañas** | `campaign_suggester.py`, `campaign_validator.py`, `campaign_targeting.py`, `campaign_risk.py`, `creative_builder.py`, `brand_code.py`, `tenant_rules/campaign_defaults.py` | [20](20-creacion-campanas.md) |
 | **Aprendizaje** | `campaign_learning.py`, `campaign_outcome.py` | [18](18-motor-ia.md) |
 | **Reporting** | `report_builder.py`, `report_cache.py`, `kpi_period.py`, `pdf_report.py`, `policy_catalog.py` | [12](12-flujos.md) |
-| **Infra/soporte** | `rate_limiter.py`, `audit_log_service.py`, `notification_service.py`, `snapshot_archiver.py`, `utils/throttle.py`, `utils/security.py` | [03](03-backend.md) |
+| **Infra/soporte** | `notification_service.py`, `snapshot_archiver.py`, `utils/throttle.py`, `utils/security.py` | [03](03-backend.md) |
 
 ## 3. Frontend (`frontend/`)
 

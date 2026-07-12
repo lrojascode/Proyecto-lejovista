@@ -48,9 +48,6 @@ Métrica diaria por anuncio + **copy real** del creativo (`creative_title`, `cre
 ### `AdAccountSpendMonthly` (`ad_account_spend_monthly`)
 Gasto total por mes calendario (`year_month` "YYYY-MM", `spend`, `closed`). Backfill único por cuenta; luego solo se refresca el mes en curso. Unique `uq_ad_account_year_month`.
 
-### `CampaignMetricsHistory` (`campaign_metrics_history`)
-Historial simple por `Campaign` real (`spend`, `leads`, `cpl`, `impressions`, `clicks`). Unique `uq_campaign_date`. *(Modelo con poco uso activo hoy; ver [15-deuda-tecnica](15-deuda-tecnica.md).)*
-
 ### Tablas de archivo (`*_snapshots_archive`)
 `CampaignSnapshotArchive`, `AdsetSnapshotArchive`, `AdSnapshotArchive`: réplica de las columnas de negocio + `original_id` + `archived_at`, **sin FKs ni uniques**. Pobladas por el archivador (`D-3`).
 
@@ -73,9 +70,6 @@ Consumo de una llamada real al LLM: `feature`, `provider`, `model`, tokens (`pro
 ### `CampaignDraft` (`campaign_drafts`)
 Estado de la Saga de creación. Campos: `created_by_user_id`, `name`, `payload` (JSON con la config; `payload["result"]` acumula los IDs de Meta paso a paso), `status` (`DRAFT`/`PENDING_CREATION`/`CREATED`/`FAILED`), `error_message`.
 
-### `Campaign` (`campaigns`)
-Campaña "real" materializada: `external_campaign_id` (único), `name`, `status`, `objective`, `draft_id` (`SET NULL`). Relación `metrics_history`.
-
 ## 6. Operación y auditoría
 
 ### `SyncJob` (`sync_jobs`)
@@ -83,9 +77,6 @@ Registro de cada sincronización: `sync_type` (`FULL`/`INCREMENTAL`/`WEEKLY`), `
 
 ### `APICallLog` (`api_call_logs`)
 Auditoría HTTP a Meta: `method`, `endpoint`, `params` (token enmascarado), `status_code`, `response_preview`, `timestamp`.
-
-### `ActionLog` (`action_logs`)
-Auditoría de eventos de negocio: `actor_id`, `action_type`, `meta_endpoint`, `status`, `details` (JSON), `timestamp`.
 
 ## 7. Convenciones de los modelos
 

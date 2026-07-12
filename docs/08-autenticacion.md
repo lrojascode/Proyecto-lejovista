@@ -99,11 +99,7 @@ Resuelve la **cuenta publicitaria** de la request (aislamiento multi-cuenta dent
 
   El resto de endpoints (lecturas `GET`) no están gateados por rol: cualquier miembro autenticado de la org puede ver dashboard, reportes, insights e historial — el filtro es solo de **escritura**.
 
-## 8. Token temporal (in-memory)
-
-`create_temp_token` / `consume_temp_token` mantienen tokens efímeros en un dict en memoria del proceso. No se observan usos activos en los routers; es un mecanismo latente (no sobrevive a reinicios ni funciona con múltiples réplicas). Ver [15](15-deuda-tecnica.md).
-
-## 9. Superficie de credenciales
+## 8. Superficie de credenciales
 
 - El **token de Meta** nunca es una credencial de sesión del usuario; se cifra en `MetaCredential` y se usa solo server-side. Ver [09-seguridad](09-seguridad.md).
 - (S-2, resuelto) El frontend ya **no** guarda ningún token en `localStorage`. El access token vive en memoria (`frontend/lib/api.ts`); el refresh token es una cookie `httpOnly`. Solo `user` (nombre, email, rol, organization_id — no sensible para XSS) sigue en `localStorage`, para mostrar la sesión sin un round-trip extra. Ver [09-seguridad](09-seguridad.md).

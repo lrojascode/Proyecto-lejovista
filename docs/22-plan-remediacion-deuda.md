@@ -50,7 +50,7 @@ flowchart LR
 
 - [x] **M-1 · Consolidar cliente Meta 🟠** — ✅ Hecho. Canónico = `MetaAPIRateLimiter`. Eliminada la isla muerta confirmada sin llamadores vivos: `services/meta_api_client.py`, `services/rate_limiter.py`, `services/meta_credential_service.py`. También el modelo huérfano `TenantApiQuota` (tabla `tenant_api_quotas`, migración `a4f8c2d6e9b1` con downgrade fiel, probada en Postgres real ida y vuelta). Cobertura del backend 84%→86% solo por quitar código sin cubrir.
   - **Hallazgo adicional para M-3**: `services/audit_log_service.py` + el modelo `ActionLog` (solo él lo escribe) resultaron ser la misma categoría de código muerto — se dejan para el ítem M-3 de abajo.
-- [ ] **M-3 · Modelos marginales 🟡** — confirmar y eliminar `models/campaign.py`, `models/campaign_metrics_history.py`, `create/consume_temp_token`, y (hallazgo nuevo de M-1) `services/audit_log_service.py` + `models/action_log.py`; migración de drop de tablas. *Bajo.*
+- [x] **M-3 · Modelos marginales 🟡** — ✅ Hecho. Confirmado con grep exhaustivo que ninguno tenía consumidor real: eliminados `models/campaign.py`, `models/campaign_metrics_history.py`, `models/action_log.py`, `services/audit_log_service.py`, y `create_temp_token`/`consume_temp_token`/`temp_tokens` de `app/utils/security.py` (import `time` también quedó sin uso, removido). Migración `b7e2f4a8c3d5` (drop de `campaign_metrics_history` → `campaigns` → `action_logs`, orden por FK; downgrade fiel, probado ida y vuelta contra Postgres real). Cobertura del backend: 86.34% → 86.74%.
 - [ ] **M-4 · Tipos desde OpenAPI 🟡** — script `openapi-typescript` que genere `frontend/lib/types.ts`; elimina la deriva manual. *Bajo.*
 - [ ] **UX-2 · `reject_reason` 🟡** *(quick win)* — añadir el campo a `AIActionResponse` (`schemas.py`) y renderizarlo en `/actions` (historial). *Trivial.*
 
@@ -82,7 +82,7 @@ flowchart LR
 | S-3 | 🟠 | 1 | Bajo | 0 | ✅ Hecho |
 | S-4, S-5 | 🟡 | 1 | Bajo | 0 | ✅ Hecho |
 | M-1 | 🟠 | 2 | Medio | 0 | ✅ Hecho |
-| M-3 | 🟡 | 2 | Bajo | 0 | Pendiente |
+| M-3 | 🟡 | 2 | Bajo | 0 | ✅ Hecho |
 | M-4, UX-2 | 🟡 | 2 | Bajo | 0 | Pendiente |
 | M-2 | 🟠 | 3 | **Alto** | 1, 2 | Pendiente |
 | P-1, P-2 | 🟠🟡 | 4 | Bajo-Medio | 0 | Pendiente |

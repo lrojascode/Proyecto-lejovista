@@ -28,17 +28,14 @@ Las tablas calientes crecen sin límite, por eso existe el **archivado** (ver §
 | `ad_accounts` | Cuenta publicitaria conectada | `uq_org_platform_acc`; narrativa cacheada + metadatos |
 | `meta_credentials` | Token de Meta cifrado (Fernet) | `token_expires_at`, `status` |
 | `meta_pages` | Página FB + WhatsApp + IG actor | `uq_org_meta_page` |
-| `campaigns` | Campaña "real" (vinculada a draft) | `external_campaign_id` único |
 | `campaign_drafts` | Estado de la Saga de creación | `payload` JSON con `result` incremental |
 | `campaign_snapshots` | Métrica diaria por campaña | `uq_snapshot_acc_campaign_date` + 2 índices |
 | `adset_snapshots` | Métrica diaria por adset | `uq_adset_snapshot_acc_adset_date` |
 | `ad_snapshots` | Métrica diaria por anuncio | `uq_ad_snapshot_acc_ad_date` |
-| `campaign_metrics_history` | Historial simple por campaña real | `uq_campaign_date` |
 | `ai_insights` | Hallazgos de Capa 1/2 | índices por account/campaign/org |
 | `ai_actions` | Acciones propuestas/ejecutadas | ciclo de vida en `status` |
 | `sync_jobs` | Registro de cada sync | `payload_json` (JSONB) = Master Brief |
 | `api_call_logs` | Auditoría HTTP a Meta | token enmascarado |
-| `action_logs` | Auditoría de eventos de negocio | por org + timestamp |
 | `meta_creatives` | Inventario de imágenes (adimages) | `uq_creative_acc_hash` |
 | `custom_audiences` | Audiencias personalizadas | `uq_audience_acc_external` |
 | `ai_token_usage` | Consumo de tokens por llamada LLM | por org/cuenta/feature |
@@ -77,7 +74,7 @@ erDiagram
     AD_ACCOUNTS ||--o{ SYNC_JOBS : registra
 ```
 
-> Nota: los `*_snapshots` referencian `campaign_id`/`adset_id`/`ad_id` como **IDs externos de Meta** (no FKs a `campaigns`), porque el sync trae entidades que pueden no existir como filas `Campaign` locales.
+> Nota: los `*_snapshots` referencian `campaign_id`/`adset_id`/`ad_id` como **IDs externos de Meta**, no FKs — el sync trae entidades que no tienen una fila local equivalente (el modelo `Campaign`, que hubiera sido esa fila, se eliminó en M-3 por no tener uso real; ver [15-deuda-tecnica](15-deuda-tecnica.md)).
 
 ## 5. Índices y rendimiento
 
@@ -124,10 +121,11 @@ f7ffe513f0fb  initial_schema_session_1        (base)
   → b4c9d2e5f8a3  campaign_learning_logs
   → c8d3e5f1a9b4  ad_account_spend_monthly
   → d2f6a8c3b1e7  organization_industry
-  → a4f8c2d6e9b1  drop_tenant_api_quotas  (head)
+  → a4f8c2d6e9b1  drop_tenant_api_quotas
+  → b7e2f4a8c3d5  drop_campaign_action_log_marginal_models  (head)
 ```
 
-Cada migración cuenta la evolución del producto: breakdowns extra, tablas de reporting P-2, archivado, presupuesto de adset (cuentas ABO), WhatsApp por página, copy de creativos, medición de tokens, aprendizaje, gasto mensual, rubro de negocio y, la más reciente, la limpieza de `tenant_api_quotas` (M-1 — tabla huérfana del cliente Meta viejo que nunca tuvo un lector/escritor real).
+Cada migración cuenta la evolución del producto: breakdowns extra, tablas de reporting P-2, archivado, presupuesto de adset (cuentas ABO), WhatsApp por página, copy de creativos, medición de tokens, aprendizaje, gasto mensual, rubro de negocio y, las dos más recientes, limpieza de deuda técnica (M-1: `tenant_api_quotas`, huérfana del cliente Meta viejo; M-3: `campaigns`/`campaign_metrics_history`/`action_logs`, modelos sin lector/escritor real).
 
 ### Crear una migración
 

@@ -10,7 +10,7 @@ El activo más sensible es el **token de acceso a Meta Ads**: permite leer datos
 
 - `MetaCredential.access_token_encrypted` se cifra con **Fernet** (`cryptography`) usando `ENCRYPTION_KEY`.
 - Cifrado/descifrado solo en memoria del backend (`get_access_token`).
-- En logs, el token se **enmascara** (`APICallLog` reemplaza `access_token` por `***`; el rate limiter y `MetaApiClient` hacen lo mismo).
+- En logs, el token se **enmascara** (`APICallLog` reemplaza `access_token` por `***`, igual que `MetaAPIRateLimiter`).
 - `ENCRYPTION_KEY` y `SECRET_KEY` **no** deben committearse (documentado en `.env.example`; el `.env` real está gitignored).
 
 ## 3. Gating de escrituras a Meta (defensa en profundidad)
@@ -57,9 +57,8 @@ En `MetaCampaignModifier`:
 | `enforce_rate_limit` (Redis INCR + TTL) | signup 5/h, login 10/5min por IP | Fuerza bruta / spam de registro |
 | `enforce_cooldown` (Redis SET NX EX) | sync 60 s, análisis 120 s por org | Evitar spam de operaciones costosas (Meta/LLM) |
 | `MetaAPIRateLimiter` | llamadas a Meta | Backoff por `x-business-use-case-usage`, pausas preventivas, reintentos |
-| `RateLimiter` (Redis) | `MetaApiClient` | Token bucket + uso reportado por Meta |
 
-Todos los limitadores basados en Redis son **fail-open**. La IP del cliente se toma de `X-Forwarded-For` (primer valor) con fallback al socket — suficiente para limitar, no para autorizar.
+Todos los limitadores basados en Redis son **fail-open**. (S-4) La IP del cliente se toma de `X-Forwarded-For` solo si el peer directo de la conexión es una IP privada/loopback (Nginx, dentro de la red interna de docker); si no, se usa el peer directo y se ignora el header — evita que alguien evada el límite con un header inventado si el backend quedara expuesto sin el proxy. Detalle en §9e más abajo.
 
 ## 7. CORS y exposición
 
@@ -69,8 +68,7 @@ Todos los limitadores basados en Redis son **fail-open**. La IP del cliente se t
 
 ## 8. Manejo de tokens de Meta expirados
 
-- `_maybe_mark_expired` detecta `OAuthException code 190` y marca cuenta + credencial como `EXPIRED` (`S-6`), para que el frontend pida reconectar.
-- `MetaCredentialService.get_valid_token` rechaza tokens expirados y los marca.
+- `_maybe_mark_expired` (`services/meta_ads/sync.py`) detecta `OAuthException code 190` y marca cuenta + credencial como `EXPIRED` (`S-6`), para que el frontend pida reconectar.
 
 ## 9. Validación de subida de archivos
 
