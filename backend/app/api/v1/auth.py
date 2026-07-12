@@ -1,3 +1,4 @@
+import ipaddress
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,14 +25,31 @@ RESERVED_ORG_SLUGS = {"api", "www", "admin", "localhost", "static"}
 
 
 def get_client_ip(request: Request) -> str:
-    """IP del cliente real detrás de un proxy (Nginx/túnel). No hay una lista
-    de proxies confiables configurada (deployment simple), así que se toma el
-    primer valor de X-Forwarded-For con fallback al socket directo — es una
-    señal suficiente para limitar fuerza bruta, no para autorización."""
+    """IP del cliente real detrás de un proxy (Nginx/túnel).
+
+    (S-4) `X-Forwarded-For` es spoofeable por cualquiera que hable directo con
+    el backend — antes se confiaba en el header sin condición. En este
+    deployment el backend nunca se publica al host/internet (`expose`, no
+    `ports`, en `docker-compose.prod.yml`; solo Nginx puede alcanzarlo dentro
+    de la red de docker), así que el peer directo (`request.client.host`)
+    siempre debería ser una IP privada de esa red interna. Se confía en el
+    header SOLO cuando eso se cumple; si el peer directo fuera una IP pública
+    (el backend quedó expuesto sin el proxy, por error de configuración), se
+    ignora el header y se usa el peer directo — evita que cualquiera evada el
+    rate limit por IP mandando un X-Forwarded-For inventado."""
+    peer_ip = request.client.host if request.client else None
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
+    if forwarded and peer_ip and _is_trusted_proxy_peer(peer_ip):
         return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    return peer_ip or "unknown"
+
+
+def _is_trusted_proxy_peer(peer_ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return False
+    return addr.is_private or addr.is_loopback
 
 
 def enrich_user(user: User):
