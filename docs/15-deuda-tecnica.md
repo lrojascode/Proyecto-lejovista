@@ -8,10 +8,10 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 ## 1. Seguridad
 
-### 🔴 S-1 · Sin control de acceso por rol (RBAC)
-- **Explicación**: `OrganizationUser.role` (`ADMIN`/`OPERATOR`/`VIEWER`) se guarda y se expone, pero ningún endpoint lo verifica. Un `VIEWER` puede aprobar acciones, crear campañas o conectar cuentas.
-- **Impacto**: cualquier miembro de la org tiene permisos de administrador efectivos.
-- **Propuesta**: dependencia `require_role(...)` en FastAPI que lea `OrganizationUser.role` de la org activa y proteja escrituras (aprobar acción, crear campaña, conectar/archivar cuenta, cambiar settings).
+### ✅ S-1 · Sin control de acceso por rol (RBAC) — RESUELTO
+- **Explicación (histórica)**: `OrganizationUser.role` (`ADMIN`/`OPERATOR`/`VIEWER`) se guardaba y se exponía, pero ningún endpoint lo verificaba. Un `VIEWER` podía aprobar acciones, crear campañas o conectar cuentas.
+- **Resolución**: dependencia `require_role(min_role)` en `app/utils/security.py` (jerarquía `ADMIN > OPERATOR > VIEWER`, reconsulta la BD en cada request). Aplicada a los ~12 endpoints de escritura de organizaciones/cuentas, campañas, insights y acciones — ver la tabla en [08-autenticacion §7](08-autenticacion.md). Tests en `backend/tests/test_rbac.py` (jerarquía en ambos sentidos + membresía faltante).
+- **Hallazgo relacionado descubierto al implementar**: `POST /auth/signup` vinculaba como `ADMIN` a cualquiera que se registrara con el slug de una organización **ya existente** (sin invitación, sin verificación) — el propio flujo de signup era una vía de escalada de privilegios que habría dejado el RBAC recién construido sin efecto. Corregido: signup ahora solo puede fundar una organización nueva; devuelve 400 si el slug ya existe.
 
 ### 🟠 S-2 · Tokens JWT en `localStorage`
 - **Explicación**: `access`/`refresh` viven en `localStorage`, accesibles a cualquier script (XSS).
@@ -110,7 +110,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 
 | ID | Gravedad | Área | Esfuerzo estimado | Estado |
 |----|----------|------|-------------------|--------|
-| S-1 | 🔴 | Autorización RBAC | Medio | Pendiente |
+| S-1 | 🔴 | Autorización RBAC | Medio | ✅ Resuelto |
 | S-2 | 🟠 | Tokens en localStorage | Medio | Pendiente |
 | M-1 | 🟠 | Consolidar clientes Meta | Medio | Pendiente |
 | M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |

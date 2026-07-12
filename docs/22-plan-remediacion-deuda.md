@@ -30,7 +30,8 @@ flowchart LR
 
 ## Sprint 1 · Seguridad
 
-- [ ] **S-1 · RBAC 🔴** — dependencia `require_role(*roles)` en FastAPI que lea `OrganizationUser.role` de la org activa. Aplicar a los endpoints de escritura: `POST /actions/{id}/approve`, `PUT /organizations/my`, `POST /organizations/my/ad-accounts`, `POST .../archive`, `POST .../restore`, `PATCH .../pages/{id}/whatsapp`, `POST /campaigns/sync-trigger`, `POST /campaigns/` (crear), `POST /insights/{id}/dismiss`, `POST /insights/analyze-trigger`. Matriz `ADMIN` > `OPERATOR` > `VIEWER`. Tests por rol. *Medio.*
+- [x] **S-1 · RBAC 🔴** — ✅ Hecho. Dependencia `require_role(min_role)` en `app/utils/security.py` que reconsulta `OrganizationUser.role` de la org activa en cada request. Aplicada a los endpoints de escritura: `POST /actions/{id}/approve`, `PUT /organizations/my`, `POST /organizations/my/ad-accounts`, `POST .../archive`, `POST .../restore`, `PATCH .../pages/{id}/whatsapp`, `POST /campaigns/sync-trigger`, `POST /campaigns/upload-image`, `POST /campaigns/risk-preview`, `POST /campaigns/` (crear), `POST /insights/{id}/dismiss`, `POST /insights/analyze-trigger`. Jerarquía `ADMIN > OPERATOR > VIEWER`. Tests en `backend/tests/test_rbac.py` (7 tests: jerarquía en ambos sentidos, membresía faltante).
+  - **Hallazgo adicional cerrado en el mismo cambio**: `POST /auth/signup` vinculaba como `ADMIN` a cualquiera que se registrara contra el slug de una organización YA EXISTENTE (sin invitación) — habría dejado el RBAC recién construido sin efecto (cualquiera podía auto-otorgarse ADMIN de un tenant ajeno). Signup ahora solo funda organizaciones nuevas; 400 si el slug ya existe. Ver [15-deuda-tecnica §S-1](15-deuda-tecnica.md) y [08-autenticacion §7](08-autenticacion.md).
 - [ ] **S-2 · Tokens fuera de `localStorage` 🟠** — mover el refresh a cookie `httpOnly`+`Secure`+`SameSite`; `access` en memoria; CSP estricta. Toca `lib/api.ts`, `auth.py` y el guard del layout. *Medio.*
 - [ ] **S-3 · Blocklist fail-open 🟠** — decisión consciente: fail-**closed** para el refresh (rechazar si Redis no responde), fail-open para el resto; healthcheck de Redis. *Bajo.*
 - [ ] **S-4 🟡** — `X-Forwarded-For` solo desde el proxy conocido. *Bajo.*
@@ -66,7 +67,7 @@ flowchart LR
 | ID | Gravedad | Sprint | Esfuerzo | Depende de | Estado |
 |----|----------|--------|----------|-----------|--------|
 | O-1, O-3 | 🟠🟡 | 0 | Bajo-Medio | — | ✅ Hecho |
-| S-1 | 🔴 | 1 | Medio | 0 | Pendiente |
+| S-1 | 🔴 | 1 | Medio | 0 | ✅ Hecho |
 | S-2 | 🟠 | 1 | Medio | 0 | Pendiente |
 | S-3 | 🟠 | 1 | Bajo | 0 | Pendiente |
 | S-4, S-5 | 🟡 | 1 | Bajo | 0 | Pendiente |

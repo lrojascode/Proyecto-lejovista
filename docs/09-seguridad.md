@@ -76,9 +76,12 @@ Todos los limitadores basados en Redis son **fail-open**. La IP del cliente se t
 
 `POST /campaigns/upload-image`: whitelist de tipos (`image/jpeg|png|webp`), límite 8 MB, nombre generado con UUID, guardado en `MEDIA_ROOT/{org_id}/`. `MetaAssetRepository` valida con `os.path.realpath` que la ruta no escape de `MEDIA_ROOT` (anti path-traversal).
 
+## 9b. RBAC (S-1) — resuelto
+
+`require_role(min_role)` (ver [08-autenticacion §7](08-autenticacion.md)) protege todos los endpoints de escritura de organizaciones/cuentas, campañas, insights y acciones con la jerarquía `ADMIN > OPERATOR > VIEWER`. Cierra también una escalada de privilegios relacionada: signup ya no permite unirse a una organización existente por slug (antes vinculaba al nuevo usuario como `ADMIN` de esa org sin invitación).
+
 ## 10. Límites conocidos (ver detalle en [15](15-deuda-tecnica.md))
 
-- **Sin RBAC efectivo**: el rol se guarda pero no se aplica.
 - **Tokens en `localStorage`**: expuestos a XSS (no cookies httpOnly).
 - **Blocklist de JWT fail-open**: si Redis cae, un refresh revocado podría aceptarse.
 - **`X-Forwarded-For` no verificado**: confiable solo detrás del propio Nginx.

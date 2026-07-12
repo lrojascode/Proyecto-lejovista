@@ -32,7 +32,7 @@ sequenceDiagram
     API->>R: revoca jti (blocklist con TTL)
 ```
 
-- **Signup** (`/auth/signup`): valida slug reservado y unicidad de email/slug; crea `Organization` (si no existe) + `User` + `OrganizationUser(ADMIN)`. Rate-limit 5/hora por IP.
+- **Signup** (`/auth/signup`): valida slug reservado y unicidad de email; **funda una organización nueva** (`Organization` + `User` + `OrganizationUser(ADMIN)`). Rate-limit 5/hora por IP. (S-1) Si el slug ya pertenece a una organización existente, devuelve 400 — no existe flujo de invitación, así que unirse a una org por slug ya no es posible desde signup: antes, cualquiera que conociera/adivinara el slug de un tenant ajeno (visible en el subdominio) podía registrarse contra él y quedaba vinculado como **ADMIN** de esa organización sin verificación alguna.
 - **Login** (`/auth/login`): verifica password; emite tokens con la primera organización como activa. Rate-limit 10/5min por IP.
 - **Refresh** (`/auth/refresh`): valida `type=="refresh"` y que el `jti` no esté revocado; **rota** (revoca el usado, emite nuevo par) — mitiga reuso de tokens robados.
 - **Logout** (`/auth/logout`): revoca el `jti` del refresh (los access caducan solos).
@@ -70,10 +70,18 @@ Resuelve la **cuenta publicitaria** de la request (aislamiento multi-cuenta dent
 - El handshake exige `?token=<JWT>`. `_authenticate_ws` decodifica el token, carga el usuario y comprueba que `tenant_id` (= `organization_id`) esté entre sus organizaciones.
 - Si falla, cierra con código `4401` (violación de política) sin aceptar la conexión.
 
-## 7. Roles
+## 7. Roles y autorización — `require_role` (S-1)
 
-- `OrganizationUser.role`: `ADMIN`, `OPERATOR`, `VIEWER`.
-- El rol se **expone** (en `/auth/me` y el JWT de sesión enriquecido) pero **no se aplican políticas de autorización por rol** en los endpoints hoy: cualquier miembro autenticado de la org puede operar. Ver [15-deuda-tecnica](15-deuda-tecnica.md) (RBAC pendiente).
+- `OrganizationUser.role`: `ADMIN` > `OPERATOR` > `VIEWER` (jerarquía, no categorías independientes). Hoy solo `signup` asigna un rol (siempre `ADMIN`, al fundar la organización) — no existe todavía un flujo de invitación que agregue miembros con `OPERATOR`/`VIEWER`.
+- `require_role(min_role)` (`app/utils/security.py`) es una dependencia FastAPI que reconsulta `OrganizationUser.role` en cada request (no queda cacheada en el JWT) para la organización **activa** de la sesión (misma resolución que `get_current_user`, `S-8`) y exige ese rol o uno de rango superior — `403` si no. Sin fila de membresía (dato corrupto/borrado) también deniega, no asume acceso.
+- Endpoints protegidos:
+
+  | Rol mínimo | Endpoints |
+  |---|---|
+  | `ADMIN` | `PUT /organizations/my`, `POST /organizations/my/ad-accounts` (conectar), `.../ad-accounts/{id}/archive`, `.../restore` |
+  | `OPERATOR` | `PATCH /organizations/my/pages/{id}/whatsapp`, `POST /campaigns/sync-trigger`, `POST /campaigns/upload-image`, `POST /campaigns/risk-preview`, `POST /campaigns/` (crear), `POST /insights/{id}/dismiss`, `POST /insights/analyze-trigger`, `POST /actions/{id}/approve` |
+
+  El resto de endpoints (lecturas `GET`) no están gateados por rol: cualquier miembro autenticado de la org puede ver dashboard, reportes, insights e historial — el filtro es solo de **escritura**.
 
 ## 8. Token temporal (in-memory)
 
