@@ -58,11 +58,14 @@ flowchart LR
 
 **Sprint 2 completo.**
 
-## Sprint 3 · Reglas por tenant — `M-2 🟠 Alto` — *la pieza mayor*
+## Sprint 3 · Reglas por tenant — `M-2 🟠 Alto` — *la pieza mayor* — ✅ Hecho
 
-- [ ] Tabla `organization_campaign_rules` / `organization_thresholds` (geo, moneda, objetivo, placements, umbrales de `AIThresholds`).
-- [ ] `get_thresholds_for_org` y `TENANT_CAMPAIGN_RULES` leen de BD; migración + seed con los defaults Lima/PEN actuales (sin romper el parque existente).
-- [ ] Quitar el hardcode de `2771`/`PEN` en engine, targeting y modifier. *Alto — planificar aparte, requiere su propio diseño detallado antes de implementar.*
+- [x] **Decisión de diseño (distinta del plan original)**: en vez de una tabla separada `organization_campaign_rules`/`organization_thresholds`, se agregaron dos columnas JSON a `organizations` — `campaign_rules_overrides` y `ai_thresholds_overrides` (default `{}`, migración `e3f7a2c8d4b9`). Motivo: la relación es 1:1 con `Organization` (no hay "varias reglas por org"), y la org ya está disponible o es trivial de cargar en cada punto de consumo — una tabla separada solo habría añadido un JOIN/query extra sin beneficio real. Una org sin overrides configurados obtiene exactamente el dict/dataclass global de siempre — cero cambio de comportamiento hasta que alguien personalice explícitamente su tenant.
+- [x] `get_thresholds_for_org(organization)` (`app/services/ai/thresholds.py`) ahora lee `organization.ai_thresholds_overrides`, filtra claves válidas contra los campos de `AIThresholds` (ignora typos/campos viejos) y hace `dataclasses.replace(DEFAULT_THRESHOLDS, **overrides)`. Los call sites (`Capa1Rules.analyze`, `Capa2Statistics.analyze` en `rules.py`/`statistics.py`) ya pasaban `getattr(ad_account, "organization", None)` desde antes (extension point ya cableado) — no necesitaron cambios.
+- [x] `get_campaign_rules_for_org(organization)` (`app/tenant_rules/campaign_defaults.py`) hace el mismo merge parcial sobre `TENANT_CAMPAIGN_RULES`. Consumidores actualizados para resolver y pasar las reglas de la org en vez de leer la constante global directamente: `CampaignSuggester.suggest` (carga la `Organization` de `ad_account.organization_id`), `AIPlanner._create_action_from_insight` (carga la org una vez al inicio del método, la reusa en `MODIFY_PLACEMENTS` y `CREATE_CAMPAIGN`), y las 3 tareas de la Saga que la necesitan (`task_create_campaign`, `task_create_adset`, `task_create_ad` en `creation_tasks.py`, vía el helper `_get_campaign_rules(db, acc)`).
+- [x] `build_targeting`/`_facebook_positions` (`campaign_targeting.py`) ganaron un parámetro `rules` opcional (default = `TENANT_CAMPAIGN_RULES`, compatibilidad con las llamadas existentes que no lo pasan) — hoy consumido con las reglas resueltas por org en los tres call sites reales.
+- [x] Tests: `tests/test_tenant_overrides.py` (merge de overrides, org sin overrides = defaults, override ignora claves desconocidas), `tests/test_campaign_targeting.py` (rules custom en `build_targeting`/`_facebook_positions`), `tests/test_campaign_suggester.py::test_suggest_uses_org_campaign_rules_override`, `tests/test_creation_tasks.py` (4 tests nuevos: override de objective/optimization_goal/bid_strategy/geo/placements en las 3 tareas, y un test explícito de que sin override el comportamiento es idéntico al de antes).
+- [ ] **No incluido en este alcance** (queda fuera, no era parte del hallazgo original): quitar el hardcode de `2771`/`PEN` como *default* — sigue siendo el valor por defecto razonable para el único mercado operado hoy; lo que cambia es que ahora es personalizable por tenant, no que el default deje de existir.
 
 ## Sprint 4 · Rendimiento
 
@@ -88,7 +91,7 @@ flowchart LR
 | M-1 | 🟠 | 2 | Medio | 0 | ✅ Hecho |
 | M-3 | 🟡 | 2 | Bajo | 0 | ✅ Hecho |
 | M-4, UX-2 | 🟡 | 2 | Bajo | 0 | ✅ Hecho |
-| M-2 | 🟠 | 3 | **Alto** | 1, 2 | Pendiente |
+| M-2 | 🟠 | 3 | **Alto** | 1, 2 | ✅ Hecho |
 | P-1, P-2 | 🟠🟡 | 4 | Bajo-Medio | 0 | Pendiente |
 | UX-1, UX-3, IA-1, O-2 | 🟡 | 5 | Bajo-Medio | 0 | Pendiente |
 

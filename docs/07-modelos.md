@@ -5,7 +5,7 @@ Modelos SQLAlchemy 2.0 declarativos (`Mapped[...] / mapped_column`) en `backend/
 ## 1. Identidad y multi-tenant
 
 ### `Organization` (`organizations`)
-Tenant del SaaS. Campos: `id`, `slug` (único), `name`, `ai_model` (default `google/gemini-3.5-flash`), `max_budget` (límite financiero de seguridad, default 1000), `status` (`ACTIVE`), `industry` (rubro → políticas de Meta), `created_at`. Relaciones (cascade delete): `users`, `ad_accounts`, `campaign_snapshots`, `insights`, `actions`, `sync_jobs`, `meta_credentials`, `meta_pages`.
+Tenant del SaaS. Campos: `id`, `slug` (único), `name`, `ai_model` (default `google/gemini-3.5-flash`), `max_budget` (límite financiero de seguridad, default 1000), `status` (`ACTIVE`), `industry` (rubro → políticas de Meta), `campaign_rules_overrides`/`ai_thresholds_overrides` (JSON, default `{}` — overrides parciales por tenant sobre `TENANT_CAMPAIGN_RULES`/`AIThresholds`, M-2), `created_at`. Relaciones (cascade delete): `users`, `ad_accounts`, `campaign_snapshots`, `insights`, `actions`, `sync_jobs`, `meta_credentials`, `meta_pages`.
 
 ### `User` (`users`)
 Usuario global. Campos: `id`, `email` (único), `hashed_password` (bcrypt), `full_name`, `created_at`. Relación `organizations` (`OrganizationUser`).

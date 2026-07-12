@@ -122,10 +122,11 @@ f7ffe513f0fb  initial_schema_session_1        (base)
   → c8d3e5f1a9b4  ad_account_spend_monthly
   → d2f6a8c3b1e7  organization_industry
   → a4f8c2d6e9b1  drop_tenant_api_quotas
-  → b7e2f4a8c3d5  drop_campaign_action_log_marginal_models  (head)
+  → b7e2f4a8c3d5  drop_campaign_action_log_marginal_models
+  → e3f7a2c8d4b9  organization_rules_overrides  (head)
 ```
 
-Cada migración cuenta la evolución del producto: breakdowns extra, tablas de reporting P-2, archivado, presupuesto de adset (cuentas ABO), WhatsApp por página, copy de creativos, medición de tokens, aprendizaje, gasto mensual, rubro de negocio y, las dos más recientes, limpieza de deuda técnica (M-1: `tenant_api_quotas`, huérfana del cliente Meta viejo; M-3: `campaigns`/`campaign_metrics_history`/`action_logs`, modelos sin lector/escritor real).
+Cada migración cuenta la evolución del producto: breakdowns extra, tablas de reporting P-2, archivado, presupuesto de adset (cuentas ABO), WhatsApp por página, copy de creativos, medición de tokens, aprendizaje, gasto mensual, rubro de negocio, limpieza de deuda técnica (M-1: `tenant_api_quotas`, huérfana del cliente Meta viejo; M-3: `campaigns`/`campaign_metrics_history`/`action_logs`, modelos sin lector/escritor real) y, la más reciente, reglas de campaña/umbrales de IA configurables por tenant (M-2: `organizations.campaign_rules_overrides`/`ai_thresholds_overrides`, JSON vacío por defecto).
 
 ### Crear una migración
 

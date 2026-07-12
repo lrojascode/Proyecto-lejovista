@@ -47,7 +47,7 @@ Sobre 14-30 días de historia por campaña (mínimo `min_history_days=7`):
 
 ## 4. Umbrales centralizados (`thresholds.py`)
 
-`AIThresholds` (dataclass frozen) reúne todos los umbrales (multiplicadores de CPL, frecuencia, CTR mínimo, ventanas estadísticas, Z-score, etc.). `get_thresholds_for_org` es el punto de extensión para overrides por organización (hoy devuelve los defaults). Aquí viven también:
+`AIThresholds` (dataclass frozen) reúne todos los umbrales (multiplicadores de CPL, frecuencia, CTR mínimo, ventanas estadísticas, Z-score, etc.). `get_thresholds_for_org` (M-2, resuelto) lee `Organization.ai_thresholds_overrides` (JSON, vacío por defecto) y superpone solo las claves presentes sobre `DEFAULT_THRESHOLDS` — una org sin overrides se comporta igual que antes. Aquí viven también:
 - `compute_target_cpl(spend, conv)` — CPL objetivo dinámico.
 - `classify_campaign(cost, conv, target_cpl)` — clasificador único (`GANADORA`/`BUENA`/`REGULAR`/`CARA`/`PAUSAR`, relativo a `target_cpl`, `C-2`).
 

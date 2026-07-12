@@ -40,10 +40,11 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 - **Resolución**: se confirmó con un grep exhaustivo (`from app.services.meta_api_client import`, etc.) que el segundo grupo no tenía **ningún** llamador fuera de sí mismo — ni en `app/`, ni en `tests/`. Se eliminaron los 3 archivos completos, junto con el modelo huérfano `TenantApiQuota` (tabla `tenant_api_quotas`, sin lector/escritor real tampoco) — migración `a4f8c2d6e9b1` (drop de la tabla, con downgrade fiel). Cobertura del backend subió de 84% a 86% solo por quitar código muerto sin cubrir. Ver [11-servicios-externos §1](11-servicios-externos.md).
 - **Hallazgo relacionado, no resuelto en este cambio**: `services/audit_log_service.py` (y el modelo `ActionLog` que solo él escribe) resultó ser código muerto de la misma familia — sin llamadores vivos. Se deja para [M-3](15-deuda-tecnica.md) por ser la misma categoría de hallazgo (modelo/servicio marginal), no por el cliente de Meta.
 
-### 🟠 M-2 · Reglas de negocio globales presentadas como "por tenant"
-- **Explicación**: `TENANT_CAMPAIGN_RULES` (geo Lima, objetivo, placements) y `AIThresholds` son **globales**, con TODOs para moverlas a tabla por tenant. El país/moneda (`PEN`/Perú) está hardcodeado en varios lugares (engine, targeting, modifier con key `2771`).
-- **Impacto**: onboarding de un cliente fuera de Lima/Perú requiere cambios de código.
-- **Propuesta**: materializar `get_thresholds_for_org` y `TENANT_CAMPAIGN_RULES` contra una tabla de reglas por organización/vertical.
+### ✅ M-2 · Reglas de negocio globales presentadas como "por tenant" — RESUELTO
+- **Explicación (histórica)**: `TENANT_CAMPAIGN_RULES` (geo Lima, objetivo, placements) y `AIThresholds` eran **globales**, con TODOs para moverlas a tabla por tenant. El país/moneda (`PEN`/Perú) sigue como default razonable en varios lugares (engine, targeting, modifier con key `2771`) — eso no cambió, lo que cambió es que ahora es *personalizable*.
+- **Resolución**: dos columnas JSON en `Organization` (`campaign_rules_overrides`, `ai_thresholds_overrides`; default `{}`; migración `e3f7a2c8d4b9`) en vez de una tabla separada — la relación es 1:1 con la org, así que un JOIN extra no habría aportado nada. `get_thresholds_for_org(organization)` (`app/services/ai/thresholds.py`) y `get_campaign_rules_for_org(organization)` (`app/tenant_rules/campaign_defaults.py`, nueva función) superponen solo las claves presentes en el override sobre los defaults globales (`dataclasses.replace`/merge de dict), ignorando claves desconocidas. Una org sin overrides se comporta exactamente igual que antes.
+- **Consumidores actualizados** para resolver las reglas de la org en vez de leer la constante global: `CampaignSuggester.suggest`, `AIPlanner._create_action_from_insight` (placements y `CREATE_CAMPAIGN`), y las 3 tareas de la Saga que escriben a Meta (`task_create_campaign`, `task_create_adset`, `task_create_ad` en `creation_tasks.py`). `Capa1Rules`/`Capa2Statistics` no necesitaron cambios — ya pasaban `getattr(ad_account, "organization", None)` a `get_thresholds_for_org` desde antes (el extension point ya estaba cableado, solo la implementación era un no-op).
+- Ver detalle de ejecución en [22-plan-remediacion-deuda §Sprint 3](22-plan-remediacion-deuda.md).
 
 ### ✅ M-3 · Modelos con uso marginal — RESUELTO
 - **Explicación (histórica)**: `Campaign` + `CampaignMetricsHistory` tenían poco uso activo frente al modelo de snapshots; `create_temp_token`/`consume_temp_token` (dict en memoria) no tenían consumidores en los routers; `services/audit_log_service.py` + el modelo `ActionLog` (descubiertos al resolver M-1) tampoco tenían ningún llamador vivo.
@@ -113,7 +114,7 @@ Escala: 🔴 Alta · 🟠 Media · 🟡 Baja.
 | S-2 | 🟠 | Tokens en localStorage | Medio | ✅ Resuelto |
 | S-3 | 🟠 | Blocklist JWT fail-open | Bajo | ✅ Resuelto |
 | M-1 | 🟠 | Consolidar clientes Meta | Medio | ✅ Resuelto |
-| M-2 | 🟠 | Reglas por tenant | Alto | Pendiente |
+| M-2 | 🟠 | Reglas por tenant | Alto | ✅ Resuelto |
 | P-1 | 🟠 | Paralelizar sync | Medio | Pendiente |
 | O-1 | 🟠 | CI/CD | Bajo-Medio | ✅ Resuelto |
 | S-4, S-5 | 🟡 | Endurecimiento | Bajo | ✅ Resuelto |

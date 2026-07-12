@@ -15,7 +15,7 @@ La creación de campañas es el flujo de escritura más complejo. Combina sugere
 | `MetaAssetRepository` | `services/meta_asset_repository.py` | Subida/reutilización de imagen |
 | Saga | `workers/creation_tasks.py` | 5 tareas encadenadas |
 | `derive_brand_code` | `services/brand_code.py` | Código de marca para la nomenclatura |
-| `TENANT_CAMPAIGN_RULES` | `tenant_rules/campaign_defaults.py` | Reglas fijas (objetivo, placements, PAUSED) |
+| `TENANT_CAMPAIGN_RULES` / `get_campaign_rules_for_org` | `tenant_rules/campaign_defaults.py` | Reglas por defecto (objetivo, placements, PAUSED) + overrides por org (M-2) |
 
 ## 2. Flujo previo a la creación (endpoints)
 
@@ -40,7 +40,7 @@ sequenceDiagram
 ```
 
 ### `CampaignSuggester` (Fase 3A, determinista — regla `AI-1`)
-Deriva del `ReportBuilder` (histórico real): objetivo/optimization_goal/destination (de `TENANT_CAMPAIGN_RULES`), `suggested_budget` (colchón de ~20 conversaciones al menor costo observado), `excluded_placements` (gasto sin conversiones), mejor dispositivo y rango de edad, campaña/anuncio ganador (con su copy real como inspiración), madurez/convergencia y razonamiento explicable. Sin histórico, cae a defaults marcados como "sin evidencia".
+Deriva del `ReportBuilder` (histórico real): objetivo/optimization_goal/destination (de `get_campaign_rules_for_org(organization)`, M-2 — defaults globales si la org no tiene overrides), `suggested_budget` (colchón de ~20 conversaciones al menor costo observado), `excluded_placements` (gasto sin conversiones), mejor dispositivo y rango de edad, campaña/anuncio ganador (con su copy real como inspiración), madurez/convergencia y razonamiento explicable. Sin histórico, cae a defaults marcados como "sin evidencia".
 
 ### `assess_campaign_risk` (Ajuste 1)
 `LOW`/`MEDIUM`/`HIGH` según: presupuesto vs sugerido (×1.2 o ×2), presupuesto absoluto alto (≥500), términos que Meta suele rechazar (farmacéutico), estado de cuenta e histórico. Siempre recuerda que la campaña se crea `PAUSED`. Nunca `CRITICAL` (crear pausado no gasta).
@@ -98,9 +98,11 @@ El paso final (`task_create_ad`) cierra también la `AIAction` como `COMPLETED`/
 - Notificación WebSocket `campaign_creation` (`READY`/`FAILED`) al terminar.
 - `CampaignLearningLog` queda `CREATED` con la hipótesis; el outcome loop (Beat 08:00) la evaluará tras la ventana (ver [18](18-motor-ia.md)).
 
-## 7. Reglas de negocio fijas (playbook)
+## 7. Reglas de negocio por tenant (M-2, resuelto)
 
-`TENANT_CAMPAIGN_RULES`: geo Lima (`2771`), objetivo `OUTCOME_LEADS`, optimización `CONVERSATIONS`, destino `WHATSAPP`, `bid_strategy` `LOWEST_COST_WITHOUT_CAP`, placement requerido `facebook_reels`, prohibido `instagram_positions`, **estado por defecto `PAUSED`** (la activación siempre es manual). Hoy globales; pendiente moverlas a tabla por tenant (ver [15](15-deuda-tecnica.md) M-2).
+`TENANT_CAMPAIGN_RULES` (default global): geo Lima (`2771`), objetivo `OUTCOME_LEADS`, optimización `CONVERSATIONS`, destino `WHATSAPP`, `bid_strategy` `LOWEST_COST_WITHOUT_CAP`, placement requerido `facebook_reels`, prohibido `instagram_positions`, **estado por defecto `PAUSED`** (la activación siempre es manual — este campo no es overrideable en el sentido de saltarse la regla de oro del playbook: los tres pasos de la Saga que fijan `PAUSED` siguen leyendo `default_status` de las reglas resueltas, pero nada en el producto ofrece hoy una forma de cambiarlo a `ACTIVE`).
+
+`Organization.campaign_rules_overrides` (columna JSON, vacía por defecto) permite personalizar cualquier subconjunto de esas claves por organización — `get_campaign_rules_for_org(organization)` superpone el override sobre el default global y es lo que consumen `CampaignSuggester`, `AIPlanner._create_action_from_insight` y las 3 tareas de la Saga que escriben `objective`/`optimization_goal`/`destination_type`/`bid_strategy`/`default_status`/geo/placements (`creation_tasks.py`). Una org sin overrides se comporta exactamente igual que antes de M-2.
 
 ## 8. Capa de producto — el formulario de creación (`campaigns/new/page.tsx`)
 
@@ -115,4 +117,4 @@ La Saga es el motor; la página de creación es donde el cliente toma la decisi�
 - **Estado de la Saga en vivo**: tras crear, la pantalla entra en `polling` (`GET /campaigns/drafts/{id}` cada 2.5 s, hasta 120 intentos ≈ 5 min) **y** escucha el evento WebSocket `campaign_creation` (`READY`/`FAILED`) que resuelve sin esperar al siguiente tick (el polling es el fallback si el WS cae). Se comunica honestamente que la creación *"toma ~3 minutos"* (4 pasos con `countdown=40s`).
 - **Cierre orientado a la acción correcta**: al terminar, recuerda que la campaña quedó **PAUSADA**, que hay que subir el spend cap si está topado, y ofrece un deep-link directo a Ads Manager (`adsmanager.facebook.com/...&selected_campaign_ids=`) para revisarla y activarla manualmente.
 
-> El endpoint `/campaigns/suggestion` devuelve también `objective`, `optimization_goal`, `destination_type` y `winning_ad_copy`, que hoy el tipo `Suggestion` del frontend y la UI **no consumen** (el playbook los fija de forma constante). Es una asimetría menor, no un bug: si en el futuro esos parámetros dejan de ser globales (M-2), el contrato ya los transporta.
+> El endpoint `/campaigns/suggestion` devuelve también `objective`, `optimization_goal`, `destination_type` y `winning_ad_copy`, que hoy el tipo `Suggestion` del frontend y la UI **no consumen** (la UI de creación no expone un selector para editarlos). Es una asimetría menor, no un bug: ahora que esos parámetros pueden variar por organización (M-2, resuelto), el contrato ya los transporta — falta solo la superficie de UI si en algún momento un tenant necesita ver/editar sus propias reglas en vez de solo heredarlas.
