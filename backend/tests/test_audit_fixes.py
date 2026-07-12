@@ -17,6 +17,31 @@ from app.models.ai_insight import AIInsight
 from app.models.ai_action import AIAction
 
 
+class _FakeRedis:
+    """Redis en memoria suficiente para revoke_jti/is_revoked (S-3). Sigue el
+    mismo patrón que tests/test_throttle.py: un fake por archivo/necesidad,
+    no un Redis real de fondo — así el fail-open/fail-closed de cada mecanismo
+    se prueba a propósito, no por accidente de que Redis esté o no disponible."""
+    def __init__(self):
+        self.store: dict = {}
+
+    async def set(self, key, value, ex=None):
+        self.store[key] = value
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def aclose(self):
+        pass
+
+
+@pytest.fixture
+def fake_redis(mocker):
+    client = _FakeRedis()
+    mocker.patch("app.utils.security.aioredis.Redis.from_url", return_value=client)
+    return client
+
+
 async def _make_org_and_account(db: AsyncSession, slug="af-org"):
     org = Organization(slug=slug, name="Audit Org", status="ACTIVE")
     db.add(org)
@@ -345,7 +370,7 @@ async def test_active_tenant_switch_via_header(async_client: AsyncClient, db_ses
 # cookie httpOnly (nunca en el body JSON) — el cliente de test la recibe/envía
 # automáticamente vía su cookie jar, igual que haría un navegador real. ---
 @pytest.mark.asyncio
-async def test_refresh_token_flow(async_client: AsyncClient):
+async def test_refresh_token_flow(async_client: AsyncClient, fake_redis):
     signup = {
         "email": "refresh@example.com", "password": "securepassword123",
         "full_name": "Refresh User", "organization_slug": "rf-org", "organization_name": "RF Org",
@@ -388,25 +413,10 @@ async def test_refresh_rejects_access_token(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_logout_clears_cookie_and_revokes(async_client: AsyncClient, mocker):
-    # La revocación real vive en Redis (revoke_jti/is_revoked, fail-open si no
-    # responde — ver S-3). Sin un Redis real en el entorno de test, la
-    # revocación se ignoraría en silencio y este test no probaría nada — se
-    # simula un Redis en memoria para ejercer la revocación de verdad.
-    store: dict = {}
-
-    class _FakeRedis:
-        async def set(self, key, value, ex=None):
-            store[key] = value
-
-        async def get(self, key):
-            return store.get(key)
-
-        async def aclose(self):
-            pass
-
-    mocker.patch("app.utils.security.aioredis.Redis.from_url", return_value=_FakeRedis())
-
+async def test_logout_clears_cookie_and_revokes(async_client: AsyncClient, fake_redis):
+    # La revocación real vive en Redis (revoke_jti/is_revoked). Sin un Redis
+    # real (o simulado) en el entorno de test, revoke_jti fallaría en silencio
+    # (best-effort) y este test no probaría nada de verdad.
     signup = {
         "email": "logout@example.com", "password": "securepassword123",
         "full_name": "Logout User", "organization_slug": "logout-org", "organization_name": "Logout Org",
@@ -423,6 +433,35 @@ async def test_logout_clears_cookie_and_revokes(async_client: AsyncClient, mocke
     async_client.cookies.set("refresh_token", issued_refresh_token)
     refresh_res = await async_client.post("/api/v1/auth/refresh")
     assert refresh_res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_refresh_fails_closed_when_redis_unavailable(async_client: AsyncClient, mocker):
+    """(S-3) Antes, si Redis no respondía al consultar la blocklist, is_revoked
+    devolvía False (fail-open) y el refresh se aceptaba igual — un token
+    revocado podría reutilizarse durante una caída de Redis. Ahora debe
+    rechazarse (503, no 401: no es que el token sea inválido, es que no se
+    pudo verificar) en vez de aceptarlo a ciegas."""
+    signup = {
+        "email": "redisdown@example.com", "password": "securepassword123",
+        "full_name": "U", "organization_slug": "redisdown-org", "organization_name": "Redisdown",
+    }
+    await async_client.post("/api/v1/auth/signup", json=signup)
+    assert async_client.cookies.get("refresh_token")
+
+    # Simula Redis inalcanzable justo al validar el refresh. from_url() en sí
+    # no falla nunca en la práctica (la conexión es perezosa) — el fallo real
+    # ocurre en el primer comando (.get()), que es lo que se simula aquí.
+    class _UnreachableRedis:
+        async def get(self, key):
+            raise ConnectionError("Redis no disponible")
+
+        async def aclose(self):
+            pass
+
+    mocker.patch("app.utils.security.aioredis.Redis.from_url", return_value=_UnreachableRedis())
+    res = await async_client.post("/api/v1/auth/refresh")
+    assert res.status_code == 503
 
 
 # --- P-2: el sync captura breakdowns de género, dispositivo y geografía ---

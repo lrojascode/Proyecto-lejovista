@@ -12,7 +12,7 @@ from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserRespon
 from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
     decode_token, revoke_jti, is_revoked, get_current_user,
-    set_refresh_cookie, clear_refresh_cookie, REFRESH_COOKIE_NAME,
+    set_refresh_cookie, clear_refresh_cookie, REFRESH_COOKIE_NAME, RevocationCheckUnavailable,
 )
 from app.utils.throttle import enforce_rate_limit
 from app.config import settings
@@ -176,8 +176,16 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     data = decode_token(raw_token)
     if not data or data.get("type") != "refresh":
         raise HTTPException(status_code=401, detail="Refresh token inválido.")
-    if await is_revoked(data.get("jti")):
-        raise HTTPException(status_code=401, detail="Refresh token revocado.")
+    try:
+        if await is_revoked(data.get("jti")):
+            raise HTTPException(status_code=401, detail="Refresh token revocado.")
+    except RevocationCheckUnavailable:
+        # (S-3) Fail-closed: sin forma de confirmar que este token NO esté
+        # revocado, se rechaza la renovación en vez de aceptarla a ciegas.
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo validar la sesión en este momento. Intenta de nuevo en unos segundos.",
+        )
 
     user_id = data.get("sub")
     q = select(User).options(selectinload(User.organizations)).where(User.id == user_id)

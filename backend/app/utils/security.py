@@ -127,15 +127,32 @@ async def revoke_jti(jti: str, ttl_seconds: int) -> None:
             pass
 
 
+class RevocationCheckUnavailable(Exception):
+    """(S-3) Redis no respondió al consultar la blocklist. Distinta de "no
+    revocado": el llamador debe decidir fail-closed (rechazar) para el
+    refresh, en vez de asumir silenciosamente que el token sigue siendo válido."""
+
+
 async def is_revoked(jti: str) -> bool:
-    """True si el jti fue revocado. Fail-open (si Redis no responde, no bloquea)."""
+    """True si el jti fue revocado.
+
+    (S-3) Fail-**closed**: si Redis no responde, no se puede afirmar que el
+    token NO esté revocado, así que se levanta `RevocationCheckUnavailable`
+    en vez de devolver `False` — el único llamador (`POST /auth/refresh`)
+    rechaza la renovación de sesión mientras dure la caída, en vez de aceptar
+    un refresh potencialmente robado/rotado porque no había forma de
+    verificarlo. El resto de mecanismos basados en Redis (rate limiting,
+    cache, debounce) siguen fail-open a propósito — solo la validez de la
+    sesión amerita el trade-off de disponibilidad por seguridad.
+    """
     if not jti:
         return False
     client = aioredis.Redis.from_url(settings.REDIS_URL)
     try:
         return bool(await client.get(f"revoked:{jti}"))
-    except Exception:
-        return False
+    except Exception as e:
+        logger.warning("No se pudo verificar revocación de jti %s (Redis no disponible): %s", jti, e)
+        raise RevocationCheckUnavailable() from e
     finally:
         try:
             await client.aclose()
