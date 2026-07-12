@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import random
 import logging
@@ -383,20 +384,40 @@ class MetaAdsSyncService:
         # TODO el pipeline sin errores.
         await self.db.commit()
 
-        # 1. Obtener todas las campañas de la cuenta
-        campaigns_res = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/campaigns",
-            {
-                "fields": "id,name,status,daily_budget,lifetime_budget",
-                "limit": 200,
-            },
-            access_token=token
+        # 1. Campañas + insights de campaña (P-1): dos lecturas independientes —
+        # los insights no necesitan `campaigns_map` para pedirse, solo para
+        # combinarse después — se piden en paralelo en vez de una tras otra.
+        date_preset = "last_30d" if sync_type == "FULL" else "yesterday"
+
+        campaigns_res, campaigns_insights = await asyncio.gather(
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/campaigns",
+                {
+                    "fields": "id,name,status,daily_budget,lifetime_budget",
+                    "limit": 200,
+                },
+                access_token=token
+            ),
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/insights",
+                {
+                    "level": "campaign",
+                    "date_preset": date_preset,
+                    "fields": "campaign_id,campaign_name,spend,impressions,reach,clicks,actions,frequency",
+                    "time_increment": 1,  # datos diarios
+                    # Sin `limit`, Meta devuelve su página default de 25 filas: con
+                    # ~30 días × ~10 campañas eso truncaba a los 25 días más viejos.
+                    # Subimos el tamaño de página y además paginamos (call_api_paginated).
+                    "limit": 500,
+                },
+                access_token=token
+            ),
         )
 
         if "ERROR" in campaigns_res or "error" in campaigns_res:
             self._maybe_mark_expired(ad_account, campaigns_res)
             raise Exception(f"Error al obtener campañas: {campaigns_res}")
-            
+
         campaigns_map = {}
         for c in campaigns_res.get("data", []):
             budget = float(c.get("daily_budget") or c.get("lifetime_budget") or 0) / 100.0
@@ -405,24 +426,6 @@ class MetaAdsSyncService:
                 "status": c.get("status", "UNKNOWN"),
                 "budget": budget
             }
-
-        # 2. Insights diarios a nivel campaña (ahora con reach)
-        date_preset = "last_30d" if sync_type == "FULL" else "yesterday"
-
-        campaigns_insights = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/insights",
-            {
-                "level": "campaign",
-                "date_preset": date_preset,
-                "fields": "campaign_id,campaign_name,spend,impressions,reach,clicks,actions,frequency",
-                "time_increment": 1,  # datos diarios
-                # Sin `limit`, Meta devuelve su página default de 25 filas: con
-                # ~30 días × ~10 campañas eso truncaba a los 25 días más viejos.
-                # Subimos el tamaño de página y además paginamos (call_api_paginated).
-                "limit": 500,
-            },
-            access_token=token
-        )
 
         if "ERROR" in campaigns_insights or "error" in campaigns_insights:
             self._maybe_mark_expired(ad_account, campaigns_insights)
@@ -588,12 +591,25 @@ class MetaAdsSyncService:
         budget_map: Dict[str, float] = {}      # adset_id -> presupuesto diario nominal
         status_map: Dict[str, str] = {}        # adset_id -> status
         campaign_of: Dict[str, str] = {}       # adset_id -> campaign_id
-        structure = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/adsets",
-            {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status",
-             "limit": 200},
-            access_token=token,
+
+        # P-1: estructura e insights son lecturas independientes (insights no
+        # depende de la estructura para pedirse, solo para combinarse después).
+        structure, insights = await asyncio.gather(
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/adsets",
+                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status",
+                 "limit": 200},
+                access_token=token,
+            ),
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/insights",
+                {"level": "adset", "date_preset": date_preset,
+                 "fields": "adset_id,adset_name,campaign_id,spend,impressions,reach,clicks,actions,frequency",
+                 "time_increment": 1, "limit": 500},
+                access_token=token,
+            ),
         )
+
         if not self._has_error(structure):
             for a in structure.get("data", []):
                 aid = a.get("id")
@@ -610,13 +626,6 @@ class MetaAdsSyncService:
             if camp_id and status_map.get(aid) == "ACTIVE":
                 adset_budget_by_campaign[camp_id] += budget_map.get(aid, 0.0)
 
-        insights = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/insights",
-            {"level": "adset", "date_preset": date_preset,
-             "fields": "adset_id,adset_name,campaign_id,spend,impressions,reach,clicks,actions,frequency",
-             "time_increment": 1, "limit": 500},
-            access_token=token,
-        )
         if self._has_error(insights):
             logger.warning("No se pudieron obtener insights de adsets: %s", insights)
             self._maybe_mark_expired(ad_account, insights)
@@ -657,9 +666,20 @@ class MetaAdsSyncService:
         # capturaba — solo la imagen (MetaCreative) — así que la IA no podía
         # inspirarse en el texto que ya funcionó (Fase 3B).
         creative_map = {}
-        ads_struct = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/ads",
-            {"fields": "id,creative{id,title,body,call_to_action_type}", "limit": 200}, access_token=token,
+        # P-1: estructura de ads (copy/creativo) e insights son lecturas
+        # independientes — en paralelo en vez de una tras otra.
+        ads_struct, insights = await asyncio.gather(
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/ads",
+                {"fields": "id,creative{id,title,body,call_to_action_type}", "limit": 200}, access_token=token,
+            ),
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/insights",
+                {"level": "ad", "date_preset": date_preset,
+                 "fields": "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,clicks,actions",
+                 "time_increment": 1, "limit": 500},
+                access_token=token,
+            ),
         )
         if not self._has_error(ads_struct):
             for a in ads_struct.get("data", []):
@@ -671,13 +691,6 @@ class MetaAdsSyncService:
                     "cta_type": creative.get("call_to_action_type"),
                 }
 
-        insights = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/insights",
-            {"level": "ad", "date_preset": date_preset,
-             "fields": "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,clicks,actions",
-             "time_increment": 1, "limit": 500},
-            access_token=token,
-        )
         if self._has_error(insights):
             logger.warning("No se pudieron obtener insights de anuncios: %s", insights)
             self._maybe_mark_expired(ad_account, insights)
@@ -715,12 +728,25 @@ class MetaAdsSyncService:
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
 
     async def _sync_real_inventory(self, ad_account, token, limiter):
-        # Imágenes / creativos
-        imgs = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/adimages",
-            {"fields": "hash,name,url,width,height,created_time", "limit": "50"},
-            access_token=token,
+        # P-1: imágenes y audiencias son lecturas independientes entre sí —
+        # en paralelo en vez de una tras otra.
+        imgs, auds = await asyncio.gather(
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/adimages",
+                {"fields": "hash,name,url,width,height,created_time", "limit": "50"},
+                access_token=token,
+            ),
+            limiter.call_api_paginated(
+                f"{ad_account.external_account_id}/customaudiences",
+                # `approximate_count` ya no existe en la Graph API (confirmado contra la
+                # API real: pedirlo devuelve OAuthException code 100 "Tried accessing
+                # nonexisting field") — Meta lo reemplazó por lower/upper bound.
+                {"fields": "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,time_created,description"},
+                access_token=token,
+            ),
         )
+
+        # Imágenes / creativos
         if self._has_error(imgs):
             logger.warning("No se pudo leer el inventario de creativos (cuenta %s): %s",
                            ad_account.id, imgs)
@@ -747,14 +773,6 @@ class MetaAdsSyncService:
         # segmentación por intereses no tienen audiencias guardadas — en ese caso Meta
         # responde una lista vacía (no un error). Un error aquí suele ser permiso del
         # token (falta ads_read / customaudience:read), por eso se distingue en el log.
-        auds = await limiter.call_api_paginated(
-            f"{ad_account.external_account_id}/customaudiences",
-            # `approximate_count` ya no existe en la Graph API (confirmado contra la
-            # API real: pedirlo devuelve OAuthException code 100 "Tried accessing
-            # nonexisting field") — Meta lo reemplazó por lower/upper bound.
-            {"fields": "id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,time_created,description"},
-            access_token=token,
-        )
         if self._has_error(auds):
             logger.warning("No se pudieron leer audiencias personalizadas (cuenta %s): "
                            "posible falta de permiso del token. Respuesta: %s", ad_account.id, auds)
@@ -849,13 +867,20 @@ class MetaAdsSyncService:
             lambda: {"placements": {}, "age": {}, "gender": {}, "device": {}, "region": {}}
         )
 
-        for bd_param, bucket, key_of in self._BREAKDOWN_SPECS:
-            res = await limiter.call_api_paginated(
+        # P-1: las 5 dimensiones son requests completamente independientes
+        # entre sí (Meta no permite combinarlas en una sola query) — antes se
+        # pedían una tras otra; ahora en paralelo.
+        results = await asyncio.gather(*(
+            limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
                 {"level": "campaign", "date_preset": date_preset, "time_increment": 1,
                  "fields": "campaign_id,spend,actions", "breakdowns": bd_param, "limit": 500},
                 access_token=token,
             )
+            for bd_param, _bucket, _key_of in self._BREAKDOWN_SPECS
+        ))
+
+        for (bd_param, bucket, key_of), res in zip(self._BREAKDOWN_SPECS, results):
             if self._has_error(res):
                 logger.warning("Breakdown '%s' no disponible para cuenta %s: %s",
                                bd_param, ad_account.id, res)
