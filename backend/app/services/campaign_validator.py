@@ -35,9 +35,16 @@ class CampaignValidator:
         await self._verify_meta_account_status()
 
     def _validate_business_rules(self, request: CampaignCreateRequest):
-        # 1. Sin imagen, hash, ni video (playbook §5 Paso 4: soporte de video/UGC)
-        if not request.image_url and not request.image_hash and not request.video_id:
-            raise HTTPException(status_code=400, detail="Must provide image_url, image_hash, or video_id.")
+        # 1. Sin imagen, hash, ni video (playbook §5 Paso 4: soporte de video/UGC).
+        # `image_path` es una imagen local ya subida a nuestro disco (vía
+        # POST /campaigns/upload-image): la Saga la sube a Meta en task_upload_image
+        # para derivar el image_hash, así que es una forma válida de proveer imagen.
+        if (not request.image_url and not request.image_hash
+                and not request.video_id and not request.image_path):
+            raise HTTPException(
+                status_code=400,
+                detail="Debes subir una imagen, o proveer image_url, image_hash o video_id.",
+            )
         if request.video_id and not request.thumbnail_url:
             raise HTTPException(status_code=400, detail="video_id requires thumbnail_url.")
 

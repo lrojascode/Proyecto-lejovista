@@ -166,3 +166,33 @@ async def test_validate_allows_missing_headline_and_description(db_session: Asyn
     org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-optional")
 
     await CampaignValidator(acc_a).validate(_request(acc_a.id))
+
+
+# --- Imagen local subida (image_path): la Saga la sube a Meta en
+# task_upload_image; antes el validador la rechazaba porque solo miraba
+# image_url/image_hash/video_id (bug del "Imagen subida" + error igual). ---
+
+@pytest.mark.asyncio
+async def test_validate_accepts_image_path_only(db_session: AsyncSession, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-imgpath")
+
+    # Sin image_hash, solo la imagen local recién subida.
+    await CampaignValidator(acc_a).validate(
+        _request(acc_a.id, image_hash=None, image_path="org-id/uploaded.jpg")
+    )
+
+
+@pytest.mark.asyncio
+async def test_validate_rejects_when_no_image_source(db_session: AsyncSession, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-noimg")
+
+    with pytest.raises(Exception) as exc_info:
+        await CampaignValidator(acc_a).validate(
+            _request(acc_a.id, image_hash=None, image_path=None,
+                     image_url=None, video_id=None)
+        )
+    assert "imagen" in str(exc_info.value).lower() or "image" in str(exc_info.value).lower()
