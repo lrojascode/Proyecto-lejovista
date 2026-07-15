@@ -22,9 +22,14 @@ class CampaignValidator:
     Ahora recibe el `AdAccount` ya resuelto y usa `MetaAPIRateLimiter` (el mismo
     stack real usado por el resto de la app), sin ambigüedad posible.
     """
-    def __init__(self, ad_account: AdAccount, limiter: MetaAPIRateLimiter | None = None):
+    def __init__(self, ad_account: AdAccount, limiter: MetaAPIRateLimiter | None = None, db=None):
         self.ad_account = ad_account
         self.limiter = limiter or MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        # Opcional: si se provee, permite marcar la cuenta EXPIRED cuando Meta
+        # rechaza el token (code 190), igual que el sync (_maybe_mark_expired) —
+        # así el badge "Token expirado" aparece en Configuración sin esperar al
+        # siguiente sync nocturno.
+        self.db = db
 
     async def validate(self, request: CampaignCreateRequest) -> None:
         """
@@ -91,6 +96,16 @@ class CampaignValidator:
 
             if not isinstance(response, dict) or "error" in response or "ERROR" in response:
                 logger.error(f"Meta respondió con error al validar la cuenta {self.ad_account.id}: {response}")
+                # Token expirado/ inválido (OAuthException code 190): marca la
+                # cuenta EXPIRED y da un mensaje accionable — el genérico "Meta
+                # rechazó la validación" no le dice al usuario que debe reconectar.
+                err = response.get("error", {}) if isinstance(response, dict) else {}
+                if err.get("code") == 190:
+                    await self._mark_account_expired()
+                    raise HTTPException(
+                        status_code=401,
+                        detail="El token de la cuenta expiró. Reconéctala en Configuración con un token nuevo.",
+                    )
                 raise HTTPException(status_code=502, detail="Meta rechazó la validación de la cuenta de anuncios.")
 
             # account_status = 1 es ACTIVO
@@ -112,3 +127,18 @@ class CampaignValidator:
         except Exception as e:
             logger.error(f"Error validating meta account: {e}")
             raise HTTPException(status_code=500, detail="Failed to validate Ad Account against Meta API.")
+
+    async def _mark_account_expired(self):
+        """Marca la cuenta (y su credencial) como EXPIRED tras un code 190, para
+        que Configuración muestre 'Token expirado' de inmediato. No-op si no se
+        pasó una sesión de BD al validador."""
+        if self.db is None:
+            return
+        try:
+            self.ad_account.status = "EXPIRED"
+            if self.ad_account.meta_credential:
+                self.ad_account.meta_credential.status = "EXPIRED"
+            self.db.add(self.ad_account)
+            await self.db.commit()
+        except Exception:
+            logger.exception("No se pudo marcar la cuenta %s como EXPIRED", self.ad_account.id)

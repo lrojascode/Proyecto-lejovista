@@ -4,6 +4,7 @@ hacía que la validación de creación de campañas fallara con
 `MultipleResultsFound`, porque el stack viejo (MetaCredentialService)
 resolvía el token por organización, no por cuenta específica."""
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.organization import Organization
@@ -196,3 +197,29 @@ async def test_validate_rejects_when_no_image_source(db_session: AsyncSession, m
                      image_url=None, video_id=None)
         )
     assert "imagen" in str(exc_info.value).lower() or "image" in str(exc_info.value).lower()
+
+
+# --- Token expirado (OAuthException code 190) durante la validación de cuenta:
+# marca la cuenta EXPIRED y devuelve un mensaje accionable (reconectar), en vez
+# del genérico "Meta rechazó la validación". ---
+
+@pytest.mark.asyncio
+async def test_validate_marks_account_expired_on_code_190(db_session: AsyncSession, mocker, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    org, acc_a, _ = await _make_org_with_two_accounts(db_session, slug="validator-org-190")
+    mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api",
+        autospec=True,
+        return_value={"error": {"message": "Session has expired", "code": 190,
+                                "type": "OAuthException"}},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await CampaignValidator(acc_a, db=db_session).validate(_request(acc_a.id))
+
+    assert exc_info.value.status_code == 401
+    assert "reconé" in exc_info.value.detail.lower() or "reconec" in exc_info.value.detail.lower()
+    # La cuenta y su credencial quedaron marcadas EXPIRED.
+    await db_session.refresh(acc_a)
+    assert acc_a.status == "EXPIRED"

@@ -368,7 +368,7 @@ async def create_campaign(
             ),
         )
 
-    validator = CampaignValidator(ad_account)
+    validator = CampaignValidator(ad_account, db=db)
 
     # 1. Validación síncrona
     await validator.validate(request)
