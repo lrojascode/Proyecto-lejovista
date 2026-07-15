@@ -117,3 +117,37 @@ async def test_get_or_upload_image_rejects_path_traversal(tmp_path, monkeypatch)
             ad_account_external_id="act_1", access_token="tok",
             image_path="../secret.txt",
         )
+
+
+@pytest.mark.asyncio
+async def test_upload_webp_is_converted_to_png(async_client: AsyncClient, tmp_path, monkeypatch):
+    """Meta /adimages rechaza WebP (error_subcode 1487411). El endpoint lo
+    convierte a PNG al subir para que el WebP del usuario funcione."""
+    import io
+    from PIL import Image
+    from app.config import settings
+    monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
+    headers = await _signup(async_client, "upload-org-webp")
+
+    buf = io.BytesIO()
+    Image.new("RGB", (32, 32), (200, 100, 50)).save(buf, format="WEBP")
+    webp_bytes = buf.getvalue()
+
+    res = await async_client.post(
+        "/api/v1/campaigns/upload-image",
+        headers=headers,
+        files={"file": ("photo.webp", webp_bytes, "image/webp")},
+    )
+    assert res.status_code == 200
+    image_path = res.json()["image_path"]
+    # Se guardó como PNG, no WebP.
+    assert image_path.endswith(".png")
+
+    full_path = os.path.join(str(tmp_path), image_path)
+    with open(full_path, "rb") as f:
+        saved = f.read()
+    # Cabecera PNG (\x89PNG), no RIFF/WEBP.
+    assert saved[:8] == b"\x89PNG\r\n\x1a\n"
+    with Image.open(io.BytesIO(saved)) as img:
+        assert img.format == "PNG"
+        assert img.size == (32, 32)

@@ -12,11 +12,15 @@ from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List, Optional
 import datetime
+import io
+import logging
 import os
 import uuid
 from fastapi import status
 from celery import chain
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
@@ -271,6 +275,21 @@ _ALLOWED_IMAGE_TYPES = {
 _MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8MB
 
 
+def _webp_to_png(data: bytes) -> bytes:
+    """Convierte bytes WebP a PNG (Meta /adimages no admite WebP). Preserva
+    transparencia; aplana modos de paleta a RGBA."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as img:
+        if img.mode in ("P", "LA"):
+            img = img.convert("RGBA")
+        elif img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+        return out.getvalue()
+
+
 @router.post("/upload-image", response_model=ImageUploadResponse)
 async def upload_campaign_image(
     file: UploadFile = File(...),
@@ -287,6 +306,21 @@ async def upload_campaign_image(
     contents = await file.read()
     if len(contents) > _MAX_IMAGE_BYTES:
         raise HTTPException(status_code=400, detail="La imagen supera el límite de 8MB.")
+
+    # Meta /adimages NO admite WebP (rechaza con error_subcode 1487411, "tipo de
+    # archivo no admitido"), pero es un formato común (fotos descargadas, Mac).
+    # Lo convertimos a PNG aquí para que el WebP del usuario funcione sin que
+    # tenga que reconvertirlo a mano. JPG/PNG se guardan tal cual.
+    if file.content_type == "image/webp":
+        try:
+            contents = _webp_to_png(contents)
+            ext = ".png"
+        except Exception:
+            logger.exception("No se pudo convertir el WebP a PNG")
+            raise HTTPException(
+                status_code=400,
+                detail="No se pudo procesar la imagen WebP. Súbela en JPG o PNG.",
+            )
 
     org_dir = os.path.join(settings.MEDIA_ROOT, current_user.organization_id)
     os.makedirs(org_dir, exist_ok=True)
