@@ -111,6 +111,35 @@ def schedule_all_syncs(sync_type: str = "INCREMENTAL"):
 
     run_async(_impl())
 
+@celery_app.task(name="app.workers.tasks.refresh_org_pages")
+def refresh_org_pages(org_id: str):
+    """
+    Refresca SOLO las páginas de Facebook + WhatsApp de las cuentas ACTIVE de
+    una organización (sin sync completo). Disparada por
+    POST /organizations/my/pages/refresh — el caso de uso es inmediato: el
+    usuario acaba de otorgar acceso a una página nueva en el Business Manager
+    y quiere verla en el dropdown sin esperar al sync de las 06:00.
+    """
+    async def _impl():
+        async with async_session() as db:
+            q = select(AdAccount).where(
+                AdAccount.organization_id == org_id,
+                AdAccount.status == "ACTIVE",
+            )
+            res = await db.execute(q)
+            accounts = res.scalars().all()
+            sync_service = MetaAdsSyncService(db)
+            for acc in accounts:
+                try:
+                    await sync_service.refresh_pages(acc)
+                except Exception:
+                    # Una cuenta con token caído no debe impedir refrescar las demás.
+                    logger.exception("No se pudieron refrescar las páginas de la cuenta %s", acc.id)
+            logger.info("Refresh de páginas completado para %d cuentas de la org %s.",
+                        len(accounts), org_id)
+
+    run_async(_impl())
+
 @celery_app.task(name="app.workers.tasks.schedule_all_analyses")
 def schedule_all_analyses():
     """

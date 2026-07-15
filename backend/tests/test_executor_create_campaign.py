@@ -169,3 +169,78 @@ async def test_modify_action_unaffected_by_create_campaign_change(init_db, db_se
     assert result.status == "COMPLETED"
     _, mock_chain_instance = _mock_chain
     mock_chain_instance.apply_async.assert_not_called()
+
+
+# --- Página predeterminada por cuenta (Settings → Páginas y WhatsApp): con
+# 2+ páginas en la org, antes TODA acción CREATE_CAMPAIGN caía en NEEDS_INPUT;
+# ahora la default de la cuenta resuelve la ambigüedad. ---
+
+@pytest.mark.asyncio
+async def test_default_page_resolves_ambiguity_with_multiple_pages(init_db, db_session: AsyncSession, _mock_chain):
+    org, acc = await _make_account(db_session, "exec-default-page")
+    p1 = MetaPage(organization_id=org.id, external_page_id="page-1", name="P1",
+                  whatsapp_number="51999888777", status="ACTIVE")
+    p2 = MetaPage(organization_id=org.id, external_page_id="page-2", name="P2",
+                  whatsapp_number="51999888778", status="ACTIVE")
+    db_session.add_all([p1, p2, MetaCreative(ad_account_id=acc.id, organization_id=org.id, image_hash="h1")])
+    await db_session.flush()
+    acc.default_page_id = p2.id
+    action = _create_action(org, acc)
+    db_session.add(action)
+    await db_session.commit()
+
+    result = await AIExecutor(db_session).execute_action(acc, action)
+
+    assert result.status == "EXECUTING"
+    drafts = (await db_session.execute(
+        __import__("sqlalchemy").select(CampaignDraft).where(CampaignDraft.organization_id == org.id)
+    )).scalars().all()
+    assert len(drafts) == 1
+    assert drafts[0].payload["page_id"] == "page-2"
+    assert drafts[0].payload["whatsapp_number"] == "51999888778"
+
+
+@pytest.mark.asyncio
+async def test_default_page_without_whatsapp_needs_input(init_db, db_session: AsyncSession, _mock_chain):
+    """Si el usuario eligió una default sin WhatsApp, se pide completar ese dato
+    explícitamente en vez de caer en silencio a otra página que sí tenga."""
+    org, acc = await _make_account(db_session, "exec-default-no-wa")
+    p1 = MetaPage(organization_id=org.id, external_page_id="page-1", name="Con WA",
+                  whatsapp_number="51999888777", status="ACTIVE")
+    p2 = MetaPage(organization_id=org.id, external_page_id="page-2", name="Sin WA", status="ACTIVE")
+    db_session.add_all([p1, p2, MetaCreative(ad_account_id=acc.id, organization_id=org.id, image_hash="h1")])
+    await db_session.flush()
+    acc.default_page_id = p2.id
+    action = _create_action(org, acc)
+    db_session.add(action)
+    await db_session.commit()
+
+    result = await AIExecutor(db_session).execute_action(acc, action)
+
+    assert result.status == "NEEDS_INPUT"
+    assert "WhatsApp" in result.execution_result["error"]
+    _, mock_chain_instance = _mock_chain
+    mock_chain_instance.apply_async.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_without_default_page_falls_back_to_single_page_rule(init_db, db_session: AsyncSession, _mock_chain):
+    """Sin default configurada, la regla original sigue vigente: exactamente 1
+    página activa con WhatsApp resuelve sola."""
+    org, acc = await _make_account(db_session, "exec-fallback-rule")
+    db_session.add_all([
+        MetaPage(organization_id=org.id, external_page_id="page-1", name="Única",
+                 whatsapp_number="51999888777", status="ACTIVE"),
+        MetaCreative(ad_account_id=acc.id, organization_id=org.id, image_hash="h1"),
+    ])
+    action = _create_action(org, acc)
+    db_session.add(action)
+    await db_session.commit()
+
+    result = await AIExecutor(db_session).execute_action(acc, action)
+
+    assert result.status == "EXECUTING"
+    drafts = (await db_session.execute(
+        __import__("sqlalchemy").select(CampaignDraft).where(CampaignDraft.organization_id == org.id)
+    )).scalars().all()
+    assert drafts[0].payload["page_id"] == "page-1"

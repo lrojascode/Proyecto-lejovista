@@ -65,11 +65,17 @@ class AdAccountResponse(BaseModel):
     external_account_id: str
     name: str
     status: str
+    default_page_id: Optional[str] = None
     spend_cap: float
     amount_spent: float
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class AdAccountDefaultPageUpdate(BaseModel):
+    # None limpia la página predeterminada (vuelve al comportamiento anterior:
+    # el executor solo resuelve si hay exactamente 1 página con WhatsApp).
+    page_id: Optional[str] = Field(None, description="MetaPage.id (interno), o null para limpiar")
 
 # --- META PAGE SCHEMA (Fase 4: descubrimiento de página + WhatsApp) ---
 class MetaPageResponse(BaseModel):

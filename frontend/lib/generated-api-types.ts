@@ -231,6 +231,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/organizations/my/ad-accounts/{ad_account_id}/default-page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set Ad Account Default Page
+         * @description Fija (o limpia, con page_id=null) la página de Facebook predeterminada de
+         *     una cuenta publicitaria. La usan el formulario de creación (preselección)
+         *     y AIExecutor: con 2+ páginas en la org, las acciones CREATE_CAMPAIGN caían
+         *     siempre en NEEDS_INPUT porque no había forma de designar cuál promocionar.
+         */
+        patch: operations["set_ad_account_default_page_api_v1_organizations_my_ad_accounts__ad_account_id__default_page_patch"];
+        trace?: never;
+    };
     "/api/v1/organizations/my/pages": {
         parameters: {
             query?: never;
@@ -247,6 +270,29 @@ export interface paths {
         get: operations["list_my_pages_api_v1_organizations_my_pages_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/pages/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh My Pages
+         * @description Re-descubre las páginas (y su WhatsApp) desde Meta para las cuentas ACTIVE
+         *     de la organización, sin sync completo. Para cuando se acaba de otorgar
+         *     acceso a una página nueva en el Business Manager y se quiere ver en el
+         *     dropdown de inmediato (no a las 06:00 del día siguiente).
+         */
+        post: operations["refresh_my_pages_api_v1_organizations_my_pages_refresh_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -892,6 +938,14 @@ export interface components {
             /** Refresh Token */
             refresh_token?: string | null;
         };
+        /** AdAccountDefaultPageUpdate */
+        AdAccountDefaultPageUpdate: {
+            /**
+             * Page Id
+             * @description MetaPage.id (interno), o null para limpiar
+             */
+            page_id?: string | null;
+        };
         /** AdAccountResponse */
         AdAccountResponse: {
             /** Id */
@@ -904,6 +958,8 @@ export interface components {
             name: string;
             /** Status */
             status: string;
+            /** Default Page Id */
+            default_page_id?: string | null;
             /** Spend Cap */
             spend_cap: number;
             /** Amount Spent */
@@ -2108,6 +2164,41 @@ export interface operations {
             };
         };
     };
+    set_ad_account_default_page_api_v1_organizations_my_ad_accounts__ad_account_id__default_page_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ad_account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdAccountDefaultPageUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdAccountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_my_pages_api_v1_organizations_my_pages_get: {
         parameters: {
             query?: never;
@@ -2124,6 +2215,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MetaPageResponse"][];
+                };
+            };
+        };
+    };
+    refresh_my_pages_api_v1_organizations_my_pages_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
                 };
             };
         };

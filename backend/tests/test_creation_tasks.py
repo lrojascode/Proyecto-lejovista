@@ -137,6 +137,9 @@ async def test_task_create_campaign_uses_real_id_when_writeback_enabled(ad_accou
     from app.config import settings
     monkeypatch.setattr(settings, "MOCK_SERVICES", False)
     monkeypatch.setattr(settings, "ENABLE_META_WRITEBACK", True)
+    # Sin esto, el test hereda el allowlist del .env local del desarrollador
+    # (F-2) y la cuenta de test queda simulada — fallaba solo fuera de CI.
+    monkeypatch.setattr(settings, "WRITEBACK_ACCOUNT_ALLOWLIST", "")
     assert settings.SIMULATE_META_WRITES is False
 
     org, acc = ad_account

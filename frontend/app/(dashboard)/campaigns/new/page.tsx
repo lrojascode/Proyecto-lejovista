@@ -73,14 +73,25 @@ export default function NewCampaignPage() {
     api.getMyPages()
       .then((data: MetaPage[]) => {
         setPages(data);
-        if (data.length === 1) setSelectedPageId(data[0].id);
+        // Preselección: 1º la página predeterminada de la cuenta activa
+        // (Settings → Páginas y WhatsApp); 2º, si solo hay una página, esa.
+        const activeAccount = accounts.find((a) => a.id === activeAdAccountId);
+        const defaultId = activeAccount?.default_page_id;
+        // Guard funcional: no pisar una selección manual si el efecto se
+        // re-ejecuta (ej. el provider refresca `accounts`).
+        setSelectedPageId((prev) => {
+          if (prev) return prev;
+          if (defaultId && data.some((p) => p.id === defaultId)) return defaultId;
+          if (data.length === 1) return data[0].id;
+          return prev;
+        });
       })
       .catch((e: any) => console.error("Error cargando páginas:", e));
 
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
-  }, []);
+  }, [activeAdAccountId, accounts]);
 
   const selectedPage = pages.find((p) => p.id === selectedPageId) || null;
   const activeAccount = accounts.find((a) => a.id === activeAdAccountId) || null;

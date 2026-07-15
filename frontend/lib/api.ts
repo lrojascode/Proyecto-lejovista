@@ -258,6 +258,9 @@ export const api = {
   getMyPages: () => apiRequest<MetaPage[]>("/api/v1/organizations/my/pages", "GET"),
   setPageWhatsApp: (pageId: string, whatsappNumber: string) =>
     apiRequest(`/api/v1/organizations/my/pages/${pageId}/whatsapp`, "PATCH", { whatsapp_number: whatsappNumber }),
+  refreshPages: () => apiRequest<{ message: string }>("/api/v1/organizations/my/pages/refresh", "POST"),
+  setDefaultPage: (adAccountId: string, pageId: string | null) =>
+    apiRequest<AdAccount>(`/api/v1/organizations/my/ad-accounts/${adAccountId}/default-page`, "PATCH", { page_id: pageId }),
   getCampaignSuggestion: (adAccountId: string, productName: string) =>
     apiRequest<Suggestion>(
       `/api/v1/campaigns/suggestion?ad_account_id=${encodeURIComponent(adAccountId)}` +

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
-import type { Organization, AdAccount } from "@/lib/types";
+import type { Organization, AdAccount, MetaPage } from "@/lib/types";
 
 export default function Settings() {
   const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
@@ -30,6 +30,14 @@ export default function Settings() {
   const [archiveMsg, setArchiveMsg] = useState("");
   const [confirmArchiveId, setConfirmArchiveId] = useState<string | null>(null);
 
+  // Páginas de Facebook + WhatsApp
+  const [pages, setPages] = useState<MetaPage[]>([]);
+  const [pagesMsg, setPagesMsg] = useState("");
+  const [refreshingPages, setRefreshingPages] = useState(false);
+  const [waInputs, setWaInputs] = useState<Record<string, string>>({});
+  const [waSavingId, setWaSavingId] = useState<string | null>(null);
+  const [defaultSavingId, setDefaultSavingId] = useState<string | null>(null);
+
   const fetchData = async () => {
     try {
       const orgData = await api.getOrg();
@@ -38,6 +46,9 @@ export default function Settings() {
       setAccounts(accountsData);
       setMaxBudget(orgData.max_budget);
       setIndustry(orgData.industry || "");
+
+      const pagesData = await api.getMyPages();
+      setPages(pagesData);
 
       const policiesData = await api.getBusinessPolicies();
       setIndustries(policiesData.available_industries || []);
@@ -92,6 +103,65 @@ export default function Settings() {
       await fetchData();
     } catch (err: any) {
       setArchiveMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleRefreshPages = async () => {
+    setPagesMsg("");
+    setRefreshingPages(true);
+    try {
+      const res = await api.refreshPages();
+      setPagesMsg(res.message);
+      // La tarea corre en background (Celery) y puede tardar varios segundos
+      // (una llamada a Meta por fuente + por página): re-consultar en varios
+      // intentos en vez de un único timeout adivinado.
+      const attempts = [5000, 10000, 16000];
+      attempts.forEach((delay, i) => {
+        setTimeout(async () => {
+          try {
+            setPages(await api.getMyPages());
+            if (i === attempts.length - 1) setPagesMsg("Páginas actualizadas desde Meta.");
+          } catch {
+            /* la lista queda como estaba; el mensaje anterior sigue visible */
+          } finally {
+            if (i === attempts.length - 1) setRefreshingPages(false);
+          }
+        }, delay);
+      });
+    } catch (err: any) {
+      setPagesMsg(`Error: ${err.message}`);
+      setRefreshingPages(false);
+    }
+  };
+
+  const handleSavePageWhatsApp = async (pageId: string) => {
+    const value = (waInputs[pageId] || "").trim();
+    if (!value) return;
+    setPagesMsg("");
+    setWaSavingId(pageId);
+    try {
+      await api.setPageWhatsApp(pageId, value);
+      setWaInputs((prev) => ({ ...prev, [pageId]: "" }));
+      const pagesData = await api.getMyPages();
+      setPages(pagesData);
+    } catch (err: any) {
+      setPagesMsg(`Error: ${err.message}`);
+    } finally {
+      setWaSavingId(null);
+    }
+  };
+
+  const handleSetDefaultPage = async (accId: string, pageId: string) => {
+    setPagesMsg("");
+    setDefaultSavingId(accId);
+    try {
+      await api.setDefaultPage(accId, pageId || null);
+      const accountsData = await api.getAdAccounts(true);
+      setAccounts(accountsData);
+    } catch (err: any) {
+      setPagesMsg(`Error: ${err.message}`);
+    } finally {
+      setDefaultSavingId(null);
     }
   };
 
@@ -324,6 +394,109 @@ export default function Settings() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* Páginas de Facebook + WhatsApp */}
+          <div className="glass-card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.5rem" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: 510 }}>Páginas de Facebook y WhatsApp</h3>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={handleRefreshPages}
+                disabled={refreshingPages}
+              >
+                {refreshingPages ? "Actualizando..." : "↻ Actualizar páginas desde Meta"}
+              </button>
+            </div>
+
+            {pagesMsg && (
+              <div style={{
+                background: pagesMsg.includes("Error") ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 166, 68, 0.1)",
+                border: `1px solid ${pagesMsg.includes("Error") ? "rgba(235, 87, 87, 0.2)" : "rgba(39, 166, 68, 0.2)"}`,
+                color: pagesMsg.includes("Error") ? "var(--danger)" : "var(--success)",
+                padding: "0.5rem 0.75rem", borderRadius: "6px", fontSize: "0.85rem", marginBottom: "1rem",
+              }}>
+                {pagesMsg}
+              </div>
+            )}
+
+            {pages.length === 0 ? (
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+                No hay páginas descubiertas todavía. Si acabas de otorgar acceso a una página en el
+                Business Manager, pulsa &quot;Actualizar páginas desde Meta&quot;.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                {pages.map((p) => (
+                  <div key={p.id} className="card-subtle" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+                    <div>
+                      <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{p.name}</strong>
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                        ID: <code>{p.external_page_id}</code>
+                      </p>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                      {p.whatsapp_number ? (
+                        <span className="badge badge-success">{badgeIcon("badge-success")} WA {p.whatsapp_number}</span>
+                      ) : (
+                        <>
+                          <span className="badge badge-warning">{badgeIcon("badge-warning")} Sin WhatsApp</span>
+                          <input
+                            type="text"
+                            className="form-input"
+                            style={{ width: "160px", padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
+                            placeholder="51999888777"
+                            value={waInputs[p.id] || ""}
+                            onChange={(e) => setWaInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                          />
+                          <button
+                            type="button"
+                            className="btn-secondary btn-sm"
+                            disabled={waSavingId === p.id || !(waInputs[p.id] || "").trim()}
+                            onClick={() => handleSavePageWhatsApp(p.id)}
+                          >
+                            {waSavingId === p.id ? "Guardando..." : "Guardar"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pages.length > 0 && (
+              <div style={{ marginTop: "1.25rem" }}>
+                <h4 style={{ fontSize: "14px", fontWeight: 510, marginBottom: "0.5rem" }}>Página predeterminada por cuenta</h4>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
+                  La página que la IA y el formulario de creación usan por defecto para las campañas de cada cuenta.
+                  Meta no expone el WhatsApp de las páginas automáticamente en la mayoría de tokens — si una página
+                  aparece &quot;Sin WhatsApp&quot;, ingresa el número arriba una sola vez.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                  {accounts.filter((a) => a.status !== "ARCHIVED").map((acc) => (
+                    <div key={acc.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: "0.85rem", color: "var(--color-paper)", minWidth: "180px" }}>{acc.name}</span>
+                      <select
+                        className="form-input"
+                        style={{ background: "var(--color-obsidian)", maxWidth: "320px", padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
+                        value={acc.default_page_id || ""}
+                        disabled={defaultSavingId === acc.id}
+                        onChange={(e) => handleSetDefaultPage(acc.id, e.target.value)}
+                      >
+                        <option value="">— Sin página predeterminada —</option>
+                        {pages.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} {p.whatsapp_number ? `(WA ${p.whatsapp_number})` : "(sin WhatsApp)"}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

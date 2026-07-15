@@ -25,6 +25,13 @@ class AdAccount(Base):
     narrative_provider: Mapped[str] = mapped_column(String, nullable=True)
     narrative_prompt_version: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="ACTIVE")  # ACTIVE, EXPIRED, PAUSED
+    # Página de Facebook predeterminada para las campañas de esta cuenta.
+    # La usa AIExecutor para resolver página+WhatsApp sin caer en NEEDS_INPUT
+    # cuando la org tiene más de una página, y el formulario de creación para
+    # preseleccionar. Se configura en Settings ("Páginas y WhatsApp").
+    default_page_id: Mapped[str] = mapped_column(
+        String, ForeignKey("meta_pages.id", ondelete="SET NULL"), nullable=True
+    )
     spend_cap: Mapped[float] = mapped_column(Float, default=0.0)
     amount_spent: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -41,11 +48,11 @@ class AdAccount(Base):
             return self.meta_credential.get_access_token()
         return None
 
-    def set_access_token(self, token: str):
+    def set_access_token(self, token: str, expires_at=None):
         if not self.meta_credential:
             from app.models.meta_credential import MetaCredential
             self.meta_credential = MetaCredential(organization_id=self.organization_id)
-        self.meta_credential.set_access_token(token)
+        self.meta_credential.set_access_token(token, expires_at=expires_at)
 
     def set_refresh_token(self, token: str):
         if not self.meta_credential:

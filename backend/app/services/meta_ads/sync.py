@@ -347,6 +347,25 @@ class MetaAdsSyncService:
                 instagram_actor_id="mock_ig_1",
             ))
 
+    async def refresh_pages(self, ad_account: AdAccount) -> None:
+        """Corre SOLO el descubrimiento de páginas + WhatsApp para una cuenta,
+        sin el resto del sync (campañas/insights/breakdowns). Lo dispara
+        `POST /organizations/my/pages/refresh` para que el usuario no tenga que
+        esperar al sync de las 06:00 después de otorgar accesos nuevos en Meta
+        (caso "Althea pack": el acceso a la página se concede en el Business
+        Manager y se quiere ver en el dropdown de inmediato).
+        """
+        if settings.MOCK_SERVICES:
+            # El sync mock ya siembra su página de ejemplo; nada que refrescar.
+            logger.info("refresh_pages en modo mock: no-op (cuenta %s).", ad_account.id)
+            return
+        token = ad_account.get_access_token()
+        if not token:
+            raise ValueError("Token de acceso de la cuenta no válido o expirado.")
+        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        await self._sync_real_pages(ad_account, token, limiter)
+        await self.db.commit()
+
     async def _sync_real_data(self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter) -> int:
         """
         Lógica real de producción usando llamadas a la Graph API de Meta Ads.
@@ -798,33 +817,78 @@ class MetaAdsSyncService:
                 row.approximate_count = au.get("approximate_count_lower_bound")
 
     async def _sync_real_pages(self, ad_account, token, limiter):
-        """Fase 4 (plan de creación de campañas): descubre las páginas administradas
-        por el token y el WhatsApp conectado a cada una, para que la UI ofrezca un
+        """Fase 4 (plan de creación de campañas): descubre las páginas accesibles
+        al token y el WhatsApp conectado a cada una, para que la UI ofrezca un
         dropdown de página en vez de que el usuario tipee `page_id`/`whatsapp_number`
         a mano (fuente del bug de WhatsApp de la reunión con Alejandro: "aparece un
         código en vez del número").
 
-        `/me/accounts` es a nivel de usuario, no de cuenta publicitaria (playbook
-        §1.4) — el mismo token de la cuenta sirve para ambos. El WhatsApp se pide
-        en una llamada aparte POR página: si el campo no está soportado o falla
-        para una página, solo esa página se queda sin número (no debe tumbar el
-        descubrimiento de las demás — misma lección que el bug de
-        `customaudiences`/`approximate_count`, HANDOFF hallazgo 3.8).
+        Descubrimiento multi-fuente (caso real "Althea pack", 15-jul-2026: la
+        página que Ads Manager ofrece promocionar no salía en `/me/accounts`
+        porque el usuario del token no tenía rol directo en ella):
+          1. `/me/accounts` — páginas con rol directo del usuario del token.
+          2. `/me/businesses` → `{biz}/owned_pages` + `{biz}/client_pages` —
+             páginas propias y de clientes de sus Business Manager.
+          3. `act_X/promote_pages` — páginas que la cuenta publicitaria puede
+             promocionar.
+        Cada fuente es tolerante a fallo individual (log y continuar, mismo
+        patrón que los breakdowns); se dedupe por `external_page_id`.
+
+        El WhatsApp se pide en una llamada aparte POR página: si el campo no
+        está soportado o falla para una página, solo esa página se queda sin
+        número (no debe tumbar el descubrimiento de las demás — misma lección
+        que el bug de `customaudiences`/`approximate_count`, HANDOFF 3.8).
         """
-        pages_res = await limiter.call_api(
+        discovered: Dict[str, dict] = {}
+
+        def _collect(res, source: str):
+            if self._has_error(res):
+                logger.warning("Descubrimiento de páginas: fuente '%s' no disponible (cuenta %s): %s",
+                               source, ad_account.id, res)
+                self._maybe_mark_expired(ad_account, res)
+                return
+            for p in res.get("data", []):
+                ext_id = p.get("id")
+                if not ext_id:
+                    continue
+                entry = discovered.setdefault(ext_id, {})
+                # No pisar con vacío lo que otra fuente ya aportó.
+                if p.get("name"):
+                    entry["name"] = p["name"]
+                ig_id = (p.get("connected_instagram_account") or {}).get("id")
+                if ig_id:
+                    entry["instagram_actor_id"] = ig_id
+
+        _collect(await limiter.call_api(
             "me/accounts",
             {"fields": "name,id,category,connected_instagram_account", "limit": "100"},
             access_token=token,
-        )
-        if self._has_error(pages_res):
-            logger.warning("No se pudieron leer las páginas del token (cuenta %s): %s",
-                           ad_account.id, pages_res)
-            return
+        ), "me/accounts")
 
-        for p in pages_res.get("data", []):
-            ext_id = p.get("id")
-            if not ext_id:
-                continue
+        biz_res = await limiter.call_api("me/businesses", {"fields": "id,name", "limit": "100"},
+                                         access_token=token)
+        if self._has_error(biz_res):
+            logger.warning("Descubrimiento de páginas: /me/businesses no disponible (cuenta %s): %s",
+                           ad_account.id, biz_res)
+        else:
+            for biz in biz_res.get("data", []):
+                biz_id = biz.get("id")
+                if not biz_id:
+                    continue
+                for edge in ("owned_pages", "client_pages"):
+                    _collect(await limiter.call_api(
+                        f"{biz_id}/{edge}",
+                        {"fields": "id,name,connected_instagram_account", "limit": "100"},
+                        access_token=token,
+                    ), f"{biz_id}/{edge}")
+
+        _collect(await limiter.call_api(
+            f"{ad_account.external_account_id}/promote_pages",
+            {"fields": "id,name", "limit": "100"},
+            access_token=token,
+        ), "promote_pages")
+
+        for ext_id, info in discovered.items():
             row = (await self.db.execute(select(MetaPage).where(
                 MetaPage.organization_id == ad_account.organization_id,
                 MetaPage.external_page_id == ext_id,
@@ -832,8 +896,12 @@ class MetaAdsSyncService:
             if row is None:
                 row = MetaPage(organization_id=ad_account.organization_id, external_page_id=ext_id)
                 self.db.add(row)
-            row.name = p.get("name", "")
-            row.instagram_actor_id = (p.get("connected_instagram_account") or {}).get("id")
+            if info.get("name"):
+                row.name = info["name"]
+            elif not row.name:
+                row.name = ""
+            if info.get("instagram_actor_id"):
+                row.instagram_actor_id = info["instagram_actor_id"]
             row.status = "ACTIVE"
 
             wa_res = await limiter.call_api(ext_id, {"fields": "whatsapp_number"}, access_token=token)
@@ -842,7 +910,11 @@ class MetaAdsSyncService:
                     "La página %s no expone whatsapp_number (o el token no tiene permiso): %s",
                     ext_id, wa_res,
                 )
-            else:
+            elif wa_res.get("whatsapp_number"):
+                # Solo sobreescribir con un valor real: si Meta no devuelve el
+                # campo (página sin número vinculado), NO borrar el número
+                # cargado a mano vía PATCH /my/pages/{id}/whatsapp — antes el
+                # sync nocturno lo pisaba con None.
                 row.whatsapp_number = wa_res.get("whatsapp_number")
 
     # Cada dimensión de breakdown es una llamada aparte: la Graph API no permite

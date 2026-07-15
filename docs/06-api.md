@@ -40,10 +40,12 @@ Respuesta de signup/login/refresh: `TokenResponse { access_token, token_type, us
 | PUT | `/organizations/my` | Actualiza `name`, `ai_model`, `max_budget`, `industry` |
 | GET | `/organizations/my/policies` | Recordatorios de políticas de Meta por rubro + rubros disponibles |
 | GET | `/organizations/my/ad-accounts?include_archived=` | Cuentas (excluye archivadas por defecto) |
-| POST | `/organizations/my/ad-accounts` | Conecta cuenta (cifra token) y dispara sync **FULL** |
+| POST | `/organizations/my/ad-accounts` | Conecta cuenta (canjea el token por long-lived si hay app credentials, cifra) y dispara sync **FULL** |
 | POST | `/organizations/my/ad-accounts/{id}/archive` | Soft-delete (`status=ARCHIVED`) |
 | POST | `/organizations/my/ad-accounts/{id}/restore` | Revierte el archivado |
+| PATCH | `/organizations/my/ad-accounts/{id}/default-page` | Fija/limpia la página FB predeterminada de la cuenta |
 | GET | `/organizations/my/pages` | Páginas FB descubiertas (con WhatsApp) |
+| POST | `/organizations/my/pages/refresh` | Re-descubre páginas desde Meta (solo páginas, cooldown 60s) |
 | PATCH | `/organizations/my/pages/{page_id}/whatsapp` | Fija manualmente el WhatsApp de una página |
 
 ## 5. Campañas — `/api/v1/campaigns`

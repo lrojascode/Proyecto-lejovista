@@ -87,7 +87,7 @@ flowchart LR
 ## 5. Creación disparada por la IA (`CREATE_CAMPAIGN`)
 
 Cuando una `AIAction CREATE_CAMPAIGN` se aprueba, `AIExecutor._dispatch_campaign_creation_saga` reutiliza la **misma Saga** (`A-1`, sin flujo duplicado). Antes resuelve dos datos que el planner no puede inventar (`AI-1`):
-- **Página + WhatsApp**: exige exactamente 1 página activa con WhatsApp; si no, `NEEDS_INPUT`.
+- **Página + WhatsApp**, en este orden: (1) la **página predeterminada** de la cuenta (`AdAccount.default_page_id`, configurable en Settings → "Páginas y WhatsApp") si está activa y tiene WhatsApp — si la default existe pero no tiene WhatsApp, `NEEDS_INPUT` explícito (no se cae en silencio a otra página); (2) sin default, la regla original: exactamente 1 página activa con WhatsApp en la org; si no, `NEEDS_INPUT`.
 - **Creativo**: reutiliza el `MetaCreative` más reciente de la cuenta; si no hay, `NEEDS_INPUT`.
 
 El paso final (`task_create_ad`) cierra también la `AIAction` como `COMPLETED`/`FAILED` (no solo el draft).
@@ -114,6 +114,7 @@ La Saga es el motor; la página de creación es donde el cliente toma la decisi�
 - **Doble compuerta de riesgo** (Ajuste 1): al pulsar "Revisar riesgo y crear" NO se crea aún — se llama `POST /campaigns/risk-preview` con el presupuesto/copy **actuales** y se muestra un panel de confirmación (`BAJO`/`MEDIO`/`ALTO` con razones). Solo el botón *"Entiendo el riesgo — Crear Campaña (PAUSADA)"* dispara `POST /campaigns/`. Si el cálculo de riesgo falla, no se bloquea: se marca `MEDIUM` con aviso y se deja confirmar.
 - **Subida de imagen, no URL a mano**: `input file` → preview local instantáneo (`URL.createObjectURL`) + subida en background a `POST /campaigns/upload-image`; el `image_path` resultante viaja en la creación. Bloquea el submit mientras `imageUploading`.
 - **WhatsApp inline**: si la página elegida no expone WhatsApp (falta el permiso `whatsapp_business_management`), se puede escribir el número ahí mismo (`PATCH /pages/{id}/whatsapp`) sin salir del formulario.
+- **Preselección de página**: el dropdown preselecciona la página predeterminada de la cuenta activa (`default_page_id`, configurada en Settings → "Páginas y WhatsApp"); sin default, autoselecciona solo si hay exactamente 1 página. La gestión completa (lista de páginas, WhatsApp editable, default por cuenta, botón "Actualizar páginas desde Meta") vive en Settings.
 - **Estado de la Saga en vivo**: tras crear, la pantalla entra en `polling` (`GET /campaigns/drafts/{id}` cada 2.5 s, hasta 120 intentos ≈ 5 min) **y** escucha el evento WebSocket `campaign_creation` (`READY`/`FAILED`) que resuelve sin esperar al siguiente tick (el polling es el fallback si el WS cae). Se comunica honestamente que la creación *"toma ~3 minutos"* (4 pasos con `countdown=40s`).
 - **Cierre orientado a la acción correcta**: al terminar, recuerda que la campaña quedó **PAUSADA**, que hay que subir el spend cap si está topado, y ofrece un deep-link directo a Ads Manager (`adsmanager.facebook.com/...&selected_campaign_ids=`) para revisarla y activarla manualmente.
 

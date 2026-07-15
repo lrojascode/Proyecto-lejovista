@@ -114,20 +114,37 @@ class AIExecutor:
 
         params = action.parameters or {}
 
-        pages = (await self.db.execute(
-            select(MetaPage).where(
-                MetaPage.organization_id == action.organization_id,
-                MetaPage.status == "ACTIVE",
-            )
-        )).scalars().all()
-        pages_with_whatsapp = [p for p in pages if p.whatsapp_number]
-        if len(pages_with_whatsapp) != 1:
-            return await self._mark_needs_input(
-                action,
-                "Se requiere exactamente 1 página de Facebook activa con WhatsApp conectado "
-                f"para resolver el destino sin ambigüedad (se encontraron {len(pages_with_whatsapp)})."
-            )
-        page = pages_with_whatsapp[0]
+        # 1º: la página predeterminada configurada para esta cuenta (Settings →
+        # "Páginas y WhatsApp"). 2º fallback: la regla original — exactamente 1
+        # página activa con WhatsApp en la org. Si ninguna resuelve, NEEDS_INPUT.
+        page = None
+        if ad_account.default_page_id:
+            default_page = await self.db.get(MetaPage, ad_account.default_page_id)
+            if default_page and default_page.status == "ACTIVE" and default_page.whatsapp_number:
+                page = default_page
+            elif default_page and not default_page.whatsapp_number:
+                return await self._mark_needs_input(
+                    action,
+                    f"La página predeterminada de la cuenta ('{default_page.name}') no tiene un número "
+                    "de WhatsApp conectado. Agrégalo en Configuración → Páginas y WhatsApp."
+                )
+
+        if page is None:
+            pages = (await self.db.execute(
+                select(MetaPage).where(
+                    MetaPage.organization_id == action.organization_id,
+                    MetaPage.status == "ACTIVE",
+                )
+            )).scalars().all()
+            pages_with_whatsapp = [p for p in pages if p.whatsapp_number]
+            if len(pages_with_whatsapp) != 1:
+                return await self._mark_needs_input(
+                    action,
+                    "Se requiere exactamente 1 página de Facebook activa con WhatsApp conectado "
+                    f"para resolver el destino sin ambigüedad (se encontraron {len(pages_with_whatsapp)}). "
+                    "Configura una página predeterminada para la cuenta en Configuración → Páginas y WhatsApp."
+                )
+            page = pages_with_whatsapp[0]
 
         creative = (await self.db.execute(
             select(MetaCreative)

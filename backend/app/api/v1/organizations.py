@@ -8,13 +8,15 @@ from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse,
-    MetaPageResponse, MetaPageWhatsAppUpdate,
+    AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
 )
 from app.utils.security import get_current_user, require_role
-from app.workers.tasks import sync_ad_account
+from app.utils.throttle import enforce_cooldown
+from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
+from app.workers.tasks import sync_ad_account, refresh_org_pages
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
-from app.schemas.response_schemas import AiModelsResponse, BusinessPoliciesResponse
+from app.schemas.response_schemas import AiModelsResponse, BusinessPoliciesResponse, MessageResponse
 from typing import List, Optional
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -136,6 +138,36 @@ async def restore_ad_account(
     await db.refresh(acc)
     return acc
 
+@router.patch("/my/ad-accounts/{ad_account_id}/default-page", response_model=AdAccountResponse)
+async def set_ad_account_default_page(
+    ad_account_id: str,
+    payload: AdAccountDefaultPageUpdate,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fija (o limpia, con page_id=null) la página de Facebook predeterminada de
+    una cuenta publicitaria. La usan el formulario de creación (preselección)
+    y AIExecutor: con 2+ páginas en la org, las acciones CREATE_CAMPAIGN caían
+    siempre en NEEDS_INPUT porque no había forma de designar cuál promocionar.
+    """
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+
+    if payload.page_id is None:
+        acc.default_page_id = None
+    else:
+        page = await db.get(MetaPage, payload.page_id)
+        if not page or page.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=404, detail="Página no encontrada para esta organización.")
+        acc.default_page_id = page.id
+
+    db.add(acc)
+    await db.commit()
+    await db.refresh(acc)
+    return acc
+
 @router.get("/my/pages", response_model=List[MetaPageResponse])
 async def list_my_pages(
     current_user: User = Depends(get_current_user),
@@ -152,6 +184,36 @@ async def list_my_pages(
     )
     res = await db.execute(q)
     return res.scalars().all()
+
+@router.post("/my/pages/refresh", response_model=MessageResponse)
+async def refresh_my_pages(
+    current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Re-descubre las páginas (y su WhatsApp) desde Meta para las cuentas ACTIVE
+    de la organización, sin sync completo. Para cuando se acaba de otorgar
+    acceso a una página nueva en el Business Manager y se quiere ver en el
+    dropdown de inmediato (no a las 06:00 del día siguiente).
+    """
+    q = select(AdAccount).where(
+        AdAccount.organization_id == current_user.organization_id,
+        AdAccount.status == "ACTIVE",
+    )
+    res = await db.execute(q)
+    accounts = res.scalars().all()
+    if not accounts:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay cuentas activas para refrescar páginas (¿token expirado? Reconecta la cuenta)."
+        )
+
+    # Mismo criterio que sync-trigger: golpea Meta, evitar spam. Se consume
+    # solo si de verdad hay algo que refrescar.
+    await enforce_cooldown("pages_refresh", current_user.organization_id, cooldown_seconds=60)
+
+    refresh_org_pages.delay(current_user.organization_id)
+    return {"message": f"Actualización de páginas programada para {len(accounts)} cuentas."}
 
 @router.patch("/my/pages/{page_id}/whatsapp", response_model=MetaPageResponse)
 async def set_page_whatsapp_number(
@@ -184,6 +246,14 @@ async def connect_ad_account(
     current_user: User = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db)
 ):
+    # 0. Los tokens pegados a mano suelen ser de corta duración (horas) — así se
+    # cayó el pipeline el 12-jul (cuentas EXPIRED). Si hay app credentials reales
+    # configuradas, se canjea por un long-lived (~60 días) antes de guardar; si el
+    # intercambio no aplica o falla, se guarda el token original (best-effort).
+    token_to_store, token_expires_at = await exchange_for_long_lived_token(acc_in.access_token)
+    if not token_to_store:
+        token_to_store, token_expires_at = acc_in.access_token, None
+
     # 1. Comprobar si ya está conectado el mismo ad account para la misma organización
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
@@ -192,10 +262,10 @@ async def connect_ad_account(
     )
     res = await db.execute(q)
     existing = res.scalar_one_or_none()
-    
+
     if existing:
         # Si la cuenta ya existe, simplemente actualizamos el token
-        existing.set_access_token(acc_in.access_token)
+        existing.set_access_token(token_to_store, expires_at=token_expires_at)
         if acc_in.refresh_token:
             existing.set_refresh_token(acc_in.refresh_token)
         existing.status = "ACTIVE"
@@ -210,7 +280,7 @@ async def connect_ad_account(
             name=acc_in.name,
             status="ACTIVE"
         )
-        ad_acc.set_access_token(acc_in.access_token)
+        ad_acc.set_access_token(token_to_store, expires_at=token_expires_at)
         if acc_in.refresh_token:
             ad_acc.set_refresh_token(acc_in.refresh_token)
         db.add(ad_acc)
