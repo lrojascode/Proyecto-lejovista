@@ -161,6 +161,14 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "buying_type": "AUCTION",
                 "status": rules["default_status"],
                 "special_ad_categories": "[]",
+                # El presupuesto vive a nivel de adset (ABO), no de campaña.
+                # En ese caso Meta EXIGE declarar is_adset_budget_sharing_enabled
+                # explícitamente (error_subcode 4834011 si falta). "false" = los
+                # adsets no comparten presupuesto entre sí — el comportamiento
+                # esperado para nuestras campañas de un solo adset. Se manda como
+                # string en minúscula porque el POST es form-encoded (un bool de
+                # Python se serializaría como "False" y Meta no lo parsea).
+                "is_adset_budget_sharing_enabled": "false",
             }
 
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id)

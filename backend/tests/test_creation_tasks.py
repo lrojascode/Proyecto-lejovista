@@ -128,6 +128,9 @@ async def test_task_create_campaign_uses_rate_limiter_not_meta_api_client(ad_acc
     assert endpoint == f"{acc.external_account_id}/campaigns"
     assert kwargs["method"] == "POST"
     assert payload["status"] == "PAUSED"  # TENANT_CAMPAIGN_RULES["default_status"]
+    # Presupuesto a nivel adset (ABO): Meta exige is_adset_budget_sharing_enabled
+    # explícito o rechaza con error_subcode 4834011.
+    assert payload["is_adset_budget_sharing_enabled"] == "false"
     # Bajo simulación no hay id real de Meta -> se usa un id local con prefijo mock_.
     assert context["campaign_id"].startswith("mock_camp_")
 
