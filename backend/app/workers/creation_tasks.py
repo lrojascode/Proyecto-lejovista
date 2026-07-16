@@ -235,9 +235,13 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                     excluded_placements=context.get("excluded_placements") or [],
                     rules=rules,
                 )),
+                # CTWA: la Marketing API v25 documenta el promoted_object del
+                # adset como SOLO page_id — el número de WhatsApp lo toma del
+                # que esté conectado a la página en Meta, no de un campo aparte.
+                # `whatsapp_phone_number` no es un campo válido aquí y provoca
+                # "Invalid parameter". El número se usa en el link del creativo.
                 "promoted_object": json.dumps({
                     "page_id": context["page_id"],
-                    "whatsapp_phone_number": context["whatsapp_number"],
                 }),
             }
 
@@ -283,6 +287,7 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 image_hash=context.get("image_hash"),
                 video_id=context.get("video_id"),
                 thumbnail_url=context.get("thumbnail_url"),
+                whatsapp_number=context.get("whatsapp_number"),
             )
 
             payload = {

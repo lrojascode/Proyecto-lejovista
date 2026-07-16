@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Any, Optional
 
 class CreativeBuilder:
@@ -13,6 +14,7 @@ class CreativeBuilder:
         image_hash: Optional[str] = None,
         video_id: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
+        whatsapp_number: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Paso 5 del documento: Crear Creativo (object_story_spec).
@@ -47,6 +49,17 @@ class CreativeBuilder:
             "value": {"app_destination": "WHATSAPP"}
         }
 
+        # CTWA: `link` es OBLIGATORIO en link_data (Marketing API v25 — el doc de
+        # click-to-whatsapp lo marca Required). El enrutado real a WhatsApp lo
+        # hace el call_to_action WHATSAPP_MESSAGE + promoted_object.page_id, pero
+        # Meta exige el campo presente y válido. Se usa el deep link de WhatsApp
+        # con el número de la página.
+        wa_digits = re.sub(r"\D", "", whatsapp_number or "")
+        wa_link = (
+            f"https://api.whatsapp.com/send?phone={wa_digits}"
+            if wa_digits else "https://api.whatsapp.com/send"
+        )
+
         if video_id:
             story_spec_extra = {
                 "video_data": {
@@ -61,6 +74,7 @@ class CreativeBuilder:
             story_spec_extra = {
                 "link_data": {
                     "image_hash": image_hash,
+                    "link": wa_link,
                     "message": copy_text,
                     "call_to_action": call_to_action,
                     "page_welcome_message": page_welcome_message,

@@ -8,6 +8,7 @@ from app.services.creative_builder import CreativeBuilder
 def test_build_creative_payload_with_image_uses_link_data():
     spec = CreativeBuilder.build_creative_payload(
         name="Test Creative", page_id="page1", copy_text="Hola!", image_hash="hash123",
+        whatsapp_number="51 926 325 027",
     )
     story = spec["object_story_spec"]
     assert "link_data" in story
@@ -15,6 +16,16 @@ def test_build_creative_payload_with_image_uses_link_data():
     assert story["link_data"]["image_hash"] == "hash123"
     assert story["link_data"]["message"] == "Hola!"
     assert story["link_data"]["call_to_action"]["type"] == "WHATSAPP_MESSAGE"
+    # CTWA: link obligatorio (Marketing API v25); se normaliza el número a dígitos.
+    assert story["link_data"]["link"] == "https://api.whatsapp.com/send?phone=51926325027"
+
+
+def test_build_creative_payload_link_falls_back_without_number():
+    spec = CreativeBuilder.build_creative_payload(
+        name="Test Creative", page_id="page1", copy_text="Hola!", image_hash="hash123",
+    )
+    # Sin número, el link sigue siendo válido (Meta exige el campo presente).
+    assert spec["object_story_spec"]["link_data"]["link"] == "https://api.whatsapp.com/send"
 
 
 def test_build_creative_payload_with_video_uses_video_data():

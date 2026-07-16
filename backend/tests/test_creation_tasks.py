@@ -181,7 +181,10 @@ async def test_task_create_campaign_raises_permanent_on_bad_request(ad_account, 
 
 
 @pytest.mark.asyncio
-async def test_task_create_adset_includes_whatsapp_number_in_promoted_object(ad_account, mocker):
+async def test_task_create_adset_promoted_object_is_page_id_only(ad_account, mocker):
+    """CTWA (Marketing API v25): el promoted_object del adset es SOLO page_id.
+    whatsapp_phone_number no es válido aquí y causaba 'Invalid parameter' — el
+    número va en el link del creativo, no en el promoted_object."""
     import json
     org, acc = ad_account
     mock_call_api = mocker.patch(
@@ -195,8 +198,8 @@ async def test_task_create_adset_includes_whatsapp_number_in_promoted_object(ad_
     _, endpoint, payload = mock_call_api.call_args[0]
     assert endpoint == f"{acc.external_account_id}/adsets"
     promoted_object = json.loads(payload["promoted_object"])
-    assert promoted_object["whatsapp_phone_number"] == "51999888777"
-    assert promoted_object["page_id"] == "page-1"
+    assert promoted_object == {"page_id": "page-1"}
+    assert "whatsapp_phone_number" not in promoted_object
     assert payload["lifetime_budget"] == int(200.0 * 100)
     assert result["adset_id"].startswith("mock_adset_")
 
@@ -268,6 +271,9 @@ async def test_task_create_creative_uses_creative_builder_payload(ad_account, mo
     spec = json.loads(payload["object_story_spec"])
     assert spec["page_id"] == "page-1"
     assert spec["link_data"]["image_hash"] == "existing_hash"
+    # CTWA: link es obligatorio en link_data (Marketing API v25); se arma con el
+    # número de WhatsApp de la página.
+    assert spec["link_data"]["link"] == "https://api.whatsapp.com/send?phone=51999888777"
     assert result["creative_id"].startswith("mock_creative_")
 
 
