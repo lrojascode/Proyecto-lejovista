@@ -455,6 +455,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/campaigns/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preflight Campaign
+         * @description Valida contra Meta los payloads que enviaría la Saga (`validate_only`)
+         *     SIN crear nada: campaña, adset y creativo de una sola pasada.
+         *
+         *     Existe porque las reglas de Meta se estaban descubriendo de a una por
+         *     intento real, y cada intento fallido dejaba una campaña huérfana en la
+         *     cuenta del cliente. Valida los MISMOS payloads que construye la Saga, no
+         *     una copia — ver app/services/campaign_preflight.py.
+         */
+        post: operations["preflight_campaign_api_v1_campaigns_preflight_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaigns/risk-preview": {
         parameters: {
             query?: never;
@@ -1191,6 +1217,43 @@ export interface components {
             updated_at: string;
         };
         /**
+         * CampaignPreflightRequest
+         * @description Valida contra Meta (`validate_only`) los payloads que enviaría la Saga,
+         *     sin crear nada. Mismos campos que la creación, salvo los que solo importan
+         *     al ejecutar de verdad.
+         */
+        CampaignPreflightRequest: {
+            /** Ad Account Id */
+            ad_account_id: string;
+            /** Page Id */
+            page_id: string;
+            /** Product Name */
+            product_name: string;
+            /** Budget */
+            budget: number;
+            /**
+             * Days
+             * @default 7
+             */
+            days: number;
+            /**
+             * Copy Text
+             * @default
+             */
+            copy_text: string;
+            /** Whatsapp Number */
+            whatsapp_number?: string | null;
+            /** Image Hash */
+            image_hash?: string | null;
+        };
+        /** CampaignPreflightResponse */
+        CampaignPreflightResponse: {
+            /** Ok */
+            ok: boolean;
+            /** Checks */
+            checks: components["schemas"]["PreflightCheck"][];
+        };
+        /**
          * CampaignRiskPreviewRequest
          * @description Valores actuales del formulario para calcular el nivel de riesgo ANTES de
          *     confirmar la creación (Ajuste 1).
@@ -1397,6 +1460,27 @@ export interface components {
             title: string;
             /** Description */
             description: string;
+        };
+        /**
+         * PreflightCheck
+         * @description Resultado de validar UN paso de la Saga contra Meta con validate_only.
+         *     `ok=None` = no se pudo validar (ver `skipped`), no es un éxito.
+         */
+        PreflightCheck: {
+            /** Step */
+            step: string;
+            /** Ok */
+            ok?: boolean | null;
+            /** Skipped */
+            skipped?: string | null;
+            /** Error */
+            error?: {
+                [key: string]: unknown;
+            } | null;
+            /** Parent Campaign */
+            parent_campaign?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** Report */
         Report: {
@@ -1647,6 +1731,8 @@ export interface components {
             mode: string;
             /** Converged */
             converged: boolean;
+            /** Track Record */
+            track_record?: string | null;
             /** Maturity Reason */
             maturity_reason: string;
             /** Strengths */
@@ -2428,6 +2514,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImageUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preflight_campaign_api_v1_campaigns_preflight_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignPreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignPreflightResponse"];
                 };
             };
             /** @description Validation Error */

@@ -241,6 +241,11 @@ class SuggestionAnalysis(BaseModel):
     summary: str
     mode: str
     converged: bool
+    # `build_analysis` lo produce desde los resultados reales del outcome loop,
+    # pero al no estar declarado aquí el response_model lo borraba de la
+    # respuesta: solo llegaba embebido dentro de `summary`. None mientras la IA
+    # no tenga ninguna campaña propia evaluada.
+    track_record: Optional[str] = None
     maturity_reason: str
     strengths: List[str]
     weaknesses: List[str]

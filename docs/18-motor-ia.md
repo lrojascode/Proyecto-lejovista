@@ -91,7 +91,25 @@ Puntos clave:
 | `NEUTRAL` | entre medio, o sin expectativa con qué comparar |
 | `NOT_ACTIVATED` | Saga falló o sin actividad |
 
-El "costo esperado" = `suggested_budget / 20` (el colchón de ~20 conversaciones que usó el sugeridor). El veredicto retroalimenta la madurez de la próxima sugerencia (Fase 1, `C-1`/`B-3`).
+El "costo esperado" = `suggested_budget / 20` (el colchón de ~20 conversaciones que usó el sugeridor).
+
+### Qué cambia cada veredicto (el eslabón cerrado)
+
+Hasta este cambio el ciclo **medía y recordaba, pero no adaptaba**: los veredictos solo alimentaban texto explicativo y el `mode` se calculaba, se mostraba… y ningún código ramificaba sobre él (la IA proponía lo mismo con 5 WIN que con 5 LOSS). `CampaignSuggester._own_evaluated_outcomes` devuelve ahora pares `{params, outcome}` — hacían falta ambos lados para replicar lo que ganó y señalar lo que perdió — y los resultados reales cambian la propuesta así:
+
+| Regla | Qué afecta | Cómo |
+|-------|-----------|------|
+| **R1 · Calibración** | `suggested_budget` | Base = **mediana del `cost_per_conv` real** de las campañas propias evaluadas (WIN + NEUTRAL + LOSS; solo las WIN sería sesgo de supervivencia). Sin resultados propios medibles → fallback a `min(costs)`, el comportamiento anterior. |
+| **R2 · Réplica** | `best_device`, `best_age_range`, `excluded_placements` | Al converger, salen del `params_json` del **WIN propio más reciente** en vez de recalcularse del histórico — es lo que el modo optimizado ya prometía en pantalla. Campo a campo, con fallback al calculado. |
+| **R3 · Transparencia** | `past_failures` | Los LOSS propios se listan con su configuración y cifras reales. **No se culpa a un parámetro concreto**: un LOSS no dice *cuál* falló, y atribuirlo sobre 2-3 muestras sería inventar causalidad. La corrección la hacen R1 (recalibrar) y R2 (solo se replica lo que ganó). |
+
+**Por qué R1 era condición previa**: con base `min(costs)`, el outcome loop derivaba `expected_cost_per_conv = min(costs)` — el **récord histórico de la cuenta**. Se exigía que cada campaña nueva igualara (±20%) el mejor caso jamás visto; casi ninguna lo logra → veredictos NEUTRAL/LOSS → `own_wins` rara vez llegaba a 2 → **`converged` era prácticamente inalcanzable**. Calibrar con el costo real vuelve la vara realista y hace la convergencia posible.
+
+**Propiedad de despliegue seguro**: una cuenta sin resultados propios evaluados se comporta *exactamente* igual que antes — todos los caminos nuevos caen al fallback.
+
+**Límite real**: el ciclo no da una vuelta completa hasta que alguien **active** las campañas creadas (siguen `PAUSED` por la regla de oro); sin gasto todo veredicto sería `NOT_ACTIVATED`, que `_own_verdicts` ignora correctamente.
+
+Fuera de alcance (anotado): atribuir un LOSS a un parámetro concreto y la variación deliberada de parámetros en exploración — ambos exigen experimentación controlada (A/B con una variable por vez), no inferencia sobre 2-3 muestras.
 
 ## 9. Medición de consumo (`token_tracking.py`)
 

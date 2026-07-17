@@ -31,17 +31,57 @@ _MIN_OWN_WINS_FOR_CONVERGENCE = 2
 _DEFAULT_EVALUATION_DAYS = 7
 
 
-def _own_verdicts(outcomes: Optional[List[Dict[str, Any]]]) -> List[str]:
+def _own_verdicts(results: Optional[List[Dict[str, Any]]]) -> List[str]:
     """Veredictos de las campañas creadas por la IA, del más reciente al más
     viejo, ignorando NOT_ACTIVATED (una Saga fallida no dice nada del criterio
-    de la IA, solo de la infraestructura)."""
-    if not outcomes:
-        return []
+    de la IA, solo de la infraestructura).
+
+    `results` son pares `{"params": ..., "outcome": ...}` (ver
+    `CampaignSuggester._own_evaluated_outcomes`)."""
     return [
-        str(o.get("verdict", "")).upper()
-        for o in outcomes
-        if o and str(o.get("verdict", "")).upper() in ("WIN", "LOSS", "NEUTRAL")
+        str((r.get("outcome") or {}).get("verdict", "")).upper()
+        for r in (results or [])
+        if r and str((r.get("outcome") or {}).get("verdict", "")).upper() in ("WIN", "LOSS", "NEUTRAL")
     ]
+
+
+def own_measured_costs(results: Optional[List[Dict[str, Any]]]) -> List[float]:
+    """Costos por conversación REALES de las campañas propias ya evaluadas.
+
+    Incluye WIN, NEUTRAL y LOSS: quedarse solo con las WIN reintroduciría sesgo
+    de supervivencia y volvería a dar una expectativa optimista. Un LOSS con 0
+    conversaciones no aporta costo medible (`cost_per_conv` None) y se descarta.
+    """
+    costs = []
+    for r in (results or []):
+        cost = (r.get("outcome") or {}).get("cost_per_conv")
+        if isinstance(cost, (int, float)) and cost > 0:
+            costs.append(float(cost))
+    return costs
+
+
+def calibrated_cost_per_conv(results: Optional[List[Dict[str, Any]]]) -> Optional[float]:
+    """Mediana del costo por conversación realmente logrado por la IA en esta
+    cuenta, o None si aún no hay ninguno medible.
+
+    Es la base para el presupuesto (R1): la mejor estimación de lo que costará
+    una campaña es lo que costaron las anteriores — no `min(costs)`, el récord
+    histórico de la cuenta, que es optimista por construcción y ponía la vara
+    de la evaluación en el mejor caso (haciendo la convergencia casi
+    inalcanzable). Mediana, no media, por robustez con 2-3 muestras.
+    """
+    costs = own_measured_costs(results)
+    return round(statistics.median(costs), 2) if costs else None
+
+
+def latest_winning_params(results: Optional[List[Dict[str, Any]]]) -> Optional[Dict[str, Any]]:
+    """`params_json` del WIN propio más reciente (R2): la configuración que tiene
+    un resultado medido que la respalda. `results` viene del más reciente al más
+    viejo."""
+    for r in (results or []):
+        if str((r.get("outcome") or {}).get("verdict", "")).upper() == "WIN":
+            return r.get("params") or None
+    return None
 
 
 def assess_maturity(
@@ -122,6 +162,39 @@ def assess_maturity(
     }
 
 
+def _own_failure_notes(results: Optional[List[Dict[str, Any]]]) -> List[str]:
+    """Fallos PROPIOS de la IA (LOSS ya evaluados), con su configuración y sus
+    cifras reales.
+
+    Antes `past_failures` solo miraba campañas de la cuenta con gasto y 0
+    conversiones, así que los fracasos de la propia IA no aparecían por ningún
+    lado. A propósito NO se culpa a un parámetro concreto: un LOSS no dice
+    *cuál* falló, y castigar "la edad 45-54" por un mal resultado sería inventar
+    causalidad sobre 2-3 muestras. La corrección real la hacen R1 (recalibrar el
+    costo esperado) y R2 (solo se replica lo que ganó); esto aporta la
+    transparencia, que es lo honesto que se puede extraer.
+    """
+    notes: List[str] = []
+    for r in (results or []):
+        outcome = r.get("outcome") or {}
+        if str(outcome.get("verdict", "")).upper() != "LOSS":
+            continue
+        params = r.get("params") or {}
+        config_bits = []
+        if params.get("best_age_range"):
+            config_bits.append(f"edad {params['best_age_range']}")
+        if params.get("best_device"):
+            config_bits.append(f"dispositivo {params['best_device']}")
+        if params.get("budget"):
+            config_bits.append(f"presupuesto S/.{params['budget']:.0f}")
+        config = ", ".join(config_bits) if config_bits else "configuración registrada"
+        notes.append(
+            f"Una campaña propia con {config} no rindió: {outcome.get('reason', 'sin detalle')} "
+            "— no se replica esa configuración."
+        )
+    return notes
+
+
 def build_analysis(
     report: Dict[str, Any],
     *,
@@ -132,8 +205,14 @@ def build_analysis(
     suggested_budget: float,
     maturity: Dict[str, Any],
     evaluated_outcomes: Optional[List[Dict[str, Any]]] = None,
+    calibrated_cost: Optional[float] = None,
+    replicated_from_win: bool = False,
 ) -> Dict[str, Any]:
-    """Construye el objeto de razonamiento explicable de la IA."""
+    """Construye el objeto de razonamiento explicable de la IA.
+
+    `calibrated_cost` / `replicated_from_win` reflejan lo que los resultados
+    reales cambiaron en esta propuesta (R1/R2), para que la explicación diga lo
+    que de verdad se hizo y no una promesa genérica."""
     campaigns = report.get("campaigns", [])
     window = report.get("window_days", _DEFAULT_EVALUATION_DAYS)
 
@@ -169,6 +248,10 @@ def build_analysis(
     if best_age_range:
         strengths.append(f"El rango de edad '{best_age_range}' es el de menor costo por conversación.")
 
+    # R3: los fracasos PROPIOS de la IA van primero — son los que de verdad
+    # informan su criterio (los de la cuenta pueden venir de campañas ajenas).
+    past_failures.extend(_own_failure_notes(evaluated_outcomes))
+
     for c in campaigns:
         if c.get("spend", 0) > 0 and c.get("conversations", 0) == 0:
             past_failures.append(
@@ -195,12 +278,21 @@ def build_analysis(
             "change": f"Enfocar el rango de edad {best_age_range}",
             "why": "Es el segmento con menor costo por conversación observado.",
         })
+    if calibrated_cost:
+        why_budget = (
+            f"Colchón de ~20 conversaciones a S/.{calibrated_cost:.2f} — el costo real que la IA "
+            "ha logrado en esta cuenta, no el mejor caso histórico."
+        )
+    elif best:
+        why_budget = (
+            "Colchón de ~20 conversaciones al menor costo observado. Aún no hay resultados propios "
+            "medidos con qué calibrarlo."
+        )
+    else:
+        why_budget = "Valor por defecto conservador: aún no hay histórico con qué calibrar."
     changes.append({
         "change": f"Presupuesto de partida S/.{suggested_budget:.0f}",
-        "why": (
-            "Colchón de ~20 conversaciones al menor costo observado."
-            if best else "Valor por defecto conservador: aún no hay histórico con qué calibrar."
-        ),
+        "why": why_budget,
     })
 
     if not past_failures:
@@ -211,7 +303,13 @@ def build_analysis(
     winners = [c for c in campaigns if c.get("conversations", 0) > 0]
     confidence = "alta" if len(winners) >= _MIN_WINNERS_FOR_CONVERGENCE else ("media" if winners else "baja")
 
-    if maturity.get("converged"):
+    if maturity.get("converged") and replicated_from_win:
+        summary = (
+            "La cuenta ya convergió: replico la configuración exacta (dispositivo, edad y "
+            "placements) de mi última campaña con resultado verificado como exitoso, sin "
+            "experimentar."
+        )
+    elif maturity.get("converged"):
         summary = (
             "La cuenta ya convergió a una configuración ganadora estable: creo la campaña "
             "optimizada replicando lo que funciona, sin experimentar."

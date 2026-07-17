@@ -7,7 +7,9 @@ from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.services.report_cache import get_report
-from app.services.campaign_learning import assess_maturity, build_analysis
+from app.services.campaign_learning import (
+    assess_maturity, build_analysis, calibrated_cost_per_conv, latest_winning_params,
+)
 from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
 
 logger = logging.getLogger("lejovista.suggester")
@@ -65,12 +67,61 @@ class CampaignSuggester:
         best_device = self._best_key(segmentation.get("device", {}))
         best_age_range = self._best_key(segmentation.get("age", {}))
 
+        # Resultados REALES de las campañas que la propia IA creó y el outcome
+        # loop ya evaluó. Se leen ANTES de calcular el presupuesto: son la base
+        # de la calibración (R1) y de la réplica de la config ganadora (R2).
+        evaluated_outcomes = await self._own_evaluated_outcomes(ad_account)
+        maturity = assess_maturity(campaigns, evaluated_outcomes)
+
+        # R1 · El presupuesto es un colchón de ~20 conversaciones al costo
+        # esperado. La mejor estimación de ese costo es lo que la IA REALMENTE
+        # logró en esta cuenta (mediana de sus resultados medidos); solo cuando
+        # aún no tiene ninguno se cae al `min(costs)` histórico — que es el
+        # récord de la cuenta, optimista por construcción. Esto importa doble:
+        # el outcome loop deriva `expected_cost_per_conv = suggested_budget/20`,
+        # así que con `min(costs)` la IA se juzgaba contra el mejor caso
+        # histórico y la convergencia era casi inalcanzable.
         costs = [c["cost_per_conv"] for c in campaigns if c["conversations"] > 0]
-        # Colchón de ~20 conversiones al costo más bajo observado — punto de partida
-        # razonable, no una cifra mágica: se documenta en la evidencia de dónde sale.
-        suggested_budget = budget_hint or (round(min(costs) * 20, 2) if costs else 100.0)
+        calibrated_cost = calibrated_cost_per_conv(evaluated_outcomes)
+        if budget_hint:
+            suggested_budget = budget_hint
+        elif calibrated_cost:
+            suggested_budget = round(calibrated_cost * 20, 2)
+        elif costs:
+            suggested_budget = round(min(costs) * 20, 2)
+        else:
+            suggested_budget = 100.0
+
+        # R2 · En modo optimizado la IA "replica la configuración ganadora sin
+        # experimentar" — hasta ahora eso solo se decía en pantalla: los
+        # parámetros se recalculaban del histórico general igual que en
+        # exploración. Al converger se toman los del WIN propio más reciente,
+        # que tienen un resultado medido que los respalda. Campo a campo, con
+        # fallback al calculado para no dejar huecos.
+        replicated_from_win: Optional[Dict[str, Any]] = None
+        if maturity.get("converged"):
+            win_params = latest_winning_params(evaluated_outcomes)
+            if win_params:
+                replicated_from_win = win_params
+                if win_params.get("best_device") is not None:
+                    best_device = win_params["best_device"]
+                if win_params.get("best_age_range") is not None:
+                    best_age_range = win_params["best_age_range"]
+                if win_params.get("excluded_placements") is not None:
+                    excluded_placements = list(win_params["excluded_placements"])
 
         evidence: List[str] = []
+        if calibrated_cost:
+            evidence.append(
+                f"Presupuesto calibrado con el costo real que la IA ha logrado en esta cuenta "
+                f"(S/.{calibrated_cost:.2f} por conversación, mediana de sus campañas ya "
+                f"evaluadas), no con el mejor caso histórico."
+            )
+        if replicated_from_win:
+            evidence.append(
+                "Modo optimizado: se replica la configuración de la última campaña propia con "
+                "resultado verificado como exitoso (dispositivo, edad y placements)."
+            )
         if best:
             evidence.append(
                 f"Campaña más eficiente de la cuenta: '{best['name']}' — "
@@ -98,12 +149,9 @@ class CampaignSuggester:
                 f"(S/.{winning_ad['cost_per_conv']:.2f} por conversación) — disponible como inspiración."
             )
 
-        # Ajuste 2A: madurez/convergencia + razonamiento explicable de la IA,
-        # derivados del mismo histórico real (deterministas, sin LLM).
-        # Fase 1 (1.2): la madurez pesa además los resultados REALES de las
-        # campañas que la propia IA creó (outcome loop).
-        evaluated_outcomes = await self._own_evaluated_outcomes(ad_account)
-        maturity = assess_maturity(campaigns, evaluated_outcomes)
+        # Ajuste 2A: razonamiento explicable de la IA, derivado del mismo
+        # histórico real (determinista, sin LLM). La madurez y los outcomes ya
+        # se resolvieron arriba: los necesitaban R1 y R2.
         analysis = build_analysis(
             report,
             best=best,
@@ -113,6 +161,8 @@ class CampaignSuggester:
             suggested_budget=suggested_budget,
             maturity=maturity,
             evaluated_outcomes=evaluated_outcomes,
+            calibrated_cost=calibrated_cost,
+            replicated_from_win=bool(replicated_from_win),
         )
 
         return {
@@ -142,10 +192,15 @@ class CampaignSuggester:
         }
 
     async def _own_evaluated_outcomes(self, ad_account: AdAccount, limit: int = 10) -> List[Dict[str, Any]]:
-        """Outcomes reales (outcome_json) de las campañas que la IA creó en esta
-        cuenta y el outcome loop ya evaluó, del más reciente al más viejo."""
+        """Resultados propios ya evaluados por el outcome loop, del más reciente
+        al más viejo, como pares `{"params": ..., "outcome": ...}`.
+
+        Antes devolvía SOLO el `outcome_json`, así que se perdía *qué se había
+        propuesto* en cada caso — sin eso no se puede replicar la configuración
+        que ganó ni señalar la que perdió; solo contar veredictos.
+        """
         rows = (await self.db.execute(
-            select(CampaignLearningLog.outcome_json)
+            select(CampaignLearningLog.params_json, CampaignLearningLog.outcome_json)
             .where(
                 CampaignLearningLog.ad_account_id == ad_account.id,
                 CampaignLearningLog.status == "EVALUATED",
@@ -153,8 +208,8 @@ class CampaignSuggester:
             )
             .order_by(desc(CampaignLearningLog.created_at))
             .limit(limit)
-        )).scalars().all()
-        return list(rows)
+        )).all()
+        return [{"params": params or {}, "outcome": outcome or {}} for params, outcome in rows]
 
     @staticmethod
     def _best_key(bucket: Dict[str, Any]) -> Optional[str]:
