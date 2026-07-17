@@ -47,16 +47,27 @@ def test_build_targeting_falls_back_without_history():
     assert "feed" in t["facebook_positions"]
 
 
-# --- Advantage+ vs edad mínima: incompatibles en Meta (error_subcode 1870188).
-# Caso real 2026-07-17: el histórico ganador de la cuenta era 45-54 y el adset
-# se rechazaba entero por mandar advantage_audience junto a age_min=45. ---
+# --- Advantage+ vs edad mínima. Meta impone dos reglas a la vez (caso real
+# 2026-07-17, cuenta Agencia Kibo, histórico ganador 45-54):
+#   1870188: no se admite advantage_audience=1 con age_min > 25.
+#   1870227: el campo es obligatorio, hay que declararlo como 1 o 0 (omitirlo
+#            también rechaza el adset).
+# => siempre presente; 0 cuando la edad mínima pasa de 25. ---
 
-def test_advantage_audience_dropped_when_winning_age_is_older():
+def test_advantage_audience_disabled_when_winning_age_is_older():
     t = build_targeting(best_age_range="45-54", best_device=None, excluded_placements=[])
     # Se respeta la señal real del histórico como restricción dura...
     assert t["age_min"] == 45 and t["age_max"] == 54
-    # ...y se renuncia a Advantage+, que Meta no admite con age_min > 25.
-    assert "targeting_automation" not in t
+    # ...apagando Advantage+ con un 0 EXPLÍCITO (no omitiendo el campo).
+    assert t["targeting_automation"] == {"advantage_audience": 0}
+
+
+def test_advantage_audience_always_declared():
+    """1870227: el campo nunca puede faltar, sea cual sea la edad."""
+    for age_range in ("18-24", "25-34", "45-54", "65+", None):
+        t = build_targeting(best_age_range=age_range, best_device=None, excluded_placements=[])
+        assert "targeting_automation" in t, f"falta el campo con {age_range}"
+        assert t["targeting_automation"]["advantage_audience"] in (0, 1)
 
 
 def test_advantage_audience_kept_for_young_audience():
@@ -66,7 +77,7 @@ def test_advantage_audience_kept_for_young_audience():
 
 
 def test_advantage_audience_kept_at_the_boundary():
-    """25 es el límite que acepta Meta, no debe excluirse."""
+    """25 es el límite que acepta Meta, no debe apagarse."""
     t = build_targeting(best_age_range="25-34", best_device=None, excluded_placements=[])
     assert t["age_min"] == 25
     assert t["targeting_automation"] == {"advantage_audience": 1}

@@ -21,10 +21,13 @@ from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 _AGE_FLOOR = 18
 _AGE_CEIL = 65
 
-# Meta rechaza `advantage_audience` combinado con una edad mínima por encima de
-# 25 (error_subcode 1870188: "con público Advantage+, la edad mínima no se puede
-# establecer en más de 25 años" — con Advantage+ la edad es solo una SUGERENCIA,
-# no un control). Son mutuamente excluyentes.
+# Meta impone DOS reglas sobre `targeting_automation.advantage_audience` que hay
+# que satisfacer a la vez:
+#   - `1870188`: no se admite `advantage_audience=1` con `age_min > 25` (con
+#     Advantage+ la edad es solo una SUGERENCIA, no un control).
+#   - `1870227`: el campo es OBLIGATORIO y debe declararse explícitamente como
+#     1 o 0 — omitirlo también rechaza el adset.
+# Es decir: siempre se manda, y vale 0 cuando la edad mínima pasa de 25.
 _ADVANTAGE_AUDIENCE_MAX_AGE_MIN = 25
 
 # Defaults de siempre, para cuentas sin histórico con qué optimizar.
@@ -128,15 +131,15 @@ def build_targeting(
     }
 
     # Advantage+ audience expande la segmentación, pero Meta NO lo admite junto a
-    # una edad mínima > 25 (error_subcode 1870188). Cuando el histórico ganador
-    # apunta a un público mayor (p. ej. 45-54, el caso real que reventó el
-    # 2026-07-17), se prioriza esa señal — derivada del rendimiento real de la
-    # cuenta — como restricción DURA, y se renuncia a la expansión automática.
-    # Antes se mandaba advantage_audience siempre y Meta rechazaba el adset
-    # entero; el comentario decía que la edad seguía siendo restricción dura
-    # junto con Advantage+, lo cual es falso: con Advantage+ es solo sugerencia.
-    if age_min <= _ADVANTAGE_AUDIENCE_MAX_AGE_MIN:
-        targeting["targeting_automation"] = {"advantage_audience": 1}
+    # una edad mínima > 25 (`1870188`). Cuando el histórico ganador apunta a un
+    # público mayor (p. ej. 45-54, el caso real del 2026-07-17), se prioriza esa
+    # señal —derivada del rendimiento real de la cuenta— como restricción DURA y
+    # se apaga la expansión automática.
+    # OJO: hay que apagarla con un 0 explícito, no omitiendo el campo: Meta lo
+    # exige presente (`1870227`, "debes activar o desactivar la función").
+    targeting["targeting_automation"] = {
+        "advantage_audience": 1 if age_min <= _ADVANTAGE_AUDIENCE_MAX_AGE_MIN else 0
+    }
 
     targeting.update(device_targeting(best_device))
     return targeting
