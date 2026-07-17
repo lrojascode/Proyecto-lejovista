@@ -28,6 +28,12 @@ BEAT_STAGGER_WINDOW_SECONDS = 1800  # 30 min
 ANALYSIS_DEBOUNCE_COUNTDOWN = 300   # el análisis corre 5 min después del 1er sync
 ANALYSIS_DEBOUNCE_TTL = 360         # el lock vive un poco más que el countdown
 
+# TTL del lock de sync por cuenta (ver _acquire_sync_lock). Holgado respecto a
+# lo que tarda un sync real (~15 s en cuentas chicas, más en cuentas grandes con
+# muchas campañas) pero acotado para que un worker muerto no deje la cuenta
+# bloqueada indefinidamente.
+SYNC_LOCK_TTL = 900  # 15 min
+
 
 def _schedule_org_analysis_debounced(org_id: str) -> bool:
     """Encola run_ai_analysis para la org solo si no hay ya uno pendiente.
@@ -75,6 +81,55 @@ def _release_analysis_lock(org_id: str) -> None:
                 pass
     except Exception:
         pass
+
+def _acquire_sync_lock(ad_account_id: str) -> bool:
+    """Lock por CUENTA para que no corran dos syncs a la vez sobre la misma.
+
+    El worker `sync` tiene concurrency 2, así que dos syncs de la misma cuenta
+    (p. ej. el FULL que dispara reconectarla + un INCREMENTAL manual segundos
+    después) se pisaban: ambos hacían "¿existe este creativo? no → insertar" y
+    el segundo reventaba con UniqueViolationError (uq_creative_acc_hash). El
+    patrón check-then-insert del sync no es seguro entre procesos; serializar
+    por cuenta lo resuelve de raíz, y de paso protege los demás upserts
+    (snapshots, páginas, audiencias) de la misma carrera.
+
+    Fail-open: si Redis no responde se sincroniza igual (preferimos arriesgar
+    la carrera antes que dejar de sincronizar).
+    """
+    import redis as redis_sync
+
+    try:
+        client = redis_sync.Redis.from_url(settings.REDIS_URL)
+        try:
+            return bool(client.set(
+                f"sync_running:{ad_account_id}", "1", nx=True, ex=SYNC_LOCK_TTL
+            ))
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"Redis no disponible para el lock de sync ({e}); sincronizando igual.")
+        return True
+
+
+def _release_sync_lock(ad_account_id: str) -> None:
+    """Libera el lock de sync de la cuenta. Fail-silent."""
+    import redis as redis_sync
+
+    try:
+        client = redis_sync.Redis.from_url(settings.REDIS_URL)
+        try:
+            client.delete(f"sync_running:{ad_account_id}")
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 def run_async(coro):
     """Ejecuta una corrutina en un event loop nuevo y limpio por tarea.
@@ -173,7 +228,17 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
     """
     Sincroniza una cuenta de anuncios específica.
     Reintenta automáticamente ante errores transitorios de Meta (429/5xx/red).
+
+    Serializado por cuenta con un lock (ver `_acquire_sync_lock`): dos syncs
+    simultáneos de la misma cuenta se pisaban en los upserts del inventario.
     """
+    if not _acquire_sync_lock(ad_account_id):
+        logger.info(
+            "Ya hay un sync en curso para la cuenta %s; se omite este %s.",
+            ad_account_id, sync_type,
+        )
+        return
+
     async def _impl():
         async with async_session() as db:
             acc = await db.get(AdAccount, ad_account_id)
@@ -208,8 +273,13 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
                 except Exception:
                     logger.exception("No se pudo invalidar el cache de reporte tras el sync")
                 _schedule_org_analysis_debounced(acc.organization_id)
-                
-    run_async(_impl())
+
+    try:
+        run_async(_impl())
+    finally:
+        # Siempre liberar: si se propaga un TransientMetaError, Celery reintenta
+        # y ese reintento necesita poder tomar el lock de nuevo.
+        _release_sync_lock(ad_account_id)
 
 @celery_app.task(name="app.workers.tasks.run_ai_analysis")
 def run_ai_analysis(org_id: str):

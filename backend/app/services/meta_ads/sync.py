@@ -39,24 +39,50 @@ class MetaAdsSyncService:
         )
         self.db.add(job)
         await self.db.commit()
+        # Capturados antes de cualquier fallo: un rollback expira los objetos ORM
+        # y volver a tocar `job.id`/`ad_account.id` dispararía un refresh.
+        job_id = job.id
+        acc_id = ad_account.id
+        org_id = ad_account.organization_id
 
         try:
             limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
-            
+
             if settings.MOCK_SERVICES:
                 records_synced = await self._sync_mock_data(ad_account, sync_type, limiter)
             else:
                 records_synced = await self._sync_real_data(ad_account, sync_type, limiter)
-                
+
             job.status = "COMPLETED"
             job.records_synced = records_synced
             job.completed_at = datetime.datetime.utcnow()
-        except Exception as e:
-            logger.exception(f"Error en la sincronización {sync_type} de cuenta {ad_account.id}")
-            job.status = "FAILED"
-            job.error_message = str(e)
-            job.completed_at = datetime.datetime.utcnow()
+            # El commit final va DENTRO del try a propósito: buena parte de las
+            # escrituras del sync quedan pendientes en la sesión y solo se vuelcan
+            # aquí, así que es un punto de fallo real (p. ej. IntegrityError por
+            # una carrera entre dos syncs de la misma cuenta). Cuando estaba fuera
+            # del try, ese error escapaba sin marcar el job y lo dejaba en RUNNING
+            # para siempre.
             await self.db.commit()
+            return job
+        except Exception as e:
+            logger.exception(f"Error en la sincronización {sync_type} de cuenta {acc_id}")
+            # Un fallo al volcar deja la sesión en "pending rollback": cualquier
+            # commit posterior falla también. Hay que revertir antes de poder
+            # marcar el job como FAILED.
+            try:
+                await self.db.rollback()
+            except Exception:
+                logger.exception("No se pudo revertir la sesión tras el fallo de sync")
+
+            job = await self.db.get(SyncJob, job_id)
+            if job is not None:
+                job.status = "FAILED"
+                job.error_message = str(e)
+                job.completed_at = datetime.datetime.utcnow()
+                try:
+                    await self.db.commit()
+                except Exception:
+                    logger.exception("No se pudo marcar el SyncJob %s como FAILED", job_id)
 
             classified = classify_meta_error(e)
             if isinstance(classified, TransientMetaError):
@@ -67,12 +93,9 @@ class MetaAdsSyncService:
             # que un colector como Sentry puede capturar).
             logger.error(
                 "Sync permanentemente fallido para cuenta %s (org %s): %s",
-                ad_account.id, ad_account.organization_id, e
+                acc_id, org_id, e
             )
             return job
-
-        await self.db.commit()
-        return job
 
     async def _sync_mock_data(self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter) -> int:
         """
