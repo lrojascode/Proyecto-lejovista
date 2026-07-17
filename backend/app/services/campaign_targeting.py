@@ -21,6 +21,12 @@ from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
 _AGE_FLOOR = 18
 _AGE_CEIL = 65
 
+# Meta rechaza `advantage_audience` combinado con una edad mínima por encima de
+# 25 (error_subcode 1870188: "con público Advantage+, la edad mínima no se puede
+# establecer en más de 25 años" — con Advantage+ la edad es solo una SUGERENCIA,
+# no un control). Son mutuamente excluyentes.
+_ADVANTAGE_AUDIENCE_MAX_AGE_MIN = 25
+
 # Defaults de siempre, para cuentas sin histórico con qué optimizar.
 _DEFAULT_AGE_MIN = 25
 _DEFAULT_AGE_MAX = 65
@@ -119,9 +125,18 @@ def build_targeting(
         "age_max": age_max,
         "publisher_platforms": ["facebook"],
         "facebook_positions": _facebook_positions(excluded_placements or [], rules),
-        # Advantage+ audience: Meta expande a partir de estas señales; la edad y
-        # el dispositivo siguen actuando como restricción dura.
-        "targeting_automation": {"advantage_audience": 1},
     }
+
+    # Advantage+ audience expande la segmentación, pero Meta NO lo admite junto a
+    # una edad mínima > 25 (error_subcode 1870188). Cuando el histórico ganador
+    # apunta a un público mayor (p. ej. 45-54, el caso real que reventó el
+    # 2026-07-17), se prioriza esa señal — derivada del rendimiento real de la
+    # cuenta — como restricción DURA, y se renuncia a la expansión automática.
+    # Antes se mandaba advantage_audience siempre y Meta rechazaba el adset
+    # entero; el comentario decía que la edad seguía siendo restricción dura
+    # junto con Advantage+, lo cual es falso: con Advantage+ es solo sugerencia.
+    if age_min <= _ADVANTAGE_AUDIENCE_MAX_AGE_MIN:
+        targeting["targeting_automation"] = {"advantage_audience": 1}
+
     targeting.update(device_targeting(best_device))
     return targeting

@@ -47,6 +47,38 @@ def test_build_targeting_falls_back_without_history():
     assert "feed" in t["facebook_positions"]
 
 
+# --- Advantage+ vs edad mínima: incompatibles en Meta (error_subcode 1870188).
+# Caso real 2026-07-17: el histórico ganador de la cuenta era 45-54 y el adset
+# se rechazaba entero por mandar advantage_audience junto a age_min=45. ---
+
+def test_advantage_audience_dropped_when_winning_age_is_older():
+    t = build_targeting(best_age_range="45-54", best_device=None, excluded_placements=[])
+    # Se respeta la señal real del histórico como restricción dura...
+    assert t["age_min"] == 45 and t["age_max"] == 54
+    # ...y se renuncia a Advantage+, que Meta no admite con age_min > 25.
+    assert "targeting_automation" not in t
+
+
+def test_advantage_audience_kept_for_young_audience():
+    t = build_targeting(best_age_range="18-24", best_device=None, excluded_placements=[])
+    assert t["age_min"] == 18
+    assert t["targeting_automation"] == {"advantage_audience": 1}
+
+
+def test_advantage_audience_kept_at_the_boundary():
+    """25 es el límite que acepta Meta, no debe excluirse."""
+    t = build_targeting(best_age_range="25-34", best_device=None, excluded_placements=[])
+    assert t["age_min"] == 25
+    assert t["targeting_automation"] == {"advantage_audience": 1}
+
+
+def test_advantage_audience_kept_on_default_fallback():
+    """Sin histórico el default es age_min=25 → Advantage+ sigue activo (el
+    comportamiento de siempre para cuentas nuevas)."""
+    t = build_targeting(best_age_range=None, best_device=None, excluded_placements=[])
+    assert t["targeting_automation"] == {"advantage_audience": 1}
+
+
 def test_excluded_placements_drop_positions_but_keep_required():
     # Excluir 'facebook_feed' quita 'feed' del allowlist...
     positions = _facebook_positions(["facebook_feed"])
