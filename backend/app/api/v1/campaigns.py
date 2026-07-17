@@ -25,10 +25,14 @@ logger = logging.getLogger(__name__)
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.organization import Organization
-from app.schemas.campaign_schemas import CampaignCreateRequest, CampaignRiskPreviewRequest
+from app.schemas.campaign_schemas import (
+    CampaignCreateRequest, CampaignRiskPreviewRequest, CampaignPreflightRequest,
+)
 from app.schemas.schemas import CampaignDraftResponse
 from app.services.campaign_validator import CampaignValidator
 from app.services.campaign_suggester import CampaignSuggester
+from app.services.campaign_preflight import CampaignPreflight
+from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
 from app.services.report_cache import get_report
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.ai.llm import OpenRouterClient
@@ -44,6 +48,7 @@ from app.workers.creation_tasks import (
 from app.schemas.response_schemas import (
     ApiCallHistoryEntry, SuggestionResponse, ImageUploadResponse, RiskPreviewResponse,
     CampaignCreateAcceptedResponse, LearningLogResponse, MessageResponse,
+    CampaignPreflightResponse,
 )
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -329,6 +334,50 @@ async def upload_campaign_image(
         f.write(contents)
 
     return {"image_path": f"{current_user.organization_id}/{filename}"}
+
+
+@router.post("/preflight", response_model=CampaignPreflightResponse)
+async def preflight_campaign(
+    request: CampaignPreflightRequest,
+    current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Valida contra Meta los payloads que enviaría la Saga (`validate_only`)
+    SIN crear nada: campaña, adset y creativo de una sola pasada.
+
+    Existe porque las reglas de Meta se estaban descubriendo de a una por
+    intento real, y cada intento fallido dejaba una campaña huérfana en la
+    cuenta del cliente. Valida los MISMOS payloads que construye la Saga, no
+    una copia — ver app/services/campaign_preflight.py.
+    """
+    q_acc = select(AdAccount).where(
+        AdAccount.id == request.ad_account_id,
+        AdAccount.organization_id == current_user.organization_id,
+        AdAccount.status != "ARCHIVED",
+    )
+    ad_account = (await db.execute(q_acc)).scalar_one_or_none()
+    if not ad_account:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+
+    org = await db.get(Organization, current_user.organization_id)
+    rules = get_campaign_rules_for_org(org)
+
+    # Las señales del histórico son las mismas que usaría la Saga.
+    suggestion = await CampaignSuggester(db).suggest(ad_account)
+
+    result = await CampaignPreflight(ad_account, rules).run(
+        product_name=request.product_name,
+        page_id=request.page_id,
+        whatsapp_number=request.whatsapp_number,
+        budget=request.budget,
+        days=request.days,
+        copy_text=request.copy_text,
+        image_hash=request.image_hash,
+        best_age_range=suggestion.get("best_age_range"),
+        best_device=suggestion.get("best_device"),
+        excluded_placements=suggestion.get("excluded_placements") or [],
+    )
+    return result
 
 
 @router.post("/risk-preview", response_model=RiskPreviewResponse)

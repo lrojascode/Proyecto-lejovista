@@ -67,14 +67,19 @@ class MetaAPIRateLimiter:
         Soporta MOCK_SERVICES para simular la API localmente.
         """
         es_post = method.upper() == "POST"
+        es_delete = method.upper() == "DELETE"
+        # DELETE es una escritura tanto como POST: debe respetar el mismo gating
+        # y las mismas pausas. Antes solo se distinguía POST, así que un DELETE
+        # habría caído en la rama del GET (sin borrar nada) y sin gatear.
+        es_escritura = es_post or es_delete
 
         # Lecturas: reales si MOCK_SERVICES=false.
-        # Escrituras (POST): reales solo si el write-back está explícitamente
+        # Escrituras (POST/DELETE): reales solo si el write-back está explícitamente
         # habilitado Y (sin allowlist, o) esta cuenta está en la piloto (F-2).
-        simulate = settings.simulate_meta_writes_for(self.ad_account_id) if es_post else settings.MOCK_SERVICES
+        simulate = settings.simulate_meta_writes_for(self.ad_account_id) if es_escritura else settings.MOCK_SERVICES
 
         # Aplicar el delay antes de la llamada
-        await self._apply_delay(es_post)
+        await self._apply_delay(es_escritura)
 
         if simulate:
             # Retornamos respuestas mockeadas (serán manejadas por los servicios específicos)
@@ -100,6 +105,8 @@ class MetaAPIRateLimiter:
                 try:
                     if es_post:
                         response = await client.post(url, data=all_params, headers=self.headers)
+                    elif es_delete:
+                        response = await client.delete(url, params=all_params, headers=self.headers)
                     else:
                         response = await client.get(url, params=all_params, headers=self.headers)
                     

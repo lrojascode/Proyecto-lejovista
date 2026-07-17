@@ -34,7 +34,11 @@ class CreativeBuilder:
             "type": "VISUAL_EDITOR",
             "version": 2,
             "landing_screen_type": "welcome_message",
-            "media_type": "TEXT",
+            # OJO: en MINÚSCULA. Con "TEXT" Meta rechaza el creativo entero con
+            # un inútil «An unknown error has occurred» (code 1, sin subcódigo).
+            # Aislado con el preflight (validate_only) el 2026-07-17: el mismo
+            # creativo sin page_welcome_message validaba, y con "text" también.
+            "media_type": "text",
             "text_format": {
                 "customer_action_type": "AUTOFILL_MESSAGE",
                 "message": {

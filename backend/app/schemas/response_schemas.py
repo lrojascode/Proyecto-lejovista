@@ -356,3 +356,18 @@ class CampaignCreateAcceptedResponse(BaseModel):
     risk_level: str
     risk_reasons: List[str]
     analysis: SuggestionAnalysis
+
+
+class PreflightCheck(BaseModel):
+    """Resultado de validar UN paso de la Saga contra Meta con validate_only.
+    `ok=None` = no se pudo validar (ver `skipped`), no es un éxito."""
+    step: str
+    ok: Optional[bool] = None
+    skipped: Optional[str] = None
+    error: Optional[Dict[str, Any]] = None
+    parent_campaign: Optional[Dict[str, Any]] = None
+
+
+class CampaignPreflightResponse(BaseModel):
+    ok: bool
+    checks: List[PreflightCheck]

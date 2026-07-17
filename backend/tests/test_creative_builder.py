@@ -53,3 +53,14 @@ def test_build_creative_payload_video_requires_thumbnail():
         CreativeBuilder.build_creative_payload(
             name="X", page_id="p", copy_text="c", video_id="vid_123",
         )
+
+
+def test_page_welcome_message_media_type_is_lowercase():
+    """Con "TEXT" en mayúscula Meta rechaza el creativo entero con un genérico
+    «An unknown error has occurred» (code 1, sin subcódigo, imposible de
+    diagnosticar). Aislado con el preflight el 2026-07-17."""
+    spec = CreativeBuilder.build_creative_payload(
+        name="C", page_id="page1", copy_text="Hola", image_hash="h1",
+    )
+    pwm = spec["object_story_spec"]["link_data"]["page_welcome_message"]
+    assert pwm["media_type"] == "text"

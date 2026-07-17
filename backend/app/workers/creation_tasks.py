@@ -87,6 +87,59 @@ async def _merge_draft_result(
     await db.commit()
 
 
+async def _rollback_campaign(db, draft_id: str) -> None:
+    """Compensación de la Saga: borra en Meta la campaña ya creada cuando un paso
+    posterior falla.
+
+    Sin esto, cada intento fallido dejaba una campaña VACÍA (sin adset ni
+    anuncio) y pausada en la cuenta del cliente — 3 huérfanas en una sola sesión
+    de depuración el 2026-07-17, borradas a mano. La Saga escribe en 4 pasos
+    encadenados pero no tenía la pata de compensación que el patrón exige.
+
+    No borra si: la campaña nunca se creó, es simulada (`mock_*`), o la Saga
+    llegó a crear el anuncio (ahí terminó bien; no hay nada que compensar).
+    Best-effort: si el borrado falla, se registra en el draft (`rollback_error`)
+    en vez de enmascarar el error original de la Saga.
+    """
+    draft = await db.get(CampaignDraft, draft_id)
+    if not draft:
+        return
+
+    payload = dict(draft.payload or {})
+    result = dict(payload.get("result", {}))
+    campaign_id = result.get("campaign_id")
+    ad_account_id = payload.get("ad_account_id")
+
+    if not campaign_id or not ad_account_id:
+        return  # la Saga no llegó al paso 2: no hay nada creado en Meta
+    if str(campaign_id).startswith("mock_"):
+        return  # simulada: no existe en Meta
+    if result.get("ad_id"):
+        return  # la Saga completó: no compensar
+
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc:
+        logger.warning("Rollback: AdAccount %s no encontrada; no se borra la campaña %s",
+                       ad_account_id, campaign_id)
+        return
+
+    try:
+        limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+        res = await limiter.call_api(
+            str(campaign_id), {}, method="DELETE", access_token=acc.get_access_token()
+        )
+        if isinstance(res, dict) and ("error" in res or "ERROR" in res):
+            raise Exception(json.dumps(res))
+        logger.info("Rollback: campaña huérfana %s borrada en Meta tras fallar la Saga.", campaign_id)
+        await _merge_draft_result(db, draft_id, rolled_back_campaign_id=campaign_id)
+    except Exception as exc:
+        # No re-lanzar: el error que importa es el que tumbó la Saga. Este queda
+        # anotado para que se pueda limpiar a mano (mismo criterio que
+        # `rollback_error` en AIExecutor).
+        logger.exception("Rollback: no se pudo borrar la campaña %s en Meta", campaign_id)
+        await _merge_draft_result(db, draft_id, rollback_error=str(exc))
+
+
 _RETRY_KWARGS = dict(
     bind=True,
     autoretry_for=(TransientMetaError,),
@@ -398,13 +451,18 @@ def task_handle_chain_error(request, exc, traceback, draft_id, tenant_id: str = 
     """
     Callback de error para el chain. Si alguna tarea falla, cae aquí.
     Marca el CampaignDraft como FAILED con el mensaje real (antes no se
-    persistía nada; el frontend no tenía forma de enterarse del motivo).
+    persistía nada; el frontend no tenía forma de enterarse del motivo) y
+    compensa la Saga borrando la campaña ya creada en Meta (`_rollback_campaign`).
     """
     logger.error(f"Saga Failed for draft_id {draft_id}: {exc}")
 
     async def _impl():
         async with async_session() as db:
             await _merge_draft_result(db, draft_id, status="FAILED", error_message=str(exc))
+
+            # Compensación: si el paso 2 ya creó la campaña en Meta y un paso
+            # posterior falló, borrarla para no dejarla huérfana en la cuenta.
+            await _rollback_campaign(db, draft_id)
 
             # A-1: si la Saga venía de una AIAction, también cerrarla como FAILED
             # (antes la acción se quedaba EXECUTING para siempre).

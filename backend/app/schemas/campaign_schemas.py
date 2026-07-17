@@ -10,6 +10,20 @@ class CampaignRiskPreviewRequest(BaseModel):
     copy_text: str = ""
 
 
+class CampaignPreflightRequest(BaseModel):
+    """Valida contra Meta (`validate_only`) los payloads que enviaría la Saga,
+    sin crear nada. Mismos campos que la creación, salvo los que solo importan
+    al ejecutar de verdad."""
+    ad_account_id: str
+    page_id: str
+    product_name: str
+    budget: float = Field(..., gt=0)
+    days: int = Field(default=7, gt=0)
+    copy_text: str = ""
+    whatsapp_number: Optional[str] = None
+    image_hash: Optional[str] = None
+
+
 class CampaignCreateRequest(BaseModel):
     ad_account_id: str
     page_id: str
