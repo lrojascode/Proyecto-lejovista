@@ -91,6 +91,29 @@ class MetaPageResponse(BaseModel):
 class MetaPageWhatsAppUpdate(BaseModel):
     whatsapp_number: str = Field(..., description="Número de WhatsApp sin + ni espacios")
 
+
+# --- Catálogo de números de WhatsApp de la organización (F1) ---
+
+class WhatsAppNumberResponse(BaseModel):
+    id: str
+    display_number: str
+    # META = descubierto en Meta (lo reescribe el sync, no editable);
+    # MANUAL = cargado por el usuario.
+    source: str
+    verified_name: Optional[str] = None
+    status: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class WhatsAppNumberCreate(BaseModel):
+    display_number: str = Field(..., min_length=6, max_length=20,
+                                description="Número de WhatsApp sin + ni espacios")
+
+
+class WhatsAppNumberUpdate(BaseModel):
+    display_number: str = Field(..., min_length=6, max_length=20)
+
 # --- CAMPAIGN SCHEMAS ---
 class CampaignSnapshotResponse(BaseModel):
     id: str

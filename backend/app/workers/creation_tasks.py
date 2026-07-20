@@ -189,6 +189,26 @@ def task_upload_image(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 return context
 
+            # Video subido a la app (F7): se sube a /advideos, se espera a que
+            # Meta lo procese y se toma la miniatura que genera. Devuelve las
+            # dos cosas porque `video_data` exige `image_url` sí o sí.
+            if context.get("video_path"):
+                limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+                repo = MetaAssetRepository(limiter)
+                video_id, thumbnail_url = await repo.get_or_upload_video(
+                    ad_account_external_id=acc.external_account_id,
+                    access_token=acc.get_access_token(),
+                    video_path=context["video_path"],
+                    thumbnail_url=context.get("thumbnail_url"),
+                )
+                context["video_id"] = video_id
+                context["thumbnail_url"] = thumbnail_url
+                await _merge_draft_result(
+                    db, context["draft_id"],
+                    video_id=video_id, thumbnail_url=thumbnail_url,
+                )
+                return context
+
             image_hash = context.get("image_hash")
             if not image_hash:
                 limiter = MetaAPIRateLimiter(ad_account_id=acc.id)

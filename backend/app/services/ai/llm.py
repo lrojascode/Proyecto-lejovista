@@ -88,6 +88,82 @@ _PROMPT_INJECTION_GUARD = (
 )
 
 
+# La imagen se manda al modelo reescalada: una foto de celular (3-6 MB) en
+# base64 crece ~33% y se cobra por tokens de imagen sin aportar detalle útil
+# para juzgar un anuncio. 1024px de lado mayor es de sobra.
+_VISION_MAX_SIDE = 1024
+_VISION_JPEG_QUALITY = 85
+
+
+def _image_data_uri(image_path: str) -> Optional[str]:
+    """Lee una imagen de MEDIA_ROOT y la devuelve como data URI lista para el
+    campo `image_url` del formato multimodal OpenAI-compatible.
+
+    Devuelve None (y lo registra) ante cualquier problema: que no se pueda leer
+    la foto no debe tumbar la generación de copy, solo degradarla a texto.
+    """
+    import base64
+    import io
+    import os
+
+    from PIL import Image
+
+    try:
+        full_path = os.path.realpath(os.path.join(settings.MEDIA_ROOT, image_path))
+        media_root = os.path.realpath(settings.MEDIA_ROOT)
+        # Mismo cerrojo que MetaAssetRepository: `image_path` viene del cliente.
+        if not full_path.startswith(media_root + os.sep):
+            logger.warning("Ruta de imagen fuera de MEDIA_ROOT, se ignora: %s", image_path)
+            return None
+
+        with Image.open(full_path) as img:
+            img = img.convert("RGB")
+            img.thumbnail((_VISION_MAX_SIDE, _VISION_MAX_SIDE))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=_VISION_JPEG_QUALITY)
+
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        logger.exception("No se pudo preparar la imagen %s para el modelo", image_path)
+        return None
+
+
+def _summarize_diagnostics(diagnostics: Dict[str, Any]) -> str:
+    """Resume el análisis del `CampaignSuggester` (fortalezas, debilidades,
+    fallos pasados, track record) para el prompt de copy.
+
+    Es el mismo diagnóstico que ya se le muestra al usuario antes de crear; lo
+    que cambia es que ahora el redactor también lo ve, en vez de escribir a
+    ciegas sobre una cuenta cuyos errores ya están documentados.
+    """
+    if not diagnostics:
+        return ""
+
+    def _lines(key: str) -> list:
+        return [str(x) for x in (diagnostics.get(key) or []) if x]
+
+    blocks = []
+    for label, key in (("Lo que funciona", "strengths"),
+                       ("Lo que no funciona", "weaknesses"),
+                       ("Fallos ya observados (no repetir el enfoque)", "past_failures")):
+        items = _lines(key)
+        if items:
+            blocks.append(f"{label}:\n" + "\n".join(f"- {_delimit_untrusted(i)}" for i in items))
+
+    track = diagnostics.get("track_record")
+    if track:
+        blocks.append(f"Historial de la IA en esta cuenta: {_delimit_untrusted(str(track))}")
+
+    if not blocks:
+        return ""
+    return (
+        "\nDIAGNÓSTICO REAL DE ESTA CUENTA (úsalo para elegir el ángulo del copy; "
+        "NO menciones cifras de rendimiento en el texto del anuncio):\n"
+        + "\n\n".join(blocks) + "\n"
+    )
+
+
 def _filter_insufficient_history(insights_summary: str) -> str:
     """C-3: el aviso informativo de "histórico insuficiente" (Capa 2) es ruido
     para el diagnóstico del LLM, no una alerta accionable — se filtra antes
@@ -260,6 +336,8 @@ class OpenRouterClient:
         winning_context: Optional[Dict[str, Any]] = None,
         winning_ad_copy: Optional[Dict[str, Any]] = None,
         usage_ctx: Optional[UsageContext] = None,
+        image_path: Optional[str] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Fase 3B del plan de creación de campañas: genera el copy de una campaña
@@ -277,6 +355,13 @@ class OpenRouterClient:
         capturados por el sync — antes solo se guardaba la imagen) es
         inspiración más fuerte que `winning_context`: el LLM puede reutilizar
         frases o ganchos que ya demostraron funcionar, no solo el tono.
+
+        `image_path` (F6): la foto que el usuario subió para este anuncio. Se
+        manda al modelo como imagen (visión) para que el copy hable de lo que
+        se ve — antes el redactor escribía a ciegas y podía describir algo que
+        la imagen contradecía. `diagnostics` es el análisis del
+        `CampaignSuggester` (fortalezas, debilidades, fallos pasados), que ya
+        se le mostraba al usuario pero no al redactor.
         """
         if settings.MOCK_SERVICES or not self.api_key:
             return self._generate_mock_copy(product_name, winning_context)
@@ -331,13 +416,33 @@ class OpenRouterClient:
         )
 
         industry_line = f"Rubro del negocio: {org.industry}.\n" if org.industry else ""
+        image_data_uri = _image_data_uri(image_path) if image_path else None
+        image_line = (
+            "\nLa imagen adjunta es la FOTO REAL que acompañará a este anuncio. Descríbela "
+            "para ti mismo antes de escribir y asegúrate de que el copy sea coherente con "
+            "lo que se ve (producto, color, formato, contexto). No menciones que se te dio "
+            "una imagen ni la describas literalmente en el anuncio.\n"
+            if image_data_uri else ""
+        )
         user_prompt = (
             f"Producto o servicio: {_delimit_untrusted(product_name)}\n"
             f"{industry_line}"
             f"{winning_summary}\n"
             f"{winning_copy_block}\n"
+            f"{_summarize_diagnostics(diagnostics or {})}"
+            f"{image_line}"
             "Genera el copy para una campaña nueva de mensajes de WhatsApp de esta marca."
         )
+
+        # Formato multimodal OpenAI-compatible: con imagen, `content` deja de
+        # ser un string y pasa a ser una lista de partes. Sin imagen se manda
+        # el string de siempre — el payload queda idéntico al anterior.
+        user_content: Any = user_prompt
+        if image_data_uri:
+            user_content = [
+                {"type": "text", "text": user_prompt},
+                {"type": "image_url", "image_url": {"url": image_data_uri}},
+            ]
 
         model = org.ai_model or settings.DEFAULT_AI_MODEL
         if self.is_gemini_direct and model.startswith("google/"):
@@ -348,7 +453,7 @@ class OpenRouterClient:
             "temperature": 0.7,  # más creatividad que el brief (aquí sí redacta, no reporta cifras)
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": user_content},
             ],
             # 3.4(d): la mayoría de proveedores OpenAI-compatibles (openai,
             # openrouter, Gemini vía su endpoint OpenAI-compat) soportan JSON

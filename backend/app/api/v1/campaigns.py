@@ -49,7 +49,7 @@ from app.workers.creation_tasks import (
 from app.schemas.response_schemas import (
     ApiCallHistoryEntry, SuggestionResponse, ImageUploadResponse, RiskPreviewResponse,
     CampaignCreateAcceptedResponse, LearningLogResponse, MessageResponse,
-    CampaignPreflightResponse,
+    CampaignPreflightResponse, VideoUploadResponse,
 )
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -210,6 +210,7 @@ async def trigger_manual_sync(
 async def get_campaign_suggestion(
     ad_account_id: str,
     product_name: str = "Producto",
+    image_path: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -219,6 +220,11 @@ async def get_campaign_suggestion(
     copy generado por el LLM (3B, `OpenRouterClient.suggest_campaign_copy`) para
     pre-rellenar el formulario de "Crear campaña" con datos reales de la cuenta,
     en vez de que el cliente empiece desde cero.
+
+    `image_path` (F6, opcional): la foto ya subida vía POST /upload-image. El
+    formulario vuelve a llamar aquí con ella para que el copy se regenere
+    viendo la imagen real. Se valida que pertenezca a la organización: es una
+    ruta que llega del cliente y termina leyendo del disco.
     """
     q_acc = select(AdAccount).where(
         AdAccount.id == ad_account_id,
@@ -232,11 +238,18 @@ async def get_campaign_suggestion(
 
     org = await db.get(Organization, current_user.organization_id)
 
+    # `image_path` es `{organization_id}/{uuid}.ext` (lo devuelve /upload-image).
+    # Sin este chequeo, un tenant podría pedir el copy con la foto de otro.
+    if image_path and not image_path.startswith(f"{current_user.organization_id}/"):
+        raise HTTPException(status_code=400, detail="La imagen no pertenece a esta organización.")
+
     suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=product_name)
     copy = await OpenRouterClient().suggest_campaign_copy(
         org, ad_account, product_name=product_name,
         winning_context=suggestion.get("winning_campaign"),
         winning_ad_copy=suggestion.get("winning_ad_copy"),
+        image_path=image_path,
+        diagnostics=suggestion.get("analysis"),
         usage_ctx=UsageContext(
             feature="campaign_copy",
             organization_id=current_user.organization_id,
@@ -336,6 +349,50 @@ async def upload_campaign_image(
         f.write(contents)
 
     return {"image_path": f"{current_user.organization_id}/{filename}"}
+
+
+_ALLOWED_VIDEO_TYPES = {
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+}
+# Subida simple (no chunked). Por encima de esto habría que implementar el
+# protocolo por partes de Meta (upload_phase start/transfer/finish).
+_MAX_VIDEO_BYTES = 100 * 1024 * 1024
+
+
+@router.post("/upload-video", response_model=VideoUploadResponse)
+async def upload_campaign_video(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role("OPERATOR")),
+):
+    """Sube un video para usar en la creación de campaña (playbook §5 Paso 4:
+    "el video suele rendir mejor que la imagen estática").
+
+    Gemelo de `/upload-image`: guarda en el disco compartido y devuelve la ruta;
+    la Saga lo lee del mismo volumen y lo sube a `/{act}/advideos`. Antes había
+    que conseguir el `video_id` y la miniatura a mano fuera de la app, aunque
+    `CreativeBuilder` ya sabía armar el `video_data`.
+    """
+    ext = _ALLOWED_VIDEO_TYPES.get(file.content_type)
+    if not ext:
+        raise HTTPException(status_code=400, detail="Formato no soportado. Usa MP4 o MOV.")
+
+    contents = await file.read()
+    if len(contents) > _MAX_VIDEO_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"El video supera el límite de {_MAX_VIDEO_BYTES // 1024 // 1024}MB.",
+        )
+    if not contents:
+        raise HTTPException(status_code=400, detail="El archivo está vacío.")
+
+    org_dir = os.path.join(settings.MEDIA_ROOT, current_user.organization_id)
+    os.makedirs(org_dir, exist_ok=True)
+    filename = f"{uuid.uuid4()}{ext}"
+    with open(os.path.join(org_dir, filename), "wb") as f:
+        f.write(contents)
+
+    return {"video_path": f"{current_user.organization_id}/{filename}"}
 
 
 @router.post("/preflight", response_model=CampaignPreflightResponse)
@@ -550,6 +607,7 @@ async def create_campaign(
         "image_hash": request.image_hash,
         "image_path": request.image_path,
         "video_id": request.video_id,
+        "video_path": request.video_path,
         "thumbnail_url": request.thumbnail_url,
         "copy_text": request.copy_text,
         # Título y descripción del anuncio (link_data.name / link_data.description).

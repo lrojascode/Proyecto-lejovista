@@ -172,29 +172,46 @@ class MetaAPIRateLimiter:
         file_bytes: bytes,
         filename: str,
         access_token: str = "",
+        timeout: float = 30.0,
+        video_host: bool = False,
+        field_name: Optional[str] = None,
+        mock_response: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """POST multipart/form-data (subida de imágenes a `/adimages`).
+        """POST multipart/form-data (subida de imágenes a `/adimages` y de
+        videos a `/advideos`).
 
         Es una escritura: gateada por `SIMULATE_META_WRITES` igual que `call_api`
         con `method="POST"`, con el mismo logging/delay, pero usando `files=`
         en vez de `data=` porque Meta espera el archivo como parte multipart
         (un JSON o form-urlencoded normal no sirve para subir binarios).
+
+        Parámetros para video (F7):
+        - `timeout`: 30s alcanza para una foto, no para 100MB de mp4.
+        - `video_host`: Meta sirve la subida de video por `graph-video.facebook.com`.
+        - `field_name`: `/adimages` espera el archivo bajo el nombre del fichero;
+          `/advideos` lo espera bajo `source`.
+        - `mock_response`: forma de respuesta simulada específica del endpoint
+          (la de `/adimages` no sirve para `/advideos`).
         """
         await self._apply_delay(True)
 
         if settings.simulate_meta_writes_for(self.ad_account_id):
             logger.info(f"[MOCK] API CALL (multipart) - POST - {endpoint} - file={filename}")
             await self._log_api_call("POST", endpoint, data, 200, "MOCK RESPONSE OK")
+            if mock_response is not None:
+                return {"mock": True, **mock_response}
             return {"mock": True, "images": {filename: {"hash": f"mock_hash_{filename}"}}}
 
-        url = f"https://graph.facebook.com/{settings.META_API_VERSION}/{endpoint}"
+        host = "graph-video.facebook.com" if video_host else "graph.facebook.com"
+        url = f"https://{host}/{settings.META_API_VERSION}/{endpoint}"
         all_data = {**data}
         if access_token:
             all_data["access_token"] = access_token
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
-                files = {filename: (filename, file_bytes, "application/octet-stream")}
+                part = field_name or filename
+                files = {part: (filename, file_bytes, "application/octet-stream")}
                 response = await client.post(url, data=all_data, files=files, headers=self.headers)
                 status_code = response.status_code
                 resp_data = response.json()

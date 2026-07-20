@@ -52,6 +52,9 @@ class CampaignCreateRequest(BaseModel):
     # estática"). Si se provee video_id, se ignoran image_url/image_hash.
     video_id: Optional[str] = Field(default=None, description="ID del video ya subido a Meta (/advideos)")
     thumbnail_url: Optional[str] = Field(default=None, description="URL de la miniatura, requerida junto a video_id")
+    # Ruta devuelta por POST /campaigns/upload-video: la Saga lo sube a Meta,
+    # espera el procesado y resuelve la miniatura sola (no hace falta darla).
+    video_path: Optional[str] = Field(default=None, description="Ruta del video subido a la app")
     copy_text: str = Field(..., description="Texto completo del anuncio, incluyendo hook, bullets y CTA")
     # 3.4: variante de headline/description elegida por el usuario en la UI
     # (de las 2 que genera el copy v2). Opcionales — copy_text sigue siendo

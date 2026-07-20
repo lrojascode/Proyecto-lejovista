@@ -34,3 +34,4 @@ class Organization(Base):
     sync_jobs = relationship("SyncJob", back_populates="organization", cascade="all, delete-orphan")
     meta_credentials = relationship("MetaCredential", back_populates="organization", cascade="all, delete-orphan")
     meta_pages = relationship("MetaPage", back_populates="organization", cascade="all, delete-orphan")
+    whatsapp_numbers = relationship("WhatsAppNumber", back_populates="organization", cascade="all, delete-orphan")

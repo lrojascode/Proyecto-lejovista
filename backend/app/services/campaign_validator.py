@@ -44,12 +44,17 @@ class CampaignValidator:
         # `image_path` es una imagen local ya subida a nuestro disco (vía
         # POST /campaigns/upload-image): la Saga la sube a Meta en task_upload_image
         # para derivar el image_hash, así que es una forma válida de proveer imagen.
+        # `video_path` es un video local subido vía POST /campaigns/upload-video:
+        # la Saga lo sube a Meta y resuelve la miniatura sola.
         if (not request.image_url and not request.image_hash
-                and not request.video_id and not request.image_path):
+                and not request.video_id and not request.image_path
+                and not request.video_path):
             raise HTTPException(
                 status_code=400,
-                detail="Debes subir una imagen, o proveer image_url, image_hash o video_id.",
+                detail="Debes subir una imagen o un video, o proveer image_url, image_hash o video_id.",
             )
+        # Solo se exige miniatura con un video_id YA subido a Meta: para
+        # `video_path` la resuelve la Saga (`/{video_id}/thumbnails`).
         if request.video_id and not request.thumbnail_url:
             raise HTTPException(status_code=400, detail="video_id requires thumbnail_url.")
 

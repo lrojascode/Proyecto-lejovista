@@ -894,16 +894,20 @@ class MetaAdsSyncService:
             logger.warning("Descubrimiento de páginas: /me/businesses no disponible (cuenta %s): %s",
                            ad_account.id, biz_res)
         else:
+            business_ids = []
             for biz in biz_res.get("data", []):
                 biz_id = biz.get("id")
                 if not biz_id:
                     continue
+                business_ids.append(biz_id)
                 for edge in ("owned_pages", "client_pages"):
                     _collect(await limiter.call_api(
                         f"{biz_id}/{edge}",
                         {"fields": "id,name,connected_instagram_account", "limit": "100"},
                         access_token=token,
                     ), f"{biz_id}/{edge}")
+
+            await self._sync_whatsapp_numbers(ad_account, token, limiter, business_ids)
 
         _collect(await limiter.call_api(
             f"{ad_account.external_account_id}/promote_pages",
@@ -939,6 +943,74 @@ class MetaAdsSyncService:
                 # cargado a mano vía PATCH /my/pages/{id}/whatsapp — antes el
                 # sync nocturno lo pisaba con None.
                 row.whatsapp_number = wa_res.get("whatsapp_number")
+
+    async def _sync_whatsapp_numbers(self, ad_account, token, limiter, business_ids):
+        """Descubre los números de WhatsApp verificados del negocio (F1).
+
+        Ruta: `{biz}/owned_whatsapp_business_accounts` + `client_whatsapp_...`
+        → `{waba}/phone_numbers`.
+
+        Necesita el permiso `whatsapp_business_management`, que la MAYORÍA de
+        los tokens conectados no trae — por eso todo aquí es best-effort y la
+        carga manual sigue siendo el camino principal, no un plan B. Un fallo
+        aquí no debe tumbar el descubrimiento de páginas (misma lección que
+        `customaudiences`/`approximate_count`, HANDOFF 3.8).
+        """
+        from app.models.whatsapp_number import WhatsAppNumber
+
+        waba_ids = []
+        for biz_id in business_ids:
+            for edge in ("owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"):
+                res = await limiter.call_api(
+                    f"{biz_id}/{edge}", {"fields": "id,name", "limit": "50"}, access_token=token,
+                )
+                if self._has_error(res):
+                    logger.info(
+                        "Números de WhatsApp: '%s' no disponible para el negocio %s "
+                        "(¿falta el permiso whatsapp_business_management?): %s",
+                        edge, biz_id, res,
+                    )
+                    continue
+                waba_ids.extend(w["id"] for w in res.get("data", []) if w.get("id"))
+
+        for waba_id in dict.fromkeys(waba_ids):  # dedup preservando orden
+            res = await limiter.call_api(
+                f"{waba_id}/phone_numbers",
+                {"fields": "id,display_phone_number,verified_name", "limit": "50"},
+                access_token=token,
+            )
+            if self._has_error(res):
+                logger.info("Números de WhatsApp: no se pudo leer phone_numbers de %s: %s",
+                            waba_id, res)
+                continue
+
+            for phone in res.get("data", []):
+                number = (phone.get("display_phone_number") or "").strip()
+                if not number:
+                    continue
+                ext_id = phone.get("id")
+
+                # Se busca por external_id (clave estable de Meta) y, si no, por
+                # el número: si el usuario ya lo había cargado a mano, se
+                # "promueve" a META en vez de duplicarlo en la lista.
+                row = (await self.db.execute(select(WhatsAppNumber).where(
+                    WhatsAppNumber.organization_id == ad_account.organization_id,
+                    WhatsAppNumber.external_id == ext_id,
+                ))).scalar_one_or_none() if ext_id else None
+                if row is None:
+                    row = (await self.db.execute(select(WhatsAppNumber).where(
+                        WhatsAppNumber.organization_id == ad_account.organization_id,
+                        WhatsAppNumber.display_number == number,
+                    ))).scalar_one_or_none()
+                if row is None:
+                    row = WhatsAppNumber(organization_id=ad_account.organization_id)
+                    self.db.add(row)
+
+                row.display_number = number
+                row.external_id = ext_id
+                row.verified_name = phone.get("verified_name")
+                row.source = "META"
+                row.status = "ACTIVE"
 
     # Cada dimensión de breakdown es una llamada aparte: la Graph API no permite
     # combinar publisher_platform+platform_position con age/gender/region en una

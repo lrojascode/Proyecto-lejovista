@@ -10,6 +10,7 @@ from app.models.api_call_log import APICallLog
 from app.models.organization_user import OrganizationUser
 from app.models.meta_credential import MetaCredential
 from app.models.meta_page import MetaPage
+from app.models.whatsapp_number import WhatsAppNumber
 from app.models.campaign_draft import CampaignDraft
 from app.models.adset_snapshot import AdsetSnapshot
 from app.models.ad_snapshot import AdSnapshot

@@ -353,6 +353,10 @@ class ImageUploadResponse(BaseModel):
     image_path: str
 
 
+class VideoUploadResponse(BaseModel):
+    video_path: str
+
+
 class RiskPreviewResponse(BaseModel):
     risk_level: str
     risk_reasons: List[str]

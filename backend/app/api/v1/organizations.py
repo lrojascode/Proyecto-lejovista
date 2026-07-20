@@ -6,9 +6,11 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
+from app.models.whatsapp_number import WhatsAppNumber
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse,
     AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
+    WhatsAppNumberResponse, WhatsAppNumberCreate, WhatsAppNumberUpdate,
 )
 from app.utils.security import get_current_user, require_role
 from app.utils.throttle import enforce_cooldown
@@ -236,9 +238,136 @@ async def set_page_whatsapp_number(
 
     page.whatsapp_number = payload.whatsapp_number
     db.add(page)
+
+    # Que el número quede también en el catálogo de la organización: si se cargó
+    # para una página, sirve para cualquier campaña. Sin esto habría que
+    # escribirlo dos veces.
+    await _ensure_number_in_catalog(db, current_user.organization_id, payload.whatsapp_number)
+
     await db.commit()
     await db.refresh(page)
     return page
+
+
+# --- Catálogo de números de WhatsApp (F1) ---
+#
+# `MetaPage.whatsapp_number` sigue siendo el número POR DEFECTO de cada página;
+# esta lista es de la que se elige al crear una campaña, y admite varios.
+
+async def _ensure_number_in_catalog(db: AsyncSession, org_id: str, number: str) -> None:
+    """Agrega el número al catálogo si no estaba (idempotente)."""
+    number = (number or "").strip()
+    if not number:
+        return
+    exists = (await db.execute(select(WhatsAppNumber).where(
+        WhatsAppNumber.organization_id == org_id,
+        WhatsAppNumber.display_number == number,
+    ))).scalar_one_or_none()
+    if not exists:
+        db.add(WhatsAppNumber(
+            organization_id=org_id, display_number=number, source="MANUAL",
+        ))
+
+
+@router.get("/my/whatsapp-numbers", response_model=List[WhatsAppNumberResponse])
+async def list_whatsapp_numbers(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Números disponibles para elegir al crear una campaña."""
+    q = select(WhatsAppNumber).where(
+        WhatsAppNumber.organization_id == current_user.organization_id,
+        WhatsAppNumber.status == "ACTIVE",
+    ).order_by(WhatsAppNumber.source, WhatsAppNumber.display_number)
+    return (await db.execute(q)).scalars().all()
+
+
+@router.post("/my/whatsapp-numbers", response_model=WhatsAppNumberResponse,
+             status_code=status.HTTP_201_CREATED)
+async def add_whatsapp_number(
+    payload: WhatsAppNumberCreate,
+    current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Alta manual de un número.
+
+    Es el camino principal, no un parche: el descubrimiento automático necesita
+    el permiso `whatsapp_business_management`, que la mayoría de los tokens
+    conectados no trae.
+    """
+    number = payload.display_number.strip()
+    existing = (await db.execute(select(WhatsAppNumber).where(
+        WhatsAppNumber.organization_id == current_user.organization_id,
+        WhatsAppNumber.display_number == number,
+    ))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Ese número ya está en la lista.")
+
+    row = WhatsAppNumber(
+        organization_id=current_user.organization_id,
+        display_number=number, source="MANUAL",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@router.patch("/my/whatsapp-numbers/{number_id}", response_model=WhatsAppNumberResponse)
+async def update_whatsapp_number(
+    number_id: str,
+    payload: WhatsAppNumberUpdate,
+    current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Corrige un número ya guardado — que era justamente lo que no se podía
+    hacer: la UI solo ofrecía el campo mientras estuviera vacío."""
+    row = await _get_own_number(db, number_id, current_user.organization_id)
+    if row.source == "META":
+        raise HTTPException(
+            status_code=400,
+            detail="Este número viene de Meta y lo reescribe la sincronización. "
+                   "Agrega uno manual si necesitas otro distinto.",
+        )
+
+    new_number = payload.display_number.strip()
+    clash = (await db.execute(select(WhatsAppNumber).where(
+        WhatsAppNumber.organization_id == current_user.organization_id,
+        WhatsAppNumber.display_number == new_number,
+        WhatsAppNumber.id != number_id,
+    ))).scalar_one_or_none()
+    if clash:
+        raise HTTPException(status_code=409, detail="Ese número ya está en la lista.")
+
+    row.display_number = new_number
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@router.delete("/my/whatsapp-numbers/{number_id}", response_model=MessageResponse)
+async def delete_whatsapp_number(
+    number_id: str,
+    current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await _get_own_number(db, number_id, current_user.organization_id)
+    if row.source == "META":
+        raise HTTPException(
+            status_code=400,
+            detail="Este número viene de Meta: la sincronización volvería a agregarlo.",
+        )
+    await db.delete(row)
+    await db.commit()
+    return {"message": "Número eliminado."}
+
+
+async def _get_own_number(db: AsyncSession, number_id: str, org_id: str) -> WhatsAppNumber:
+    row = await db.get(WhatsAppNumber, number_id)
+    if not row or row.organization_id != org_id:
+        raise HTTPException(status_code=404, detail="Número no encontrado para esta organización.")
+    return row
 
 @router.post("/my/ad-accounts", response_model=AdAccountResponse)
 async def connect_ad_account(
