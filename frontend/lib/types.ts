@@ -20,6 +20,7 @@ export type TokenResponse = Schemas["TokenResponse"];
 export type Organization = Schemas["OrganizationResponse"];
 export type AdAccount = Schemas["AdAccountResponse"];
 export type MetaPage = Schemas["MetaPageResponse"];
+export type WhatsAppNumber = Schemas["WhatsAppNumberResponse"];
 export type BusinessPolicies = Schemas["BusinessPoliciesResponse"];
 export type AiModelsResponse = Schemas["AiModelsResponse"];
 

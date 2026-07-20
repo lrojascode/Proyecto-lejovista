@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
-import type { Organization, AdAccount, MetaPage } from "@/lib/types";
+import type { Organization, AdAccount, MetaPage, WhatsAppNumber } from "@/lib/types";
 
 export default function Settings() {
   const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
@@ -38,6 +38,12 @@ export default function Settings() {
   const [waSavingId, setWaSavingId] = useState<string | null>(null);
   const [defaultSavingId, setDefaultSavingId] = useState<string | null>(null);
 
+  // Catálogo de números de WhatsApp de la organización (F1)
+  const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
+  const [newNumber, setNewNumber] = useState("");
+  const [numberEdits, setNumberEdits] = useState<Record<string, string>>({});
+  const [numberSavingId, setNumberSavingId] = useState<string | null>(null);
+
   const fetchData = async () => {
     try {
       const orgData = await api.getOrg();
@@ -49,6 +55,8 @@ export default function Settings() {
 
       const pagesData = await api.getMyPages();
       setPages(pagesData);
+
+      setNumbers(await api.getWhatsAppNumbers());
 
       const policiesData = await api.getBusinessPolicies();
       setIndustries(policiesData.available_industries || []);
@@ -144,10 +152,61 @@ export default function Settings() {
       setWaInputs((prev) => ({ ...prev, [pageId]: "" }));
       const pagesData = await api.getMyPages();
       setPages(pagesData);
+      // El backend lo agrega al catálogo: refrescar para verlo ahí también.
+      setNumbers(await api.getWhatsAppNumbers());
     } catch (err: any) {
       setPagesMsg(`Error: ${err.message}`);
     } finally {
       setWaSavingId(null);
+    }
+  };
+
+  const handleAddNumber = async () => {
+    const value = newNumber.trim();
+    if (!value) return;
+    setPagesMsg("");
+    setNumberSavingId("new");
+    try {
+      await api.addWhatsAppNumber(value);
+      setNewNumber("");
+      setNumbers(await api.getWhatsAppNumbers());
+    } catch (err: any) {
+      setPagesMsg(`Error: ${err.message}`);
+    } finally {
+      setNumberSavingId(null);
+    }
+  };
+
+  const handleUpdateNumber = async (id: string) => {
+    const value = (numberEdits[id] || "").trim();
+    if (!value) return;
+    setPagesMsg("");
+    setNumberSavingId(id);
+    try {
+      await api.updateWhatsAppNumber(id, value);
+      setNumberEdits((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setNumbers(await api.getWhatsAppNumbers());
+    } catch (err: any) {
+      setPagesMsg(`Error: ${err.message}`);
+    } finally {
+      setNumberSavingId(null);
+    }
+  };
+
+  const handleDeleteNumber = async (id: string) => {
+    setPagesMsg("");
+    setNumberSavingId(id);
+    try {
+      await api.deleteWhatsAppNumber(id);
+      setNumbers(await api.getWhatsAppNumbers());
+    } catch (err: any) {
+      setPagesMsg(`Error: ${err.message}`);
+    } finally {
+      setNumberSavingId(null);
     }
   };
 
@@ -438,35 +497,154 @@ export default function Settings() {
                         ID: <code>{p.external_page_id}</code>
                       </p>
                     </div>
+                    {/* El campo se muestra SIEMPRE, tenga número o no: antes
+                        solo aparecía cuando estaba vacío, así que un número mal
+                        tipeado quedaba congelado sin forma de corregirlo. */}
                     <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
                       {p.whatsapp_number ? (
                         <span className="badge badge-success">{badgeIcon("badge-success")} WA {p.whatsapp_number}</span>
                       ) : (
-                        <>
-                          <span className="badge badge-warning">{badgeIcon("badge-warning")} Sin WhatsApp</span>
-                          <input
-                            type="text"
-                            className="form-input"
-                            style={{ width: "160px", padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
-                            placeholder="51999888777"
-                            value={waInputs[p.id] || ""}
-                            onChange={(e) => setWaInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
-                          />
-                          <button
-                            type="button"
-                            className="btn-secondary btn-sm"
-                            disabled={waSavingId === p.id || !(waInputs[p.id] || "").trim()}
-                            onClick={() => handleSavePageWhatsApp(p.id)}
-                          >
-                            {waSavingId === p.id ? "Guardando..." : "Guardar"}
-                          </button>
-                        </>
+                        <span className="badge badge-warning">{badgeIcon("badge-warning")} Sin WhatsApp</span>
                       )}
+                      <input
+                        type="text"
+                        className="form-input"
+                        style={{ width: "160px", padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
+                        placeholder={p.whatsapp_number || "51999888777"}
+                        aria-label={`Número de WhatsApp de ${p.name}`}
+                        value={waInputs[p.id] ?? ""}
+                        onChange={(e) => setWaInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        disabled={waSavingId === p.id || !(waInputs[p.id] || "").trim()}
+                        onClick={() => handleSavePageWhatsApp(p.id)}
+                      >
+                        {waSavingId === p.id ? "Guardando..." : p.whatsapp_number ? "Cambiar" : "Guardar"}
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
             )}
+
+            {/* Catálogo de números (F1): varios por organización, editables.
+                Es la lista que ofrece el formulario de creación. */}
+            <div style={{ marginTop: "1.5rem" }}>
+              <h4 style={{ fontSize: "14px", fontWeight: 510, marginBottom: "0.5rem" }}>
+                Números de WhatsApp disponibles
+              </h4>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
+                Los números entre los que se puede elegir al crear una campaña. Los marcados
+                como <strong>Meta</strong> se descubren solos y los actualiza la sincronización;
+                los manuales se pueden editar y borrar.
+              </p>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginBottom: "0.85rem" }}>
+                {numbers.map((n) => {
+                  const isMeta = n.source === "META";
+                  const editing = numberEdits[n.id] !== undefined;
+                  return (
+                    <div key={n.id} className="card-subtle" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.6rem" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                        {editing ? (
+                          <input
+                            type="text"
+                            className="form-input"
+                            style={{ width: "170px", padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
+                            aria-label={`Editar número ${n.display_number}`}
+                            value={numberEdits[n.id]}
+                            onChange={(e) => setNumberEdits((prev) => ({ ...prev, [n.id]: e.target.value }))}
+                          />
+                        ) : (
+                          <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>
+                            {n.display_number}
+                          </strong>
+                        )}
+                        <span className={isMeta ? "badge badge-success" : "badge"}>
+                          {isMeta ? "Meta" : "Manual"}
+                        </span>
+                        {n.verified_name && (
+                          <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{n.verified_name}</span>
+                        )}
+                      </div>
+
+                      {!isMeta && (
+                        <div style={{ display: "flex", gap: "0.4rem" }}>
+                          {editing ? (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                disabled={numberSavingId === n.id || !numberEdits[n.id].trim()}
+                                onClick={() => handleUpdateNumber(n.id)}
+                              >
+                                {numberSavingId === n.id ? "Guardando..." : "Guardar"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                onClick={() => setNumberEdits((prev) => {
+                                  const next = { ...prev };
+                                  delete next[n.id];
+                                  return next;
+                                })}
+                              >
+                                Cancelar
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                onClick={() => setNumberEdits((prev) => ({ ...prev, [n.id]: n.display_number }))}
+                              >
+                                Editar
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                disabled={numberSavingId === n.id}
+                                onClick={() => handleDeleteNumber(n.id)}
+                              >
+                                Eliminar
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {numbers.length === 0 && (
+                  <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+                    Todavía no hay números. Agrega uno abajo para poder crear campañas.
+                  </p>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  style={{ width: "200px", padding: "0.4rem 0.6rem", fontSize: "0.9rem" }}
+                  placeholder="51999888777"
+                  aria-label="Nuevo número de WhatsApp"
+                  value={newNumber}
+                  onChange={(e) => setNewNumber(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  disabled={numberSavingId === "new" || !newNumber.trim()}
+                  onClick={handleAddNumber}
+                >
+                  {numberSavingId === "new" ? "Agregando..." : "Agregar número"}
+                </button>
+              </div>
+            </div>
 
             {pages.length > 0 && (
               <div style={{ marginTop: "1.25rem" }}>

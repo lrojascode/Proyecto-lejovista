@@ -1,6 +1,6 @@
 import { getApiUrl, getTenantSlugFromHostname } from "./config";
 import type {
-  TokenResponse, User, Organization, AdAccount, MetaPage, BusinessPolicies, AiModelsResponse,
+  TokenResponse, User, Organization, AdAccount, MetaPage, WhatsAppNumber, BusinessPolicies, AiModelsResponse,
   CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
 } from "./types";
@@ -261,10 +261,12 @@ export const api = {
   refreshPages: () => apiRequest<{ message: string }>("/api/v1/organizations/my/pages/refresh", "POST"),
   setDefaultPage: (adAccountId: string, pageId: string | null) =>
     apiRequest<AdAccount>(`/api/v1/organizations/my/ad-accounts/${adAccountId}/default-page`, "PATCH", { page_id: pageId }),
-  getCampaignSuggestion: (adAccountId: string, productName: string) =>
+  // `imagePath` (F6): con la foto ya subida, el copy se regenera viéndola.
+  getCampaignSuggestion: (adAccountId: string, productName: string, imagePath?: string) =>
     apiRequest<Suggestion>(
       `/api/v1/campaigns/suggestion?ad_account_id=${encodeURIComponent(adAccountId)}` +
-      `&product_name=${encodeURIComponent(productName)}`,
+      `&product_name=${encodeURIComponent(productName)}` +
+      (imagePath ? `&image_path=${encodeURIComponent(imagePath)}` : ""),
       "GET"
     ),
   createCampaign: (data: any) => apiRequest("/api/v1/campaigns/", "POST", data),
@@ -273,6 +275,25 @@ export const api = {
     formData.append("file", file);
     return apiUploadRequest<{ image_path: string }>("/api/v1/campaigns/upload-image", formData);
   },
+  uploadCampaignVideo: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiUploadRequest<{ video_path: string }>("/api/v1/campaigns/upload-video", formData);
+  },
+
+  // --- NÚMEROS DE WHATSAPP (catálogo de la organización, F1) ---
+  getWhatsAppNumbers: () =>
+    apiRequest<WhatsAppNumber[]>("/api/v1/organizations/my/whatsapp-numbers", "GET"),
+  addWhatsAppNumber: (displayNumber: string) =>
+    apiRequest<WhatsAppNumber>("/api/v1/organizations/my/whatsapp-numbers", "POST", {
+      display_number: displayNumber,
+    }),
+  updateWhatsAppNumber: (id: string, displayNumber: string) =>
+    apiRequest<WhatsAppNumber>(`/api/v1/organizations/my/whatsapp-numbers/${id}`, "PATCH", {
+      display_number: displayNumber,
+    }),
+  deleteWhatsAppNumber: (id: string) =>
+    apiRequest<{ message: string }>(`/api/v1/organizations/my/whatsapp-numbers/${id}`, "DELETE"),
   getCampaignDraft: (draftId: string) => apiRequest<CampaignDraft>(`/api/v1/campaigns/drafts/${draftId}`, "GET"),
   previewCampaignRisk: (adAccountId: string, budget: number, copyText: string) =>
     apiRequest("/api/v1/campaigns/risk-preview", "POST", {

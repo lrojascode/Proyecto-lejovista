@@ -55,6 +55,9 @@ Sobre 14-30 días de historia por campaña (mínimo `min_history_days=7`):
 
 - **`analyze_campaigns`**: genera la narrativa del Master Brief (prompt `master-brief-v2`, `temperature=0.2`, contrato de 5 secciones: Resumen / Ganadoras / En alerta / Fallidas / Prioridades). System prompt con "regla inquebrantable" anti-alucinación.
 - **`suggest_campaign_copy`**: genera copy de campaña (prompt `campaign-copy-v2`, `temperature=0.7`, `response_format: json_object`, 2 variantes con límites de caracteres de Meta y evitando lenguaje farmacéutico).
+  - **Multimodal (F6)**: si se pasa `image_path`, la foto subida viaja al modelo como data URI (`content` pasa de string a lista de partes), reescalada a 1024px/JPEG — una foto de celular en base64 se cobra por tokens de imagen sin aportar detalle. Antes el redactor escribía a ciegas y podía describir algo que la imagen contradecía. Sin imagen el payload queda **idéntico** al anterior, y si la foto no se puede leer se degrada a texto en vez de fallar. `image_path` se valida contra `MEDIA_ROOT` y contra la organización: llega del cliente y termina leyendo del disco.
+  - **Diagnósticos (F6)**: recibe el `analysis` del `CampaignSuggester` (fortalezas, debilidades, `past_failures`, `track_record`) — el mismo que ya se le mostraba al usuario, pero no al redactor. Se interpola con `_delimit_untrusted` como el resto del contexto no confiable.
+  - La regla AI-1 no cambia: el LLM sigue redactando **solo texto**; las cifras las decide `CampaignSuggester`.
 - **Fallback local determinista**: si `MOCK_SERVICES`, sin key o error, usa plantillas locales que derivan cifras de datos reales y respetan el mismo contrato; se marca `used_fallback` (`C-4`).
 - **Proveedor** auto-seleccionado (OpenAI > Gemini > OpenRouter). Consumo registrado en `AITokenUsage` (`token_tracking.py`).
 

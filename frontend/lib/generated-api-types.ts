@@ -324,6 +324,56 @@ export interface paths {
         patch: operations["set_page_whatsapp_number_api_v1_organizations_my_pages__page_id__whatsapp_patch"];
         trace?: never;
     };
+    "/api/v1/organizations/my/whatsapp-numbers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Whatsapp Numbers
+         * @description Números disponibles para elegir al crear una campaña.
+         */
+        get: operations["list_whatsapp_numbers_api_v1_organizations_my_whatsapp_numbers_get"];
+        put?: never;
+        /**
+         * Add Whatsapp Number
+         * @description Alta manual de un número.
+         *
+         *     Es el camino principal, no un parche: el descubrimiento automático necesita
+         *     el permiso `whatsapp_business_management`, que la mayoría de los tokens
+         *     conectados no trae.
+         */
+        post: operations["add_whatsapp_number_api_v1_organizations_my_whatsapp_numbers_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/whatsapp-numbers/{number_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Whatsapp Number */
+        delete: operations["delete_whatsapp_number_api_v1_organizations_my_whatsapp_numbers__number_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Whatsapp Number
+         * @description Corrige un número ya guardado — que era justamente lo que no se podía
+         *     hacer: la UI solo ofrecía el campo mientras estuviera vacío.
+         */
+        patch: operations["update_whatsapp_number_api_v1_organizations_my_whatsapp_numbers__number_id__patch"];
+        trace?: never;
+    };
     "/api/v1/campaigns/recent": {
         parameters: {
             query?: never;
@@ -422,6 +472,11 @@ export interface paths {
          *     copy generado por el LLM (3B, `OpenRouterClient.suggest_campaign_copy`) para
          *     pre-rellenar el formulario de "Crear campaña" con datos reales de la cuenta,
          *     en vez de que el cliente empiece desde cero.
+         *
+         *     `image_path` (F6, opcional): la foto ya subida vía POST /upload-image. El
+         *     formulario vuelve a llamar aquí con ella para que el copy se regenere
+         *     viendo la imagen real. Se valida que pertenezca a la organización: es una
+         *     ruta que llega del cliente y termina leyendo del disco.
          */
         get: operations["get_campaign_suggestion_api_v1_campaigns_suggestion_get"];
         put?: never;
@@ -449,6 +504,32 @@ export interface paths {
          *     (MetaAssetRepository.get_or_upload_image), sin volver a subirla por HTTP.
          */
         post: operations["upload_campaign_image_api_v1_campaigns_upload_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/upload-video": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Campaign Video
+         * @description Sube un video para usar en la creación de campaña (playbook §5 Paso 4:
+         *     "el video suele rendir mejor que la imagen estática").
+         *
+         *     Gemelo de `/upload-image`: guarda en el disco compartido y devuelve la ruta;
+         *     la Saga lo lee del mismo volumen y lo sube a `/{act}/advideos`. Antes había
+         *     que conseguir el `video_id` y la miniatura a mano fuera de la app, aunque
+         *     `CreativeBuilder` ya sabía armar el `video_data`.
+         */
+        post: operations["upload_campaign_video_api_v1_campaigns_upload_video_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1074,6 +1155,11 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_campaign_video_api_v1_campaigns_upload_video_post */
+        Body_upload_campaign_video_api_v1_campaigns_upload_video_post: {
+            /** File */
+            file: string;
+        };
         /** BriefDataResponse */
         BriefDataResponse: {
             /** Organization Name */
@@ -1146,9 +1232,16 @@ export interface components {
             product_name: string;
             /**
              * Budget
-             * @description Presupuesto total (lifetime budget) en la moneda local
+             * @description Presupuesto en la moneda local: total o diario según budget_type
              */
             budget: number;
+            /**
+             * Budget Type
+             * @description LIFETIME = `budget` es el total de la campaña; DAILY = es el monto por día
+             * @default LIFETIME
+             * @enum {string}
+             */
+            budget_type: "LIFETIME" | "DAILY";
             /**
              * Days
              * @description Duración en días de la campaña
@@ -1175,6 +1268,11 @@ export interface components {
              * @description URL de la miniatura, requerida junto a video_id
              */
             thumbnail_url?: string | null;
+            /**
+             * Video Path
+             * @description Ruta del video subido a la app
+             */
+            video_path?: string | null;
             /**
              * Copy Text
              * @description Texto completo del anuncio, incluyendo hook, bullets y CTA
@@ -1232,6 +1330,12 @@ export interface components {
             /** Budget */
             budget: number;
             /**
+             * Budget Type
+             * @default LIFETIME
+             * @enum {string}
+             */
+            budget_type: "LIFETIME" | "DAILY";
+            /**
              * Days
              * @default 7
              */
@@ -1245,6 +1349,10 @@ export interface components {
             whatsapp_number?: string | null;
             /** Image Hash */
             image_hash?: string | null;
+            /** Headline */
+            headline?: string | null;
+            /** Description */
+            description?: string | null;
         };
         /** CampaignPreflightResponse */
         CampaignPreflightResponse: {
@@ -1791,6 +1899,8 @@ export interface components {
             optimization_goal: string;
             /** Destination Type */
             destination_type: string;
+            /** Suggested Campaign Name */
+            suggested_campaign_name?: string | null;
             /** Suggested Budget */
             suggested_budget: number;
             /** Suggested Days */
@@ -1886,6 +1996,37 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VideoUploadResponse */
+        VideoUploadResponse: {
+            /** Video Path */
+            video_path: string;
+        };
+        /** WhatsAppNumberCreate */
+        WhatsAppNumberCreate: {
+            /**
+             * Display Number
+             * @description Número de WhatsApp sin + ni espacios
+             */
+            display_number: string;
+        };
+        /** WhatsAppNumberResponse */
+        WhatsAppNumberResponse: {
+            /** Id */
+            id: string;
+            /** Display Number */
+            display_number: string;
+            /** Source */
+            source: string;
+            /** Verified Name */
+            verified_name?: string | null;
+            /** Status */
+            status: string;
+        };
+        /** WhatsAppNumberUpdate */
+        WhatsAppNumberUpdate: {
+            /** Display Number */
+            display_number: string;
         };
         /** WindowKpis */
         WindowKpis: {
@@ -2360,6 +2501,125 @@ export interface operations {
             };
         };
     };
+    list_whatsapp_numbers_api_v1_organizations_my_whatsapp_numbers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppNumberResponse"][];
+                };
+            };
+        };
+    };
+    add_whatsapp_number_api_v1_organizations_my_whatsapp_numbers_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatsAppNumberCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppNumberResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_whatsapp_number_api_v1_organizations_my_whatsapp_numbers__number_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                number_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_whatsapp_number_api_v1_organizations_my_whatsapp_numbers__number_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                number_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WhatsAppNumberUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WhatsAppNumberResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_recent_campaign_snapshots_api_v1_campaigns_recent_get: {
         parameters: {
             query?: never;
@@ -2467,6 +2727,7 @@ export interface operations {
             query: {
                 ad_account_id: string;
                 product_name?: string;
+                image_path?: string | null;
             };
             header?: never;
             path?: never;
@@ -2514,6 +2775,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImageUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_campaign_video_api_v1_campaigns_upload_video_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_campaign_video_api_v1_campaigns_upload_video_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VideoUploadResponse"];
                 };
             };
             /** @description Validation Error */

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
-import type { MetaPage, Suggestion } from "@/lib/types";
+import type { MetaPage, WhatsAppNumber, Suggestion } from "@/lib/types";
 
 // Colores por nivel de riesgo (paleta del design system "midnight").
 const RISK_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
@@ -34,11 +34,14 @@ export default function NewCampaignPage() {
   const [formData, setFormData] = useState({
     product_name: "",
     budget: 100,
+    budget_type: "LIFETIME" as "LIFETIME" | "DAILY",
     days: 7,
     image_path: "",
     image_hash: "",
+    video_path: "",
     copy_text: "",
     headline: "",
+    description: "",
   });
 
   // 3.4: variante de copy elegida (0 o 1) de las 2 que genera la IA.
@@ -47,6 +50,14 @@ export default function NewCampaignPage() {
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
+  const [videoName, setVideoName] = useState("");
+  const [videoUploading, setVideoUploading] = useState(false);
+  // F6: al subir una imagen el copy se regenera solo, viéndola.
+  const [copyRegenerating, setCopyRegenerating] = useState(false);
+
+  // Catálogo de números de la organización (F1).
+  const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
+  const [selectedNumber, setSelectedNumber] = useState("");
 
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
@@ -88,13 +99,33 @@ export default function NewCampaignPage() {
       })
       .catch((e: any) => console.error("Error cargando páginas:", e));
 
+    api.getWhatsAppNumbers()
+      .then((data: WhatsAppNumber[]) => setNumbers(data))
+      .catch((e: any) => console.error("Error cargando números:", e));
+
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
   }, [activeAdAccountId, accounts]);
 
+  // El número de la página elegida manda como preselección; si no tiene, el
+  // primero del catálogo. Sin pisar una elección manual del usuario.
+  useEffect(() => {
+    setSelectedNumber((prev) => {
+      if (prev) return prev;
+      const pageNumber = pages.find((p) => p.id === selectedPageId)?.whatsapp_number;
+      if (pageNumber) return pageNumber;
+      return numbers[0]?.display_number || "";
+    });
+  }, [pages, selectedPageId, numbers]);
+
   const selectedPage = pages.find((p) => p.id === selectedPageId) || null;
   const activeAccount = accounts.find((a) => a.id === activeAdAccountId) || null;
+  // Lo que realmente se gastará en toda la campaña; es la cifra con la que
+  // razonan el riesgo y el aprendizaje, sea cual sea el modo elegido.
+  const totalBudget = formData.budget_type === "DAILY"
+    ? Number((formData.budget * formData.days).toFixed(2))
+    : formData.budget;
 
   const handleSaveWhatsApp = async () => {
     if (!selectedPage || !waInput.trim()) return;
@@ -124,16 +155,68 @@ export default function NewCampaignPage() {
 
     if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
     setImagePreviewUrl(URL.createObjectURL(file));
-    setFormData((prev) => ({ ...prev, image_path: "" }));
+    // Imagen y video son excluyentes en el creativo de Meta.
+    setFormData((prev) => ({ ...prev, image_path: "", video_path: "" }));
+    setVideoName("");
     setImageUploadError("");
     setImageUploading(true);
     try {
       const res = await api.uploadCampaignImage(file);
       setFormData((prev) => ({ ...prev, image_path: res.image_path }));
+      // F6: regenerar el copy viendo la foto real, sin que haya que pedirlo.
+      await regenerateCopyWithImage(res.image_path);
     } catch (err: any) {
       setImageUploadError(err.message || "No se pudo subir la imagen.");
     } finally {
       setImageUploading(false);
+    }
+  };
+
+  const handleVideoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+    setImagePreviewUrl(null);
+    setFormData((prev) => ({ ...prev, image_path: "", video_path: "" }));
+    setVideoName(file.name);
+    setImageUploadError("");
+    setVideoUploading(true);
+    try {
+      const res = await api.uploadCampaignVideo(file);
+      setFormData((prev) => ({ ...prev, video_path: res.video_path }));
+    } catch (err: any) {
+      setImageUploadError(err.message || "No se pudo subir el video.");
+      setVideoName("");
+    } finally {
+      setVideoUploading(false);
+    }
+  };
+
+  /** Vuelve a pedir el copy pasando la imagen, para que el texto sea coherente
+   *  con lo que se ve. Solo tiene sentido si ya se pidió una sugerencia. */
+  const regenerateCopyWithImage = async (imagePath: string) => {
+    if (!activeAdAccountId || !formData.product_name || !suggestion) return;
+    setCopyRegenerating(true);
+    try {
+      const data: Suggestion = await api.getCampaignSuggestion(
+        activeAdAccountId, formData.product_name, imagePath
+      );
+      setSuggestion(data);
+      setCopyVariant(0);
+      // Solo se refresca el copy: presupuesto y días pueden haberlos ajustado
+      // a mano y no hay motivo para pisarlos por cambiar la foto.
+      setFormData((prev) => ({
+        ...prev,
+        copy_text: data.copy.primary_text[0],
+        headline: data.copy.headline[0],
+        description: data.copy.description,
+      }));
+    } catch (err: any) {
+      // El copy anterior sigue siendo válido: no se rompe el formulario.
+      console.error("No se pudo regenerar el copy con la imagen:", err);
+    } finally {
+      setCopyRegenerating(false);
     }
   };
 
@@ -150,16 +233,21 @@ export default function NewCampaignPage() {
     setSuggestError("");
     try {
       const data: Suggestion = await api.getCampaignSuggestion(
-        activeAdAccountId, formData.product_name
+        activeAdAccountId, formData.product_name, formData.image_path || undefined
       );
       setSuggestion(data);
       setCopyVariant(0);
       setFormData((prev) => ({
         ...prev,
-        budget: data.suggested_budget,
+        // La IA siempre sugiere un TOTAL; si el usuario eligió diario, se
+        // reparte entre los días.
+        budget: prev.budget_type === "DAILY"
+          ? Number((data.suggested_budget / data.suggested_days).toFixed(2))
+          : data.suggested_budget,
         days: data.suggested_days,
         copy_text: data.copy.primary_text[0],
         headline: data.copy.headline[0],
+        description: data.copy.description,
       }));
     } catch (err: any) {
       setSuggestError(err.message || "No se pudo obtener la sugerencia.");
@@ -221,18 +309,18 @@ export default function NewCampaignPage() {
       setStatus("error");
       return;
     }
-    if (!selectedPage.whatsapp_number) {
-      setErrorMessage("La página seleccionada no tiene un número de WhatsApp conectado.");
+    if (!selectedNumber) {
+      setErrorMessage("Elige un número de WhatsApp para la campaña.");
       setStatus("error");
       return;
     }
-    if (!formData.image_path && !formData.image_hash) {
-      setErrorMessage("Sube una imagen o pega un image_hash.");
+    if (!formData.image_path && !formData.image_hash && !formData.video_path) {
+      setErrorMessage("Sube una imagen o un video, o pega un image_hash.");
       setStatus("error");
       return;
     }
-    if (imageUploading) {
-      setErrorMessage("Espera a que termine de subirse la imagen.");
+    if (imageUploading || videoUploading) {
+      setErrorMessage("Espera a que termine de subirse el archivo.");
       setStatus("error");
       return;
     }
@@ -240,7 +328,8 @@ export default function NewCampaignPage() {
     setRiskChecking(true);
     setErrorMessage("");
     try {
-      const risk = await api.previewCampaignRisk(activeAdAccountId, formData.budget, formData.copy_text);
+      // El riesgo se evalúa sobre el TOTAL, igual que el backend.
+      const risk = await api.previewCampaignRisk(activeAdAccountId, totalBudget, formData.copy_text);
       setPendingRisk({ level: risk.risk_level, reasons: risk.risk_reasons });
     } catch (err: any) {
       // Si falla el cálculo de riesgo no bloqueamos la creación: mostramos el
@@ -259,12 +348,15 @@ export default function NewCampaignPage() {
       ...prev,
       copy_text: suggestion.copy.primary_text[index],
       headline: suggestion.copy.headline[index],
+      // La descripción es única (no tiene variantes), pero se re-aplica por si
+      // el usuario la había borrado.
+      description: prev.description || suggestion.copy.description,
     }));
   };
 
   // Paso 2 (Ajuste 1): el usuario confirmó el riesgo → se crea de verdad.
   const doCreate = async () => {
-    if (!activeAdAccountId || !selectedPage || !selectedPage.whatsapp_number) return;
+    if (!activeAdAccountId || !selectedPage || !selectedNumber) return;
     setPendingRisk(null);
     setStatus("submitting");
     setErrorMessage("");
@@ -275,12 +367,15 @@ export default function NewCampaignPage() {
         page_id: selectedPage.external_page_id,
         product_name: formData.product_name,
         budget: formData.budget,
+        budget_type: formData.budget_type,
         days: formData.days,
-        whatsapp_number: selectedPage.whatsapp_number,
+        whatsapp_number: selectedNumber,
         image_path: formData.image_path || undefined,
         image_hash: formData.image_hash || undefined,
+        video_path: formData.video_path || undefined,
         copy_text: formData.copy_text,
         headline: formData.headline || undefined,
+        description: formData.description || undefined,
       });
 
       setDraftId(res.draft_id);
@@ -439,8 +534,59 @@ export default function NewCampaignPage() {
               <input type="text" name="product_name" required value={formData.product_name} onChange={handleChange} className="form-input" placeholder="Cable GPT" />
             </div>
             <div>
-              <label style={labelStyle}>Presupuesto (S/. total)</label>
-              <input type="number" name="budget" required min={1} value={formData.budget} onChange={handleChange} className="form-input" />
+              <label style={labelStyle} htmlFor="wa-number">Número de WhatsApp</label>
+              <select
+                id="wa-number"
+                className="form-input"
+                value={selectedNumber}
+                onChange={(e) => setSelectedNumber(e.target.value)}
+                style={{ background: "var(--color-obsidian)" }}
+                required
+              >
+                <option value="">Selecciona un número...</option>
+                {numbers.map((n) => (
+                  <option key={n.id} value={n.display_number}>
+                    {n.display_number}{n.verified_name ? ` — ${n.verified_name}` : ""}
+                  </option>
+                ))}
+              </select>
+              {numbers.length === 0 && (
+                <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
+                  No hay números cargados — agrégalos en Configuración.
+                </span>
+              )}
+            </div>
+            <div>
+              <label style={labelStyle} htmlFor="budget-type">Tipo de presupuesto</label>
+              <select
+                id="budget-type"
+                className="form-input"
+                value={formData.budget_type}
+                onChange={(e) => setFormData((prev) => ({
+                  ...prev,
+                  budget_type: e.target.value as "LIFETIME" | "DAILY",
+                  // Se convierte el monto al cambiar de modo para que el gasto
+                  // total no salte sin que el usuario lo note.
+                  budget: e.target.value === "DAILY"
+                    ? Number((prev.budget / prev.days).toFixed(2))
+                    : Number((prev.budget * prev.days).toFixed(2)),
+                }))}
+                style={{ background: "var(--color-obsidian)" }}
+              >
+                <option value="LIFETIME">Total de la campaña</option>
+                <option value="DAILY">Diario</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>
+                Presupuesto (S/. {formData.budget_type === "DAILY" ? "por día" : "total"})
+              </label>
+              <input type="number" name="budget" required min={1} step="0.01" value={formData.budget} onChange={handleChange} className="form-input" />
+              {formData.budget_type === "DAILY" && (
+                <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
+                  Total en {formData.days} días: <strong>S/. {totalBudget.toFixed(2)}</strong>
+                </span>
+              )}
             </div>
             <div>
               <label style={labelStyle}>Días</label>
@@ -462,6 +608,11 @@ export default function NewCampaignPage() {
               {imageUploadError && (
                 <p role="alert" style={{ color: "var(--color-coral-red)", fontSize: "12px", marginTop: "4px" }}>{imageUploadError}</p>
               )}
+              {copyRegenerating && (
+                <span style={{ fontSize: "12px", color: "var(--color-lavender)", marginTop: "4px", display: "block" }}>
+                  ✨ Regenerando el copy con la imagen...
+                </span>
+              )}
               {imagePreviewUrl && (
                 <img
                   src={imagePreviewUrl}
@@ -469,6 +620,23 @@ export default function NewCampaignPage() {
                   style={{ marginTop: "8px", maxHeight: "140px", borderRadius: "6px", border: "1px solid var(--color-graphite)" }}
                 />
               )}
+            </div>
+            <div>
+              <label style={labelStyle}>Video del anuncio (alternativa a la imagen)</label>
+              <input type="file" accept="video/mp4,video/quicktime" onChange={handleVideoFileChange} className="form-input" />
+              {videoUploading && (
+                <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
+                  Subiendo video...
+                </span>
+              )}
+              {!videoUploading && formData.video_path && (
+                <span style={{ fontSize: "12px", color: "var(--color-pulse-green)", marginTop: "4px", display: "block" }}>
+                  ✓ Video subido ({videoName}) — Meta lo procesará al crear la campaña
+                </span>
+              )}
+              <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
+                MP4 o MOV, hasta 100MB. La miniatura la genera Meta.
+              </span>
             </div>
             <div>
               <label style={labelStyle}>Image Hash (avanzado — reutilizar una imagen ya subida a Meta)</label>
@@ -496,6 +664,11 @@ export default function NewCampaignPage() {
               <ul style={{ paddingLeft: "18px", color: "var(--color-fog)", display: "flex", flexDirection: "column", gap: "4px" }}>
                 {suggestion.evidence.map((e, i) => <li key={i}>{e}</li>)}
               </ul>
+              {suggestion.suggested_campaign_name && (
+                <p style={{ marginTop: "8px" }}>
+                  Nombre de la campaña: <strong>{suggestion.suggested_campaign_name}</strong>
+                </p>
+              )}
               {suggestion.excluded_placements.length > 0 && (
                 <p style={{ marginTop: "8px" }}>
                   Placements a excluir: <strong>{suggestion.excluded_placements.join(", ")}</strong>
@@ -590,6 +763,31 @@ export default function NewCampaignPage() {
               </p>
             </div>
           )}
+
+          {/* Título y descripción del anuncio: se pedían desde hace tiempo pero
+              no llegaban al creativo, así que el anuncio salía solo con el copy. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "16px" }}>
+            <div>
+              <label style={labelStyle} htmlFor="headline">
+                Título del anuncio ({formData.headline.length}/40)
+              </label>
+              <input
+                id="headline" type="text" name="headline" maxLength={40}
+                value={formData.headline} onChange={handleChange}
+                className="form-input" placeholder="Cable GPT 🔥"
+              />
+            </div>
+            <div>
+              <label style={labelStyle} htmlFor="description">
+                Descripción ({formData.description.length}/30)
+              </label>
+              <input
+                id="description" type="text" name="description" maxLength={30}
+                value={formData.description} onChange={handleChange}
+                className="form-input" placeholder="Cotiza por WhatsApp"
+              />
+            </div>
+          </div>
 
           <div>
             <label style={labelStyle}>Copy (editable)</label>
