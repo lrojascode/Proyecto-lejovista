@@ -285,6 +285,9 @@ class SuggestionResponse(BaseModel):
     objective: str
     optimization_goal: str
     destination_type: str
+    # Nombre con la nomenclatura inferida del histórico real de la cuenta (F3).
+    # Se muestra antes de crear, y es el mismo que usa la Saga.
+    suggested_campaign_name: Optional[str] = None
     suggested_budget: float
     suggested_days: int
     excluded_placements: List[str]

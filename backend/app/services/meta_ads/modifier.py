@@ -104,14 +104,25 @@ class MetaCampaignModifier:
             if "facebook_reels" not in new_positions:
                 new_positions.append("facebook_reels")
 
-            # Regla de seguridad: NUNCA una posición de Instagram, aunque el
-            # vocabulario de facebook_positions no las incluye.
+            # `facebook_positions` solo admite posiciones de Facebook: las de
+            # Instagram viajan en su propio campo. Se filtran aquí para no
+            # mandar un valor inválido, NO para desactivar Instagram.
             new_positions = [p for p in new_positions if "instagram" not in p]
 
-            # Inyectar en estructura de targeting de Meta: publisher_platforms
-            # genérico + las posiciones concretas en facebook_positions.
+            # Inyectar en estructura de targeting de Meta: las posiciones
+            # concretas en facebook_positions, preservando las plataformas que
+            # el adset ya tenía.
+            #
+            # OJO: antes esto forzaba `publisher_platforms = ["facebook"]`, así
+            # que la PRIMERA optimización de placements que aplicara la IA le
+            # quitaba Instagram a las campañas que la propia app acababa de
+            # crear con IG. Optimizar posiciones de Facebook no es motivo para
+            # apagar una plataforma entera.
             current_targeting = backup_state.get("targeting", {})
-            current_targeting["publisher_platforms"] = ["facebook"]
+            existing_platforms = current_targeting.get("publisher_platforms")
+            current_targeting["publisher_platforms"] = (
+                list(existing_platforms) if existing_platforms else ["facebook"]
+            )
             current_targeting["facebook_positions"] = new_positions
             post_data["targeting"] = current_targeting
 

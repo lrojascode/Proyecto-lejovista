@@ -1,5 +1,10 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Literal, Optional
+
+# Modo de presupuesto del AdSet. LIFETIME = monto total repartido en `days`
+# (`lifetime_budget`, el comportamiento histórico y el default); DAILY = monto
+# por día (`daily_budget`), que es como trabaja la mayoría de anunciantes.
+BudgetType = Literal["LIFETIME", "DAILY"]
 
 
 class CampaignRiskPreviewRequest(BaseModel):
@@ -18,17 +23,24 @@ class CampaignPreflightRequest(BaseModel):
     page_id: str
     product_name: str
     budget: float = Field(..., gt=0)
+    budget_type: BudgetType = "LIFETIME"
     days: int = Field(default=7, gt=0)
     copy_text: str = ""
     whatsapp_number: Optional[str] = None
     image_hash: Optional[str] = None
+    headline: Optional[str] = None
+    description: Optional[str] = None
 
 
 class CampaignCreateRequest(BaseModel):
     ad_account_id: str
     page_id: str
     product_name: str = Field(..., description="Nombre del producto o servicio (e.g. Cable GPT)")
-    budget: float = Field(..., gt=0, description="Presupuesto total (lifetime budget) en la moneda local")
+    budget: float = Field(..., gt=0, description="Presupuesto en la moneda local: total o diario según budget_type")
+    budget_type: BudgetType = Field(
+        default="LIFETIME",
+        description="LIFETIME = `budget` es el total de la campaña; DAILY = es el monto por día",
+    )
     days: int = Field(..., gt=0, description="Duración en días de la campaña")
     whatsapp_number: str = Field(..., description="Número de WhatsApp sin + ni espacios")
     image_url: Optional[str] = None
@@ -47,6 +59,18 @@ class CampaignCreateRequest(BaseModel):
     # de Meta en CampaignValidator si vienen presentes.
     headline: Optional[str] = Field(default=None, description="Headline elegido (máx. 40 caracteres, límite de Meta)")
     description: Optional[str] = Field(default=None, description="Description elegida (máx. 30 caracteres, límite de Meta)")
+
+    def total_budget(self) -> float:
+        """Presupuesto TOTAL de la campaña, sea cual sea el modo.
+
+        Es la cifra comparable entre campañas y la única que entienden el
+        cálculo de riesgo y el ciclo de aprendizaje (que deriva el costo
+        esperado por conversación de un total). Con DAILY se multiplica por
+        los días de duración.
+        """
+        if self.budget_type == "DAILY":
+            return round(self.budget * self.days, 2)
+        return self.budget
 
     class Config:
         json_schema_extra = {

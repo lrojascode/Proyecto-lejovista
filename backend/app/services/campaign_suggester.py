@@ -6,6 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.campaign_learning_log import CampaignLearningLog
+from app.models.campaign_snapshot import CampaignSnapshot
+from app.services.brand_code import derive_brand_code
+from app.services.campaign_naming import build_campaign_name, infer_naming_pattern
 from app.services.report_cache import get_report
 from app.services.campaign_learning import (
     assess_maturity, build_analysis, calibrated_cost_per_conv, latest_winning_params,
@@ -35,7 +38,12 @@ class CampaignSuggester:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def suggest(self, ad_account: AdAccount, budget_hint: Optional[float] = None) -> Dict[str, Any]:
+    async def suggest(
+        self,
+        ad_account: AdAccount,
+        budget_hint: Optional[float] = None,
+        product_name: str = "Producto",
+    ) -> Dict[str, Any]:
         report = await get_report(self.db, ad_account)
         # M-2: reglas de campaña resueltas para la org (con overrides si los tiene).
         org = await self.db.get(Organization, ad_account.organization_id)
@@ -165,10 +173,24 @@ class CampaignSuggester:
             replicated_from_win=bool(replicated_from_win),
         )
 
+        # F3: nombre con el molde real de la cuenta. Se calcula aquí (no en la
+        # Saga) para poder mostrarlo en el formulario ANTES de crear, y se
+        # pasa por el contexto para que Saga y preflight usen exactamente ese.
+        naming_pattern = await self._naming_pattern(ad_account)
+        suggested_campaign_name = build_campaign_name(
+            product_name, brand=derive_brand_code(ad_account), pattern=naming_pattern,
+        )
+        if naming_pattern.get("sample_size"):
+            evidence.append(
+                f"Nombre con la nomenclatura real de la cuenta "
+                f"(inferida de {naming_pattern['sample_size']} campañas): {suggested_campaign_name}"
+            )
+
         return {
             "has_history": best is not None,
             "maturity": maturity,
             "analysis": analysis,
+            "suggested_campaign_name": suggested_campaign_name,
             "objective": rules["objective"],
             "optimization_goal": rules["optimization_goal"],
             "destination_type": rules["destination_type"],
@@ -190,6 +212,20 @@ class CampaignSuggester:
             } if winning_ad else None,
             "evidence": evidence,
         }
+
+    async def _naming_pattern(self, ad_account: AdAccount) -> Dict[str, Any]:
+        """Molde de nombres inferido de las campañas reales de la cuenta.
+
+        Se leen los nombres DISTINTOS (el histórico guarda un snapshot por día y
+        campaña; sin `distinct` una sola campaña vieja dominaría el conteo).
+        """
+        names = (await self.db.execute(
+            select(CampaignSnapshot.campaign_name)
+            .where(CampaignSnapshot.ad_account_id == ad_account.id)
+            .distinct()
+            .limit(50)
+        )).scalars().all()
+        return infer_naming_pattern([n for n in names if n])
 
     async def _own_evaluated_outcomes(self, ad_account: AdAccount, limit: int = 10) -> List[Dict[str, Any]]:
         """Resultados propios ya evaluados por el outcome loop, del más reciente

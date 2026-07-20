@@ -40,6 +40,23 @@ async def _get_campaign_rules(db, acc: AdAccount) -> Dict[str, Any]:
     return get_campaign_rules_for_org(org)
 
 
+async def _get_page_instagram_id(db, acc: AdAccount, external_page_id: str) -> str | None:
+    """Cuenta de Instagram conectada a la página, si el sync la descubrió.
+
+    Devuelve None si la página no está en BD o no tiene IG conectado — el
+    creativo simplemente se crea sin `instagram_user_id` y Meta usa la página
+    de Facebook como identidad en IG.
+    """
+    from app.models.meta_page import MetaPage
+    from sqlalchemy import select
+
+    row = (await db.execute(select(MetaPage).where(
+        MetaPage.organization_id == acc.organization_id,
+        MetaPage.external_page_id == str(external_page_id),
+    ))).scalar_one_or_none()
+    return row.instagram_actor_id if row else None
+
+
 
 def _raise_if_meta_error(result: Dict[str, Any]) -> None:
     """Si `result` es una respuesta de error de Meta, la clasifica y la lanza
@@ -204,9 +221,15 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
             rules = await _get_campaign_rules(db, acc)
 
             product_name = context["product_name"]
-            month_year = datetime.now().strftime("%b%Y").upper()
-            brand = _brand_code(acc)
-            campaign_name = f"{brand}_MSJ_{product_name}_{month_year}".replace(" ", "")
+            # F3: el nombre lo calcula el suggester con el molde real de la
+            # cuenta y viaja en el contexto, para que el que se muestra en el
+            # formulario sea EXACTAMENTE el que se crea. Si no vino (Sagas
+            # despachadas por otras vías), se cae a la plantilla de siempre.
+            campaign_name = context.get("campaign_name")
+            if not campaign_name:
+                month_year = datetime.now().strftime("%b%Y").upper()
+                brand = _brand_code(acc)
+                campaign_name = f"{brand}_MSJ_{product_name}_{month_year}".replace(" ", "")
 
             payload = {
                 "name": campaign_name,
@@ -273,7 +296,6 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "destination_type": rules["destination_type"],
                 "billing_event": "IMPRESSIONS",
                 "bid_strategy": rules["bid_strategy"],
-                "lifetime_budget": int(context["budget"] * 100),  # Meta espera centavos
                 "start_time": start_time,
                 "end_time": end_time,
                 # Regla de oro del playbook (#3): todo se crea PAUSED. La activación
@@ -297,6 +319,15 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
                     "page_id": context["page_id"],
                 }),
             }
+
+            # Presupuesto diario o total (Meta espera centavos en ambos, y son
+            # mutuamente excluyentes: mandar los dos rechaza el adset). Con
+            # DAILY se conservan start/end_time, que acotan la duración.
+            budget_cents = int(round(context["budget"] * 100))
+            if context.get("budget_type") == "DAILY":
+                payload["daily_budget"] = budget_cents
+            else:
+                payload["lifetime_budget"] = budget_cents
 
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
             endpoint = f"{acc.external_account_id}/adsets"
@@ -333,6 +364,13 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             brand = _brand_code(acc)
             creative_name = f"{brand}_CREATIVE_{context['product_name']}_{datetime.now().strftime('%b%Y').upper()}"
+
+            # Identidad de Instagram: se resuelve AQUÍ (no en el endpoint) para
+            # que la cubran por igual el formulario manual y la Saga que
+            # despacha el AIExecutor. El sync ya guardó el IG conectado a la
+            # página en MetaPage.instagram_actor_id.
+            instagram_user_id = await _get_page_instagram_id(db, acc, context["page_id"])
+
             spec = CreativeBuilder.build_creative_payload(
                 name=creative_name,
                 page_id=context["page_id"],
@@ -341,6 +379,9 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 video_id=context.get("video_id"),
                 thumbnail_url=context.get("thumbnail_url"),
                 whatsapp_number=context.get("whatsapp_number"),
+                headline=context.get("headline"),
+                description=context.get("description"),
+                instagram_user_id=instagram_user_id,
             )
 
             payload = {

@@ -37,7 +37,40 @@ def test_build_targeting_applies_winning_signals():
     assert t["age_min"] == 18 and t["age_max"] == 24
     assert t["user_os"] == ["Android"]
     assert t["device_platforms"] == ["mobile"]
-    assert t["publisher_platforms"] == ["facebook"]
+    assert t["publisher_platforms"] == ["facebook", "instagram"]
+
+
+def test_build_targeting_includes_instagram():
+    """Las campañas nuevas salen en Facebook Y Instagram (antes solo FB, aunque
+    la página tuviera cuenta de IG conectada y el histórico midiera placements
+    de Instagram)."""
+    t = build_targeting(best_age_range=None, best_device=None, excluded_placements=[])
+    assert t["publisher_platforms"] == ["facebook", "instagram"]
+    assert t["instagram_positions"] == ["stream", "story", "reels", "explore"]
+
+
+def test_instagram_positions_respect_history_exclusions():
+    """El histórico llega como `instagram_stream` (breakdown de Meta) pero el
+    targeting los quiere sin prefijo: 'stream'."""
+    t = build_targeting(
+        best_age_range=None, best_device=None,
+        excluded_placements=["instagram_stream", "instagram_explore"],
+    )
+    assert t["instagram_positions"] == ["story", "reels"]
+    # Excluir posiciones de IG no toca las de Facebook.
+    assert "feed" in t["facebook_positions"]
+
+
+def test_instagram_positions_omitted_when_all_excluded():
+    """Meta rechaza `instagram_positions: []`; si el histórico excluyó todas, se
+    omite el campo (Meta usa entonces todas las posiciones por defecto)."""
+    t = build_targeting(
+        best_age_range=None, best_device=None,
+        excluded_placements=["instagram_stream", "instagram_story",
+                             "instagram_reels", "instagram_explore"],
+    )
+    assert "instagram_positions" not in t
+    assert t["publisher_platforms"] == ["facebook", "instagram"]
 
 
 def test_build_targeting_falls_back_without_history():

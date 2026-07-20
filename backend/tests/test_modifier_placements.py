@@ -68,8 +68,13 @@ async def test_modify_placements_post_data_shape(approved_placements_action, db_
     kwargs = mock_call_api.call_args[1]
     assert kwargs["method"] == "POST"
     targeting = post_data["targeting"]
-    assert targeting["publisher_platforms"] == ["facebook"]
+    # Optimizar posiciones de Facebook NO debe apagar Instagram: antes esto
+    # forzaba ["facebook"] y la primera optimización de la IA le quitaba IG a
+    # las campañas que la propia app creaba con Instagram activado.
+    assert targeting["publisher_platforms"] == ["facebook", "instagram"]
     assert "facebook_reels" in targeting["facebook_positions"]
+    # `facebook_positions` sigue admitiendo solo posiciones de Facebook: las de
+    # Instagram viajan en `instagram_positions`, no aquí.
     assert all("instagram" not in p for p in targeting["facebook_positions"])
     # Nunca una posición inválida colada en publisher_platforms.
     assert "facebook_reels" not in targeting["publisher_platforms"]

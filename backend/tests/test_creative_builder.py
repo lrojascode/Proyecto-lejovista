@@ -64,3 +64,55 @@ def test_page_welcome_message_media_type_is_lowercase():
     )
     pwm = spec["object_story_spec"]["link_data"]["page_welcome_message"]
     assert pwm["media_type"] == "text"
+
+
+def test_headline_and_description_reach_link_data():
+    """Título y descripción del anuncio. Ya se pedían en CampaignCreateRequest y
+    el validador chequeaba sus límites, pero nunca se enviaban a Meta: el
+    anuncio salía solo con `message`."""
+    spec = CreativeBuilder.build_creative_payload(
+        name="C", page_id="page1", copy_text="Cuerpo", image_hash="h1",
+        headline="Título corto", description="Descripción corta",
+    )
+    link_data = spec["object_story_spec"]["link_data"]
+    assert link_data["name"] == "Título corto"
+    assert link_data["description"] == "Descripción corta"
+    assert link_data["message"] == "Cuerpo"
+
+
+def test_headline_and_description_use_video_field_names():
+    """En video_data los campos se llaman distinto que en link_data: `title` y
+    `link_description`."""
+    spec = CreativeBuilder.build_creative_payload(
+        name="C", page_id="page1", copy_text="Cuerpo", video_id="v1",
+        thumbnail_url="http://t/1.jpg",
+        headline="Título corto", description="Descripción corta",
+    )
+    video_data = spec["object_story_spec"]["video_data"]
+    assert video_data["title"] == "Título corto"
+    assert video_data["link_description"] == "Descripción corta"
+
+
+def test_creative_omits_title_fields_when_not_provided():
+    """No-regresión: sin headline/description el payload queda como antes."""
+    spec = CreativeBuilder.build_creative_payload(
+        name="C", page_id="page1", copy_text="Cuerpo", image_hash="h1",
+    )
+    link_data = spec["object_story_spec"]["link_data"]
+    assert "name" not in link_data
+    assert "description" not in link_data
+
+
+def test_instagram_user_id_only_when_page_has_one():
+    """Mandar la clave con None haría que Meta rechace el creativo por
+    parámetro inválido: solo se declara si la página tiene IG conectado."""
+    with_ig = CreativeBuilder.build_creative_payload(
+        name="C", page_id="page1", copy_text="c", image_hash="h1",
+        instagram_user_id="ig_999",
+    )
+    assert with_ig["object_story_spec"]["instagram_user_id"] == "ig_999"
+
+    without_ig = CreativeBuilder.build_creative_payload(
+        name="C", page_id="page1", copy_text="c", image_hash="h1",
+    )
+    assert "instagram_user_id" not in without_ig["object_story_spec"]

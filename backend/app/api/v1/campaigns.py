@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
+from app.models.meta_page import MetaPage
 from app.models.organization import Organization
 from app.schemas.campaign_schemas import (
     CampaignCreateRequest, CampaignRiskPreviewRequest, CampaignPreflightRequest,
@@ -231,7 +232,7 @@ async def get_campaign_suggestion(
 
     org = await db.get(Organization, current_user.organization_id)
 
-    suggestion = await CampaignSuggester(db).suggest(ad_account)
+    suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=product_name)
     copy = await OpenRouterClient().suggest_campaign_copy(
         org, ad_account, product_name=product_name,
         winning_context=suggestion.get("winning_campaign"),
@@ -260,6 +261,7 @@ async def get_campaign_suggestion(
         "objective": suggestion["objective"],
         "optimization_goal": suggestion["optimization_goal"],
         "destination_type": suggestion["destination_type"],
+        "suggested_campaign_name": suggestion.get("suggested_campaign_name"),
         "suggested_budget": suggestion["suggested_budget"],
         "suggested_days": suggestion["suggested_days"],
         "excluded_placements": suggestion["excluded_placements"],
@@ -363,16 +365,29 @@ async def preflight_campaign(
     rules = get_campaign_rules_for_org(org)
 
     # Las señales del histórico son las mismas que usaría la Saga.
-    suggestion = await CampaignSuggester(db).suggest(ad_account)
+    suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=request.product_name)
+
+    # Mismos datos derivados que usaría la Saga: identidad de IG de la página y
+    # el nombre inferido del histórico. Así `validate_only` evalúa el payload
+    # real, no una aproximación.
+    page = (await db.execute(select(MetaPage).where(
+        MetaPage.organization_id == current_user.organization_id,
+        MetaPage.external_page_id == request.page_id,
+    ))).scalar_one_or_none()
 
     result = await CampaignPreflight(ad_account, rules).run(
         product_name=request.product_name,
         page_id=request.page_id,
         whatsapp_number=request.whatsapp_number,
         budget=request.budget,
+        budget_type=request.budget_type,
         days=request.days,
         copy_text=request.copy_text,
         image_hash=request.image_hash,
+        headline=request.headline,
+        description=request.description,
+        instagram_user_id=page.instagram_actor_id if page else None,
+        campaign_name=suggestion.get("suggested_campaign_name"),
         best_age_range=suggestion.get("best_age_range"),
         best_device=suggestion.get("best_device"),
         excluded_placements=suggestion.get("excluded_placements") or [],
@@ -456,12 +471,20 @@ async def create_campaign(
     # 1. Validación síncrona
     await validator.validate(request)
 
+    # 1a. Presupuesto normalizado a TOTAL. `budget` puede venir como monto
+    # diario (budget_type="DAILY"); todo lo que razona sobre presupuesto
+    # —riesgo, calibración R1 del suggester y el costo esperado del outcome
+    # loop (`suggested_budget / 20`)— asume un total de la campaña. Se
+    # normaliza una sola vez aquí para que esos tres no tengan que saber del
+    # modo y para que los registros históricos no cambien de semántica.
+    budget_total = request.total_budget()
+
     # 1b. Razonamiento + riesgo dinámico (deterministas). La sugerencia se
     # recalcula del histórico real (sin LLM) para tener madurez/análisis con qué
     # documentar la decisión y comparar el presupuesto que envió el usuario.
-    suggestion = await CampaignSuggester(db).suggest(ad_account)
+    suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=request.product_name)
     risk = assess_campaign_risk(
-        budget=request.budget,
+        budget=budget_total,
         copy_text=request.copy_text,
         suggestion=suggestion,
     )
@@ -488,7 +511,12 @@ async def create_campaign(
         draft_id=draft_id,
         product=request.product_name,
         params_json={
+            # `budget` es lo que pidió el usuario (diario o total, según
+            # budget_type); `budget_total` es la cifra comparable entre
+            # campañas y la que usa el aprendizaje.
             "budget": request.budget,
+            "budget_type": request.budget_type,
+            "budget_total": budget_total,
             "days": request.days,
             "objective": suggestion["objective"],
             "excluded_placements": suggestion["excluded_placements"],
@@ -511,7 +539,11 @@ async def create_campaign(
         "ad_account_id": request.ad_account_id,
         "page_id": request.page_id,
         "product_name": request.product_name,
+        # Nombre con la nomenclatura real de la cuenta (F3): se resuelve aquí
+        # para que el que ve el usuario en el formulario sea el que se crea.
+        "campaign_name": suggestion.get("suggested_campaign_name"),
         "budget": request.budget,
+        "budget_type": request.budget_type,
         "days": request.days,
         "whatsapp_number": request.whatsapp_number,
         "image_url": request.image_url,
@@ -520,6 +552,10 @@ async def create_campaign(
         "video_id": request.video_id,
         "thumbnail_url": request.thumbnail_url,
         "copy_text": request.copy_text,
+        # Título y descripción del anuncio (link_data.name / link_data.description).
+        # Se validaban y luego se perdían: nunca llegaban a la Saga.
+        "headline": request.headline,
+        "description": request.description,
         # Señales de optimización derivadas del histórico ganador (Ajuste 2):
         # el AdSet las aplica en su `targeting` en vez de hardcodear edad/
         # dispositivo/placements. Fallback a defaults si no hay histórico.

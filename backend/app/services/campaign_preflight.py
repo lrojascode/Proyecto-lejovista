@@ -69,11 +69,16 @@ class CampaignPreflight:
         best_age_range: Optional[str] = None,
         best_device: Optional[str] = None,
         excluded_placements: Optional[List[str]] = None,
+        budget_type: str = "LIFETIME",
+        headline: Optional[str] = None,
+        description: Optional[str] = None,
+        instagram_user_id: Optional[str] = None,
+        campaign_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         token = self.acc.get_access_token()
         checks: List[Dict[str, Any]] = []
 
-        campaign_name = (
+        campaign_name = campaign_name or (
             f"{derive_brand_code(self.acc)}_MSJ_{product_name}_"
             f"{datetime.now().strftime('%b%Y').upper()}"
         ).replace(" ", "")
@@ -103,27 +108,33 @@ class CampaignPreflight:
         else:
             start = datetime.now().strftime("%Y-%m-%dT%H:%M:%S+0000")
             end = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S+0000")
+            adset_payload = {
+                "name": f"{campaign_name}_AS01",
+                "campaign_id": parent_id,
+                "optimization_goal": self.rules["optimization_goal"],
+                "destination_type": self.rules["destination_type"],
+                "billing_event": "IMPRESSIONS",
+                "bid_strategy": self.rules["bid_strategy"],
+                "start_time": start,
+                "end_time": end,
+                "status": self.rules["default_status"],
+                "targeting": json.dumps(build_targeting(
+                    best_age_range=best_age_range,
+                    best_device=best_device,
+                    excluded_placements=excluded_placements or [],
+                    rules=self.rules,
+                )),
+                "promoted_object": json.dumps({"page_id": page_id}),
+            }
+            # Mismo criterio que la Saga: diario y total son excluyentes.
+            budget_cents = int(round(budget * 100))
+            if budget_type == "DAILY":
+                adset_payload["daily_budget"] = budget_cents
+            else:
+                adset_payload["lifetime_budget"] = budget_cents
+
             adset_check = await self._check(
-                "adset", f"{self.acc.external_account_id}/adsets", token,
-                {
-                    "name": f"{campaign_name}_AS01",
-                    "campaign_id": parent_id,
-                    "optimization_goal": self.rules["optimization_goal"],
-                    "destination_type": self.rules["destination_type"],
-                    "billing_event": "IMPRESSIONS",
-                    "bid_strategy": self.rules["bid_strategy"],
-                    "lifetime_budget": int(budget * 100),
-                    "start_time": start,
-                    "end_time": end,
-                    "status": self.rules["default_status"],
-                    "targeting": json.dumps(build_targeting(
-                        best_age_range=best_age_range,
-                        best_device=best_device,
-                        excluded_placements=excluded_placements or [],
-                        rules=self.rules,
-                    )),
-                    "promoted_object": json.dumps({"page_id": page_id}),
-                },
+                "adset", f"{self.acc.external_account_id}/adsets", token, adset_payload,
             )
             adset_check["parent_campaign"] = {"id": parent_id, "name": parent_name}
             checks.append(adset_check)
@@ -142,6 +153,9 @@ class CampaignPreflight:
                 copy_text=copy_text,
                 image_hash=image_hash,
                 whatsapp_number=whatsapp_number,
+                headline=headline,
+                description=description,
+                instagram_user_id=instagram_user_id,
             )
             checks.append(await self._check(
                 "creative", f"{self.acc.external_account_id}/adcreatives", token,

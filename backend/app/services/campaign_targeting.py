@@ -34,6 +34,11 @@ _ADVANTAGE_AUDIENCE_MAX_AGE_MIN = 25
 _DEFAULT_AGE_MIN = 25
 _DEFAULT_AGE_MAX = 65
 
+# Posiciones de Instagram para campañas de mensajes. Vocabulario de la Marketing
+# API v25 (`instagram_positions`): 'stream' = feed, 'explore_home' e 'ig_search'
+# se dejan fuera porque rinden mal en click-to-WhatsApp.
+_DEFAULT_INSTAGRAM_POSITIONS = ["stream", "story", "reels", "explore"]
+
 
 def parse_age_range(age_range: Optional[str]) -> tuple[Optional[int], Optional[int]]:
     """'25-34' -> (25, 34); '65+' -> (65, 65); None/desconocido -> (None, None)."""
@@ -78,6 +83,15 @@ def device_targeting(best_device: Optional[str]) -> Dict[str, Any]:
     return {}
 
 
+def _norm_position(prefix: str, p: str) -> str:
+    """'facebook_facebook_profile_feed' -> 'profile_feed'; 'instagram_stream' ->
+    'stream'. El histórico nombra los placements como
+    `{publisher_platform}_{platform_position}` (breakdown de Meta, ver
+    `_BREAKDOWN_SPECS` en meta_ads/sync.py), y el targeting los quiere sin el
+    prefijo de plataforma."""
+    return re.sub(rf"^{prefix}[_ ]?", "", str(p).lower()).replace(f"{prefix}_", "").strip()
+
+
 def _facebook_positions(excluded_placements: List[str], rules: Optional[Dict[str, Any]] = None) -> List[str]:
     """Allowlist de posiciones de Facebook menos las que el histórico marcó como
     desperdicio (gasto y 0 conversiones). Las `required_placements` del tenant
@@ -90,8 +104,7 @@ def _facebook_positions(excluded_placements: List[str], rules: Optional[Dict[str
     required = {p.lower() for p in rules["required_placements"]}
 
     def norm(p: str) -> str:
-        # 'facebook_facebook_profile_feed' -> 'profile_feed'; 'facebook_feed' -> 'feed'.
-        return re.sub(r"^facebook[_ ]?", "", str(p).lower()).replace("facebook_", "").strip()
+        return _norm_position("facebook", p)
 
     excl = {norm(e) for e in (excluded_placements or [])}
     # Dedup preservando orden.
@@ -102,6 +115,32 @@ def _facebook_positions(excluded_placements: List[str], rules: Optional[Dict[str
         seen.add(p)
         if p.lower() in required or norm(p) not in excl:
             out.append(p)
+    return out
+
+
+def _instagram_positions(excluded_placements: List[str], rules: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Hermano de `_facebook_positions` para Instagram.
+
+    Solo se descartan las posiciones que el histórico marcó como desperdicio
+    (gasto y 0 conversiones), igual que en Facebook. OJO con la asimetría de
+    vocabulario: en el breakdown de Meta las claves llegan como
+    `instagram_stream`/`instagram_reels`, pero `instagram_positions` las quiere
+    sin prefijo (`stream`, `reels`).
+    """
+    rules = rules or TENANT_CAMPAIGN_RULES
+    base = list(rules.get("instagram_positions") or _DEFAULT_INSTAGRAM_POSITIONS)
+
+    excl = {_norm_position("instagram", e) for e in (excluded_placements or [])}
+    seen, out = set(), []
+    for p in base:
+        if p in seen:
+            continue
+        seen.add(p)
+        if _norm_position("instagram", p) not in excl:
+            out.append(p)
+    # Meta rechaza `instagram_positions: []`. Si el histórico excluyó todo, se
+    # omite el campo (Meta usa todas las posiciones por defecto) en vez de
+    # mandar una lista vacía — lo resuelve `build_targeting`.
     return out
 
 
@@ -126,9 +165,16 @@ def build_targeting(
         "geo_locations": {"regions": [{"key": rules["default_geo_region_key"]}]},
         "age_min": age_min,
         "age_max": age_max,
-        "publisher_platforms": ["facebook"],
+        # Facebook + Instagram. Antes era solo facebook: la campaña nunca se
+        # mostraba en IG aunque la página tuviera cuenta conectada y el
+        # histórico midiera placements de Instagram.
+        "publisher_platforms": ["facebook", "instagram"],
         "facebook_positions": _facebook_positions(excluded_placements or [], rules),
     }
+
+    ig_positions = _instagram_positions(excluded_placements or [], rules)
+    if ig_positions:
+        targeting["instagram_positions"] = ig_positions
 
     # Advantage+ audience expande la segmentación, pero Meta NO lo admite junto a
     # una edad mínima > 25 (`1870188`). Cuando el histórico ganador apunta a un

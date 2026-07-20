@@ -9,7 +9,10 @@ TENANT_CAMPAIGN_RULES: Dict[str, Any] = {
     "default_geo_region_key": "2771", # Lima Region
     "allowed_geo_keys": ["2771"],
     "required_placements": ["facebook_reels"],
-    "banned_placements": ["instagram_positions"],
+    # Posiciones de Instagram por defecto. Sustituye a la antigua
+    # `banned_placements: ["instagram_positions"]`, que además de prohibir IG
+    # era config MUERTA (declarada y nunca leída por nadie).
+    "instagram_positions": ["stream", "story", "reels", "explore"],
     "default_status": "PAUSED",
     "forbidden_status": "ACTIVE",
     "objective": "OUTCOME_LEADS",

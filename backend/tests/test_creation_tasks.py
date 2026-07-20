@@ -4,6 +4,7 @@ las tareas de la Saga de creación deben usar el stack de escritura real
 mockeado, y deben propagar el tenant_id real (no "mock-tenant-id").
 """
 import concurrent.futures
+import json
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -622,3 +623,73 @@ async def test_saga_mid_chain_failure_preserves_partial_progress_and_marks_faile
     assert "targeting" in draft.error_message
     # El progreso del paso exitoso NO se pierde — queda trazado para diagnóstico.
     assert draft.payload["result"]["campaign_id"] == context["campaign_id"]
+
+
+@pytest.mark.asyncio
+async def test_adset_uses_lifetime_budget_by_default(ad_account, mocker):
+    """No-regresión: sin budget_type el adset sigue mandando lifetime_budget."""
+    org, acc = ad_account
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    ctx = _base_context(acc, campaign_id="c1", campaign_name="MARCA_MSJ_X_JUL2026")
+    run_in_thread(task_create_adset, ctx)
+
+    _, _, payload = mock_call_api.call_args[0]
+    assert payload["lifetime_budget"] == 20000  # 200.0 en centavos
+    # Meta rechaza el adset si llegan los dos: son excluyentes.
+    assert "daily_budget" not in payload
+
+
+@pytest.mark.asyncio
+async def test_adset_uses_daily_budget_when_requested(ad_account, mocker):
+    org, acc = ad_account
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    ctx = _base_context(
+        acc, campaign_id="c1", campaign_name="MARCA_MSJ_X_JUL2026",
+        budget=20.0, budget_type="DAILY",
+    )
+    run_in_thread(task_create_adset, ctx)
+
+    _, _, payload = mock_call_api.call_args[0]
+    assert payload["daily_budget"] == 2000
+    assert "lifetime_budget" not in payload
+    # start/end_time se conservan: acotan la duración de la campaña diaria.
+    assert payload["start_time"] and payload["end_time"]
+
+
+@pytest.mark.asyncio
+async def test_creative_carries_headline_description_and_instagram(ad_account, db_session, mocker):
+    """El creativo debe llevar título, descripción y la identidad de IG de la
+    página. Antes headline/description se validaban y se perdían por el camino."""
+    from app.models.meta_page import MetaPage
+
+    org, acc = ad_account
+    db_session.add(MetaPage(
+        organization_id=org.id, external_page_id="page-1", name="Página",
+        instagram_actor_id="ig_555", status="ACTIVE",
+    ))
+    await db_session.commit()
+
+    mock_call_api = mocker.patch(
+        "app.services.meta_ads.rate_limiter.MetaAPIRateLimiter.call_api", autospec=True
+    )
+    mock_call_api.return_value = {"mock": True}
+
+    ctx = _base_context(
+        acc, campaign_id="c1", campaign_name="MARCA_MSJ_X_JUL2026",
+        image_hash="h1", headline="Título", description="Desc",
+    )
+    run_in_thread(task_create_creative, ctx)
+
+    _, _, payload = mock_call_api.call_args[0]
+    story = json.loads(payload["object_story_spec"])
+    assert story["instagram_user_id"] == "ig_555"
+    assert story["link_data"]["name"] == "Título"
+    assert story["link_data"]["description"] == "Desc"

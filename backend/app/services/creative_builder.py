@@ -15,6 +15,9 @@ class CreativeBuilder:
         video_id: Optional[str] = None,
         thumbnail_url: Optional[str] = None,
         whatsapp_number: Optional[str] = None,
+        headline: Optional[str] = None,
+        description: Optional[str] = None,
+        instagram_user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Paso 5 del documento: Crear Creativo (object_story_spec).
@@ -23,6 +26,18 @@ class CreativeBuilder:
         `video_id` + `thumbnail_url`, playbook §5 Paso 4 — "el video suele
         rendir mejor que la imagen estática"). Exactamente uno de los dos debe
         proveerse.
+
+        `headline`/`description` son el TÍTULO y la DESCRIPCIÓN del anuncio
+        (playbook §5 Paso 4: `link_data.name` y `link_data.description`). Ya se
+        pedían en `CampaignCreateRequest` y el validador ya chequeaba sus
+        límites de caracteres, pero nunca se enviaban a Meta: el anuncio salía
+        solo con `message`. Ambos opcionales — sin ellos el payload queda
+        exactamente como antes.
+
+        `instagram_user_id`: la cuenta de IG conectada a la página
+        (`MetaPage.instagram_actor_id`, ya capturada por el sync). Necesaria
+        para que el anuncio se muestre en Instagram con la identidad correcta;
+        sin ella Meta usa la página de Facebook como identidad de respaldo.
         """
         if not image_hash and not video_id:
             raise ValueError("Debe proveerse image_hash (imagen) o video_id (video).")
@@ -65,30 +80,42 @@ class CreativeBuilder:
         )
 
         if video_id:
-            story_spec_extra = {
-                "video_data": {
-                    "video_id": video_id,
-                    "image_url": thumbnail_url,
-                    "message": copy_text,
-                    "call_to_action": call_to_action,
-                    "page_welcome_message": page_welcome_message,
-                }
+            video_data = {
+                "video_id": video_id,
+                "image_url": thumbnail_url,
+                "message": copy_text,
+                "call_to_action": call_to_action,
+                "page_welcome_message": page_welcome_message,
             }
+            # En video_data los campos se llaman distinto que en link_data:
+            # `title` (no `name`) y `link_description` (no `description`).
+            if headline:
+                video_data["title"] = headline
+            if description:
+                video_data["link_description"] = description
+            story_spec_extra = {"video_data": video_data}
         else:
-            story_spec_extra = {
-                "link_data": {
-                    "image_hash": image_hash,
-                    "link": wa_link,
-                    "message": copy_text,
-                    "call_to_action": call_to_action,
-                    "page_welcome_message": page_welcome_message,
-                }
+            link_data = {
+                "image_hash": image_hash,
+                "link": wa_link,
+                "message": copy_text,
+                "call_to_action": call_to_action,
+                "page_welcome_message": page_welcome_message,
             }
+            if headline:
+                link_data["name"] = headline
+            if description:
+                link_data["description"] = description
+            story_spec_extra = {"link_data": link_data}
+
+        object_story_spec: Dict[str, Any] = {"page_id": page_id}
+        # Solo se declara si la página tiene IG conectado: mandar la clave con
+        # None haría que Meta rechace el creativo por parámetro inválido.
+        if instagram_user_id:
+            object_story_spec["instagram_user_id"] = instagram_user_id
+        object_story_spec.update(story_spec_extra)
 
         return {
             "name": name,
-            "object_story_spec": {
-                "page_id": page_id,
-                **story_spec_extra,
-            }
+            "object_story_spec": object_story_spec,
         }

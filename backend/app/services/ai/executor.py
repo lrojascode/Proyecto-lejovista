@@ -168,6 +168,14 @@ class AIExecutor:
         )
         product_name = params.get("product_name") or "Producto"
 
+        # F3: mismo molde de nombres que la creación manual — esta ruta también
+        # debe producir campañas que se vean "de la casa".
+        from app.services.campaign_suggester import CampaignSuggester
+
+        suggested_campaign_name = (
+            await CampaignSuggester(self.db).suggest(ad_account, product_name=product_name)
+        ).get("suggested_campaign_name")
+
         draft = CampaignDraft(
             organization_id=action.organization_id,
             name=product_name,
@@ -206,6 +214,13 @@ class AIExecutor:
             "video_id": None,
             "thumbnail_url": None,
             "copy_text": copy_text,
+            # F5: el creativo ya sabe colocarlos en link_data.name/description.
+            # Siguen además dentro de `copy_text` para no cambiar el cuerpo del
+            # anuncio que esta ruta venía produciendo.
+            "headline": creative_params.get("headline"),
+            "description": creative_params.get("description"),
+            # F3: nombre con la nomenclatura real de la cuenta.
+            "campaign_name": suggested_campaign_name,
             "best_age_range": params.get("best_age_range"),
             "best_device": params.get("best_device"),
             "excluded_placements": params.get("excluded_placements") or [],
