@@ -102,7 +102,8 @@ Plantilla con TLS y subdominios reales (a completar por dominio).
 - **CI** (`.github/workflows/ci.yml`): en cada push/PR a `main` corre pytest+alembic (backend) y tsc+jest+build (frontend).
 - **CD** (`.github/workflows/deploy.yml`): se dispara solo si CI termina en éxito sobre `main` (`workflow_run`). Construye y publica backend/frontend en GHCR (reemplaza el uso rutinario de `build-push.sh`, que queda como alternativa manual/local) y luego un job de deploy hace SSH al VPS (`pull` + `up -d`).
 - **Gate manual**: el job de deploy usa el Environment `production`, configurado en GitHub (Settings → Environments) con *required reviewers* — queda en pausa hasta que alguien lo aprueba desde la pestaña Actions. Mientras el proyecto siga cambiando rápido, cada despliegue real requiere ese clic explícito.
-- Secrets/vars necesarios en el repo: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (secrets) y `BASE_DOMAIN`, `VPS_DEPLOY_PATH` (variables).
+- Secrets/vars necesarios en el repo: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (secrets) y `BASE_DOMAIN`, `VPS_DEPLOY_PATH` (variables).  
+  - Compatibilidad: también acepta `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` como alias de secrets.
 
 ## 9. Scripts auxiliares
 
