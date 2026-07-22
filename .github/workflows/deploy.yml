@@ -63,17 +63,27 @@ jobs:
     name: Deploy al VPS
     needs: build-and-push
     runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.VPS_HOST || secrets.SSH_HOST }}
+      DEPLOY_USER: ${{ secrets.VPS_USER || secrets.SSH_USER }}
+      DEPLOY_KEY: ${{ secrets.VPS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
     # Gate manual: este Environment debe configurarse en Settings → Environments
     # con "Required reviewers" — el job queda en pausa ("Waiting for approval")
     # hasta que alguien lo apruebe desde la pestaña Actions.
     environment: production
     steps:
+      - name: Validar secretos de deploy
+        run: |
+          test -n "$DEPLOY_HOST" || { echo "::error::Falta configurar el secret VPS_HOST (o SSH_HOST)"; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "::error::Falta configurar el secret VPS_USER (o SSH_USER)"; exit 1; }
+          test -n "$DEPLOY_KEY" || { echo "::error::Falta configurar el secret VPS_SSH_KEY (o SSH_PRIVATE_KEY)"; exit 1; }
+
       - name: SSH deploy (pull + up -d)
         uses: appleboy/ssh-action@v1
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
+          host: ${{ env.DEPLOY_HOST }}
+          username: ${{ env.DEPLOY_USER }}
+          key: ${{ env.DEPLOY_KEY }}
           script: |
             set -euo pipefail
             cd ${{ vars.VPS_DEPLOY_PATH }}
