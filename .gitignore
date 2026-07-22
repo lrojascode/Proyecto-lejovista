@@ -26,6 +26,12 @@ Thumbs.db
 *.env
 !.env.example
 
+# Infra secrets (migración VPS / wacrm) — NUNCA commitear
+docs/infra/*.env
+docs/infra/wacrm.env*
+docs/infra/backups/
+docs/infra/vps-traefik-compose-backup-*.yml
+
 # Node / frontend dependencies and build outputs
 **/node_modules/
 **/bower_components/
