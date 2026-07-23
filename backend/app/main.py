@@ -12,6 +12,7 @@ from app.api.v1.ai_usage import router as ai_usage_router
 from app.api.v1.ws import router as ws_router, redis_listener
 import logging
 import asyncio
+import re
 
 # Configurar logging estructurado (formato con timestamp, nivel y logger).
 logging.basicConfig(
@@ -62,10 +63,13 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
 )
 
-# Configurar CORS para permitir requests de subdominios locales y producción.
-# TUNNEL_ORIGIN_REGEX permite sumar el hostname de un túnel (ngrok/Cloudflare)
-# sin hardcodear un dominio de terceros en el código versionado.
-_cors_origin_regex = r"^https?://(.*\.)?(localhost:3000|localhost|lrojas\.dev)$"
+# Configurar CORS para permitir requests de subdominios locales y de producción.
+# El dominio real de despliegue se deriva de BASE_DOMAIN (ej.
+# lejovista.agenciakibo.com y sus subdominios de tenant), así CORS funciona en
+# cualquier dominio sin hardcodearlo. TUNNEL_ORIGIN_REGEX suma un hostname extra
+# (túnel ngrok/Cloudflare) sin tocar el código.
+_base_host = re.escape(settings.BASE_DOMAIN.split(":")[0])
+_cors_origin_regex = rf"^https?://(.*\.)?({_base_host}|localhost:3000|localhost|lrojas\.dev)$"
 if settings.TUNNEL_ORIGIN_REGEX:
     _cors_origin_regex = f"({_cors_origin_regex})|({settings.TUNNEL_ORIGIN_REGEX})"
 
