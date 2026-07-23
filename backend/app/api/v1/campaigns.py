@@ -49,8 +49,9 @@ from app.workers.creation_tasks import (
 from app.schemas.response_schemas import (
     ApiCallHistoryEntry, SuggestionResponse, ImageUploadResponse, RiskPreviewResponse,
     CampaignCreateAcceptedResponse, LearningLogResponse, MessageResponse,
-    CampaignPreflightResponse, VideoUploadResponse,
+    CampaignPreflightResponse, VideoUploadResponse, SyncLearningResponse,
 )
+from app.models.account_learning_snapshot import AccountLearningSnapshot
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
@@ -688,6 +689,41 @@ async def get_learning_history(
             "analysis": r.analysis_json,
             "maturity": r.maturity_json,
             "outcome": r.outcome_json,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/sync-learning-history", response_model=List[SyncLearningResponse])
+async def get_sync_learning_history(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Aprendizaje longitudinal por sincronización (Q2): el rendimiento medido de
+    la cuenta en cada sync y cómo cambió respecto al anterior, con su veredicto de
+    tendencia y observaciones deterministas. Scopeado a la cuenta activa."""
+    q = select(AccountLearningSnapshot).where(
+        AccountLearningSnapshot.organization_id == current_user.organization_id,
+    )
+    if ad_account_id:
+        q = q.where(AccountLearningSnapshot.ad_account_id == ad_account_id)
+    q = q.order_by(desc(AccountLearningSnapshot.created_at)).limit(max(1, min(limit, 100)))
+
+    rows = (await db.execute(q)).scalars().all()
+    return [
+        {
+            "id": r.id,
+            "window_days": r.window_days,
+            "verdict": r.verdict,
+            "kpis": r.kpis_json,
+            "deltas": r.deltas_json,
+            "top": r.top_json,
+            "bottom": r.bottom_json,
+            "segmentation": r.segmentation_json,
+            "observations": r.observations_json,
             "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows

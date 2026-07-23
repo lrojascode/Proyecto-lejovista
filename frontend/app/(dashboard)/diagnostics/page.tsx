@@ -4,12 +4,22 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
-import type { AIInsight, BriefData } from "@/lib/types";
+import type { AIInsight, BriefData, SyncLearningSnapshot } from "@/lib/types";
+
+// Q2: color/etiqueta del veredicto de tendencia de cada sincronización.
+const VERDICT_META: Record<string, { label: string; badge: string }> = {
+  IMPROVING: { label: "Mejorando", badge: "badge-success" },
+  DEGRADING: { label: "Empeorando", badge: "badge-danger" },
+  STABLE: { label: "Estable", badge: "badge-neutral" },
+  BASELINE: { label: "Referencia inicial", badge: "badge-neutral" },
+  NO_DATA: { label: "Sin datos", badge: "badge-warning" },
+};
 
 export default function Diagnostics() {
   const { lastEvent } = useWebSocket();
   const [insights, setInsights] = useState<AIInsight[]>([]);
   const [briefData, setBriefData] = useState<BriefData | null>(null);
+  const [learning, setLearning] = useState<SyncLearningSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [dismissingId, setDismissingId] = useState("");
@@ -28,6 +38,14 @@ export default function Diagnostics() {
       } catch (briefErr) {
         // El brief puede no existir todavía (400 sin datos); no es un error duro.
         console.error("Error al obtener datos del reporte:", briefErr);
+      }
+
+      try {
+        // Q2: trayectoria de aprendizaje por sincronización. Complementaria; si
+        // aún no hay snapshots, no es un error.
+        setLearning(await api.getSyncLearningHistory(10));
+      } catch (learnErr) {
+        console.error("Error al obtener la trayectoria de aprendizaje:", learnErr);
       }
     } catch (e: any) {
       console.error("Error fetching insights:", e);
@@ -225,6 +243,73 @@ export default function Diagnostics() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Q2: Trayectoria de aprendizaje por sincronización */}
+              <div className="glass-card">
+                <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.25rem", color: "var(--color-paper)" }}>
+                  Trayectoria de aprendizaje
+                </h3>
+                <p style={{ fontSize: "13px", color: "var(--color-fog)", marginBottom: "1rem" }}>
+                  Lo que la IA aprende del rendimiento real de la cuenta en cada sincronización.
+                </p>
+                {learning.length === 0 ? (
+                  <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
+                    Aún no hay aprendizaje registrado — se guarda automáticamente en la próxima sincronización.
+                  </p>
+                ) : (
+                  <>
+                    {/* Última sincronización, con sus observaciones */}
+                    {(() => {
+                      const latest = learning[0];
+                      const meta = VERDICT_META[latest.verdict || "STABLE"] || VERDICT_META.STABLE;
+                      return (
+                        <div className="card-subtle" style={{ marginBottom: "1rem" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
+                            <span className={`badge ${meta.badge}`}>{badgeIcon(meta.badge)} {meta.label}</span>
+                            {latest.kpis && (
+                              <span style={{ fontSize: "13px", color: "var(--color-fog)" }}>
+                                S/.{latest.kpis.cost_per_conv.toFixed(2)}/conv · {latest.kpis.conversations} conv · S/.{latest.kpis.spend.toFixed(2)} gasto
+                              </span>
+                            )}
+                            {latest.created_at && (
+                              <span style={{ fontSize: "12px", color: "var(--color-ash)", marginLeft: "auto" }}>
+                                {new Date(latest.created_at).toLocaleString("es-PE", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            )}
+                          </div>
+                          <ul style={{ margin: 0, paddingLeft: "1.1rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                            {(latest.observations || []).map((o, i) => (
+                              <li key={i} style={{ fontSize: "13px", color: "var(--text-primary)", lineHeight: "1.5" }}>{o}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Sincronizaciones anteriores, compactas */}
+                    {learning.length > 1 && (
+                      <div style={{ display: "flex", gap: "0.5rem", overflowX: "auto", paddingBottom: "0.25rem" }}>
+                        {learning.slice(1).map((s) => {
+                          const meta = VERDICT_META[s.verdict || "STABLE"] || VERDICT_META.STABLE;
+                          return (
+                            <div key={s.id} style={{ flex: "0 0 auto", minWidth: "120px", padding: "0.5rem 0.75rem", background: "var(--color-carbon)", borderRadius: "8px", border: "1px solid var(--color-graphite)" }}>
+                              <div style={{ fontSize: "11px", color: "var(--color-ash)", marginBottom: "0.25rem" }}>
+                                {s.created_at ? new Date(s.created_at).toLocaleDateString("es-PE", { day: "2-digit", month: "short" }) : ""}
+                              </div>
+                              <span className={`badge ${meta.badge}`} style={{ fontSize: "0.65rem" }}>{meta.label}</span>
+                              {s.kpis && (
+                                <div style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "0.35rem" }}>
+                                  S/.{s.kpis.cost_per_conv.toFixed(2)}/conv
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* Two columns: Narrative and Campaign Performance Table */}

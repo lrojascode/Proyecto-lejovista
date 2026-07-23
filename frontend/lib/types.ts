@@ -41,6 +41,23 @@ export type AIAction = Schemas["AIActionResponse"];
 // --- LEARNING HISTORY (/campaigns/learning-history) ---
 export type LearningLog = Schemas["LearningLogResponse"];
 
+// --- SYNC LEARNING (/campaigns/sync-learning-history) ---
+// Tipado a mano (no está en los tipos generados del OpenAPI todavía). Aprendizaje
+// longitudinal por sincronización (Q2).
+export type SyncLearningKpis = { spend: number; conversations: number; cost_per_conv: number };
+export type SyncLearningSnapshot = {
+  id: string;
+  window_days: number | null;
+  verdict: string | null; // IMPROVING | STABLE | DEGRADING | NO_DATA | BASELINE
+  kpis: SyncLearningKpis | null;
+  deltas: { spend: number | null; conversations: number | null; cost_per_conv: number | null } | null;
+  top: Array<{ name: string; cost_per_conv: number; conversations: number }> | null;
+  bottom: Array<{ name: string; cost_per_conv: number; conversations: number }> | null;
+  segmentation: Record<string, { name: string; cost_per_conv: number; conversations: number }> | null;
+  observations: string[] | null;
+  created_at: string | null;
+};
+
 // --- CAMPAIGN SUGGESTION (/campaigns/suggestion) ---
 export type SuggestionChange = Schemas["SuggestionChange"];
 export type SuggestionAnalysis = Schemas["SuggestionAnalysis"];

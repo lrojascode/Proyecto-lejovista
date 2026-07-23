@@ -347,6 +347,13 @@ a {
   border-color: rgba(235, 87, 87, 0.2);
 }
 
+/* Informativo/neutral: ni éxito ni alerta (ej. tendencia estable / referencia). */
+.badge-neutral {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-fog);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
 /* Distingue contenido generado por el LLM del que sale directo de los datos
    sincronizados (agregaciones/reglas, sin IA generativa de por medio). */
 .badge-ai {

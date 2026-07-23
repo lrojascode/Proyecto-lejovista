@@ -19,6 +19,7 @@ from app.models.custom_audience import CustomAudience
 from app.models.snapshot_archive import CampaignSnapshotArchive, AdsetSnapshotArchive, AdSnapshotArchive
 from app.models.ai_token_usage import AITokenUsage
 from app.models.campaign_learning_log import CampaignLearningLog
+from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 
 
@@ -45,5 +46,6 @@ __all__ = [
     "AdSnapshotArchive",
     "AITokenUsage",
     "CampaignLearningLog",
+    "AccountLearningSnapshot",
     "AdAccountSpendMonthly",
 ]

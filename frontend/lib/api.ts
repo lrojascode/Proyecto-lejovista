@@ -1,7 +1,7 @@
 import { getApiUrl, getTenantSlugFromHostname } from "./config";
 import type {
   TokenResponse, User, Organization, AdAccount, MetaPage, WhatsAppNumber, BusinessPolicies, AiModelsResponse,
-  CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, Suggestion,
+  CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
 } from "./types";
 
@@ -301,6 +301,8 @@ export const api = {
     }),
   getLearningHistory: (limit: number = 20) =>
     apiRequest<LearningLog[]>(`/api/v1/campaigns/learning-history?limit=${limit}`, "GET"),
+  getSyncLearningHistory: (limit: number = 10) =>
+    apiRequest<SyncLearningSnapshot[]>(`/api/v1/campaigns/sync-learning-history?limit=${limit}`, "GET"),
 
   // --- AI USAGE (contador de tokens) ---
   getAiUsage: (days: number = 30) => apiRequest<AiUsage>(`/api/v1/ai-usage?days=${days}`, "GET"),

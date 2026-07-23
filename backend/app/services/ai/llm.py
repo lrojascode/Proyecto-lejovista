@@ -213,6 +213,8 @@ Variación % vs el periodo previo: {json.dumps(brief_context.get("deltas_pct", {
 
 Pacing (presupuesto diario total configurado vs gasto real diario promedio): {json.dumps(brief_context.get("pacing", {}), indent=2)}
 
+Trayectoria de aprendizaje (histórico de las últimas sincronizaciones de esta cuenta, de más reciente a más antigua — cada una con su veredicto de tendencia y observaciones deterministas; úsalo para leer la evolución real más allá de la última ventana, y menciónalo en el Resumen si hay una tendencia clara): {json.dumps(brief_context.get("learning_trajectory", []), indent=2)}
+
 Top 3 campañas por menor costo/conversación: {json.dumps(brief_context.get("top3", []), indent=2)}
 Bottom 3 campañas por mayor costo/conversación (o sin conversiones): {json.dumps(brief_context.get("bottom3", []), indent=2)}
 

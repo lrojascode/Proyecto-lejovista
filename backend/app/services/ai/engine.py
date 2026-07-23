@@ -15,6 +15,9 @@ from app.services.ai.token_tracking import UsageContext
 from app.services.ai.planner import AIPlanner
 from app.services.report_cache import get_report
 from app.services.kpi_period import get_window_kpis, pct_change
+from app.services.account_learning import (
+    record_sync_learning, get_latest_snapshot, recent_trajectory,
+)
 
 logger = logging.getLogger("lejovista.ai_engine")
 
@@ -86,6 +89,22 @@ class AIEngine:
             # recalculado aquí) para que el LLM clasifique con el mismo
             # criterio que ve el usuario en el dashboard.
             brief_context = await self._build_brief_context(acc)
+
+            # Q2: aprendizaje longitudinal. Registrar el rendimiento REAL medido
+            # de esta sincronización (determinista, desde el mismo reporte) y
+            # comparado con la sincronización anterior; luego alimentar la
+            # trayectoria al LLM para que lea la tendencia a lo largo del tiempo,
+            # no solo la última ventana de 7 días. `get_report` está cacheado, así
+            # que reusarlo aquí no recomputa nada.
+            try:
+                report_for_learning = await get_report(self.db, acc, window_days=7)
+                previous_snapshot = await get_latest_snapshot(self.db, acc.id)
+                await record_sync_learning(self.db, acc, report_for_learning, previous_snapshot)
+                brief_context["learning_trajectory"] = await recent_trajectory(self.db, acc.id, limit=5)
+            except Exception:
+                # El aprendizaje es complementario: si algo falla al registrarlo,
+                # no debe tumbar el análisis ni la narrativa de la cuenta.
+                logger.exception("No se pudo registrar el learning snapshot de la cuenta %s", acc.id)
 
             insights_summary = "\n".join([
                 f"- [{ins.level}] [{ins.category}] {ins.title}: {ins.description}"

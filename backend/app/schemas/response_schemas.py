@@ -313,6 +313,21 @@ class LearningLogResponse(BaseModel):
     created_at: Optional[str] = None
 
 
+# --- Aprendizaje longitudinal por sincronización (Q2) ---
+
+class SyncLearningResponse(BaseModel):
+    id: str
+    window_days: Optional[int] = None
+    verdict: Optional[str] = None
+    kpis: Optional[Dict[str, Any]] = None
+    deltas: Optional[Dict[str, Any]] = None
+    top: Optional[List[Dict[str, Any]]] = None
+    bottom: Optional[List[Dict[str, Any]]] = None
+    segmentation: Optional[Dict[str, Any]] = None
+    observations: Optional[List[str]] = None
+    created_at: Optional[str] = None
+
+
 # --- Modelos de IA disponibles por proveedor activo ---
 
 class AiModelOption(BaseModel):
