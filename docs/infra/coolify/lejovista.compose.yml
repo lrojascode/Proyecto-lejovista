@@ -1,0 +1,146 @@
+# lejovista para Coolify (Docker Compose resource) — SIN el servicio `nginx`
+# (Coolify pone el proxy + TLS). Imágenes desde GHCR (reconstruidas con
+# BASE_DOMAIN=lejovista.agenciakibo.com vía ./build-push.sh).
+#
+# Los secretos/config van como ${VARS}: pegar en "Environment Variables" del
+# recurso (valores en docs/infra/coolify/lejovista.env, gitignored).
+#
+# Tras desplegar, asignar dominios en Coolify (Settings de cada servicio):
+#   - frontend  → https://lejovista.agenciakibo.com      (puerto 3000)
+#   - backend   → https://api.lejovista.agenciakibo.com  (puerto 8000)
+
+# Env compartido por backend + workers + beat + migrate (todos corren la misma app).
+# DATABASE_URL y REDIS_URL se CONSTRUYEN aquí desde DB_PASSWORD/REDIS_PASSWORD para
+# que nunca se desincronicen (no los definas como env var en Coolify). Los
+# booleanos/opcionales llevan default (`:-...`) para que un valor vacío no rompa
+# la validación de pydantic.
+x-app-env: &app-env
+  MOCK_SERVICES: ${MOCK_SERVICES:-false}
+  BASE_DOMAIN: ${BASE_DOMAIN}
+  API_URL: ${API_URL}
+  DB_USER: ${DB_USER}
+  DB_PASSWORD: ${DB_PASSWORD}
+  DB_NAME: ${DB_NAME}
+  DATABASE_URL: postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+  REDIS_PASSWORD: ${REDIS_PASSWORD}
+  REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+  SECRET_KEY: ${SECRET_KEY}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  META_APP_ID: ${META_APP_ID}
+  META_APP_SECRET: ${META_APP_SECRET}
+  META_API_VERSION: ${META_API_VERSION:-v25.0}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  DEFAULT_AI_MODEL: ${DEFAULT_AI_MODEL}
+  ENABLE_META_WRITEBACK: ${ENABLE_META_WRITEBACK:-false}
+  WRITEBACK_ACCOUNT_ALLOWLIST: ${WRITEBACK_ACCOUNT_ALLOWLIST:-}
+  AUTO_CREATE_TABLES: ${AUTO_CREATE_TABLES:-false}
+  ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --maxmemory 256mb
+    volumes:
+      - redis_data:/data
+
+  migrate:
+    image: ${IMAGE_PREFIX}/proyectolejovista-backend:${IMAGE_TAG}
+    command: alembic upgrade head
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *app-env
+
+  backend:
+    image: ${IMAGE_PREFIX}/proyectolejovista-backend:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment: *app-env
+    expose:
+      - "8000"
+    volumes:
+      - media_data:/app/media
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/').status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  celery-worker-sync:
+    image: ${IMAGE_PREFIX}/proyectolejovista-backend:${IMAGE_TAG}
+    command: celery -A app.workers worker -Q sync --loglevel=info --concurrency=2 --hostname=sync@%h
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment: *app-env
+
+  celery-worker-ai:
+    image: ${IMAGE_PREFIX}/proyectolejovista-backend:${IMAGE_TAG}
+    command: celery -A app.workers worker -Q ai --loglevel=info --concurrency=1 --hostname=ai@%h
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment: *app-env
+
+  celery-worker-creation:
+    image: ${IMAGE_PREFIX}/proyectolejovista-backend:${IMAGE_TAG}
+    command: celery -A app.workers worker -Q creation,celery --loglevel=info --concurrency=1 --hostname=creation@%h
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment: *app-env
+    volumes:
+      - media_data:/app/media
+
+  celery-beat:
+    image: ${IMAGE_PREFIX}/proyectolejovista-backend:${IMAGE_TAG}
+    command: celery -A app.workers beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    restart: unless-stopped
+    depends_on:
+      - celery-worker-sync
+      - celery-worker-ai
+      - celery-worker-creation
+    environment: *app-env
+
+  frontend:
+    image: ${IMAGE_PREFIX}/proyectolejovista-frontend:${IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_BASE_DOMAIN: ${BASE_DOMAIN}
+    expose:
+      - "3000"
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:

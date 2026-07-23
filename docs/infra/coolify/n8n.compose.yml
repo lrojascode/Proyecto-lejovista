@@ -1,0 +1,96 @@
+# n8n para Coolify (Docker Compose resource) — sin Traefik (Coolify pone el proxy).
+# Los secretos van como ${VARS}: se pegan en la pestaña "Environment Variables"
+# del recurso en Coolify (ver docs/infra/coolify/n8n.env, gitignored).
+#
+# Tras desplegar: en Coolify, asignar el dominio n8n.agenciakibo.com al servicio
+# `n8n-main` (puerto 5678).
+services:
+  redis:
+    image: redis:6-alpine
+    restart: always
+    environment:
+      - TZ=America/Sao_Paulo
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+      - TZ=America/Sao_Paulo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  n8n-main:
+    image: n8nio/n8n
+    restart: always
+    environment:
+      - N8N_HOST=n8n.agenciakibo.com
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - N8N_EDITOR_BASE_URL=https://n8n.agenciakibo.com/
+      - WEBHOOK_URL=https://n8n.agenciakibo.com/
+      - N8N_SECURE_COOKIE=true
+      - NODE_ENV=production
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${DB_NAME}
+      - DB_POSTGRESDB_USER=${DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_RUNNERS_ENABLED=true
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+    expose:
+      - "5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      - redis
+      - postgres
+
+  n8n-worker:
+    image: n8nio/n8n
+    restart: always
+    command: worker
+    environment:
+      - NODE_ENV=production
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_HEALTH_CHECK_ACTIVE=true
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${DB_NAME}
+      - DB_POSTGRESDB_USER=${DB_USER}
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_RUNNERS_ENABLED=true
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+    depends_on:
+      - redis
+      - postgres
+
+volumes:
+  redis_data:
+  postgres_data:
+  n8n_data:

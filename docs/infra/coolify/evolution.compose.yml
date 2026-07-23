@@ -1,0 +1,69 @@
+# Evolution API para Coolify (Docker Compose resource) — sin Traefik.
+# Postgres + Redis DEDICADOS (separados de n8n). Secretos como ${VARS}: pegar en
+# "Environment Variables" del recurso (valores en docs/infra/coolify/evolution.env,
+# gitignored).
+#
+# Tras desplegar: asignar el dominio api.evolution.agenciakibo.com al servicio
+# `evolution-api` (puerto 8080).
+services:
+  redis:
+    image: redis:6-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+      - TZ=America/Lima
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.6
+    restart: always
+    environment:
+      - SERVER_URL=https://api.evolution.agenciakibo.com
+      - AUTHENTICATION_API_KEY=${AUTHENTICATION_API_KEY}
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - DEL_INSTANCE=false
+      - TZ=America/Lima
+      # Sin Chatwoot desplegado por ahora — se puede activar más adelante.
+      - CHATWOOT_ENABLED=false
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}?schema=public
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/1
+      - CACHE_REDIS_PREFIX_KEY=evolution
+      - CACHE_LOCAL_ENABLED=false
+    expose:
+      - "8080"
+    volumes:
+      - evolution_instances:/evolution/instances
+    depends_on:
+      - postgres
+      - redis
+
+volumes:
+  redis_data:
+  postgres_data:
+  evolution_instances:
