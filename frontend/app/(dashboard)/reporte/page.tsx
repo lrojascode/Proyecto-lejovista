@@ -148,6 +148,55 @@ function DistributionBars({ title, data }: { title: string; data: Record<string,
   );
 }
 
+// Q3: tope de altura de las secciones largas (tablas/listas) para que ninguna
+// domine la página; el contenido que excede hace scroll DENTRO de la sección.
+const SECTION_MAX_H = 340;
+
+// Cabecera de tabla que queda fija al hacer scroll interno, para no perder el
+// contexto de las columnas.
+const thSticky: React.CSSProperties = {
+  ...th,
+  position: "sticky",
+  top: 0,
+  background: "var(--color-carbon)",
+  zIndex: 1,
+};
+
+function ScrollBox({ children, maxHeight = SECTION_MAX_H }: { children: React.ReactNode; maxHeight?: number }) {
+  return <div style={{ maxHeight, overflowY: "auto", overflowX: "auto" }}>{children}</div>;
+}
+
+// Q3: convierte una tabla de "volcado" en algo accionable — surface la fila más
+// eficiente y la que conviene revisar (gasto sin conversiones, o el mayor costo).
+// `rows` se asume ordenada por costo/conversación ascendente (así vienen del
+// backend), con `conversations === 0` para las que no convirtieron.
+function ImpactInsight({ rows }: { rows: Array<{ name: string; spend: number; conversations: number; cost_per_conv: number }> }) {
+  const withConv = rows.filter((r) => r.conversations > 0);
+  const best = withConv[0];
+  const wasted = rows
+    .filter((r) => r.conversations === 0 && r.spend > 0)
+    .sort((a, b) => b.spend - a.spend)[0];
+  const worstPaid = [...withConv].sort((a, b) => b.cost_per_conv - a.cost_per_conv)[0];
+  const worst = wasted || (worstPaid && best && worstPaid.name !== best.name ? worstPaid : undefined);
+  if (!best && !worst) return null;
+  return (
+    <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap", marginBottom: "0.85rem", fontSize: "0.82rem", lineHeight: 1.4 }}>
+      {best && (
+        <span style={{ color: "var(--color-pulse-green)" }}>
+          ▲ Más eficiente: <strong style={{ color: "var(--color-paper)" }}>{best.name}</strong> · {money(best.cost_per_conv)}/conv
+        </span>
+      )}
+      {worst && (
+        <span style={{ color: "var(--color-coral-red)" }}>
+          ▼ Revisar: <strong style={{ color: "var(--color-paper)" }}>{worst.name}</strong>
+          {" · "}
+          {worst.conversations === 0 ? `${money(worst.spend)} sin conversiones` : `${money(worst.cost_per_conv)}/conv`}
+        </span>
+      )}
+    </div>
+  );
+}
+
 const WINDOW_OPTIONS = [7, 30, 90] as const;
 
 export default function Reporte() {
@@ -321,12 +370,14 @@ export default function Reporte() {
       </div>
 
       {/* Campañas */}
-      <div style={{ ...card, overflowX: "auto" }}>
+      <div style={card}>
         <h2 style={h2}>Rendimiento por Campaña <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 400 }}>· ordenado por costo/conversación</span></h2>
+        <ImpactInsight rows={r.campaigns} />
+        <ScrollBox>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>
-            <th style={th}>Campaña</th><th style={th}>Gasto</th><th style={th}>Alcance</th><th style={th}>Frec.</th>
-            <th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th><th style={th}>Estado</th>
+            <th style={thSticky}>Campaña</th><th style={thSticky}>Gasto</th><th style={thSticky}>Alcance</th><th style={thSticky}>Frec.</th>
+            <th style={thSticky}>CTR</th><th style={thSticky}>Conv.</th><th style={thSticky}>Costo/Conv.</th><th style={thSticky}>Estado</th>
           </tr></thead>
           <tbody>
             {r.campaigns.map((c: ReportCampaign) => (
@@ -353,16 +404,19 @@ export default function Reporte() {
             ))}
           </tbody>
         </table>
+        </ScrollBox>
       </div>
 
       {/* Adsets */}
       {r.adsets.length > 0 && (
-        <div style={{ ...card, overflowX: "auto" }}>
+        <div style={card}>
           <h2 style={h2}>Rendimiento por Conjunto de Anuncios <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 400 }}>· nivel adset</span></h2>
+          <ImpactInsight rows={r.adsets} />
+          <ScrollBox>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
-              <th style={th}>Adset</th><th style={th}>Targeting</th><th style={th}>Gasto</th>
-              <th style={th}>Alcance</th><th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th>
+              <th style={thSticky}>Adset</th><th style={thSticky}>Targeting</th><th style={thSticky}>Gasto</th>
+              <th style={thSticky}>Alcance</th><th style={thSticky}>CTR</th><th style={thSticky}>Conv.</th><th style={thSticky}>Costo/Conv.</th>
             </tr></thead>
             <tbody>
               {r.adsets.map((a: ReportAdset) => {
@@ -385,17 +439,20 @@ export default function Reporte() {
               })}
             </tbody>
           </table>
+          </ScrollBox>
         </div>
       )}
 
       {/* Anuncios / creativos */}
       {r.ads.length > 0 && (
-        <div style={{ ...card, overflowX: "auto" }}>
+        <div style={card}>
           <h2 style={h2}>Rendimiento por Anuncio / Creativo</h2>
+          <ImpactInsight rows={r.ads} />
+          <ScrollBox>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
-              <th style={th}>Anuncio</th><th style={th}>Gasto</th><th style={th}>Alcance</th>
-              <th style={th}>Impr.</th><th style={th}>CTR</th><th style={th}>Conv.</th><th style={th}>Costo/Conv.</th>
+              <th style={thSticky}>Anuncio</th><th style={thSticky}>Gasto</th><th style={thSticky}>Alcance</th>
+              <th style={thSticky}>Impr.</th><th style={thSticky}>CTR</th><th style={thSticky}>Conv.</th><th style={thSticky}>Costo/Conv.</th>
             </tr></thead>
             <tbody>
               {r.ads.map((a: ReportAd) => (
@@ -411,12 +468,14 @@ export default function Reporte() {
               ))}
             </tbody>
           </table>
+          </ScrollBox>
         </div>
       )}
 
       {/* Segmentación */}
       <div style={card}>
         <h2 style={h2}>¿Dónde convierte mejor? — Plataforma y Dispositivo</h2>
+        <ScrollBox maxHeight={420}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "1.5rem", marginBottom: "1.5rem" }}>
           <DistributionBars title="Distribución de gasto por placement" data={r.segmentation.placements} />
           <DistributionBars title="Distribución de gasto por dispositivo" data={r.segmentation.device} />
@@ -428,25 +487,35 @@ export default function Reporte() {
           <BreakdownTable title="Género" data={r.segmentation.gender} />
           <BreakdownTable title="Geografía" data={r.segmentation.region} />
         </div>
+        </ScrollBox>
       </div>
 
       {/* Audiencias + creativos */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
         <div style={card}>
-          <h2 style={{ ...h2, fontSize: "15px" }}>Audiencias personalizadas</h2>
+          <h2 style={{ ...h2, fontSize: "15px" }}>
+            Audiencias personalizadas
+            {r.audiences.length > 0 && <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 400 }}> · {r.audiences.length}</span>}
+          </h2>
           {r.audiences.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Esta cuenta no tiene audiencias personalizadas guardadas en Meta (usa Advantage+ o segmentación por intereses).</p> :
-            r.audiences.map((a: ReportAudience, i: number) => (
+            <ScrollBox>
+            {r.audiences.map((a: ReportAudience, i: number) => (
               <div key={i} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)" }}>
                 <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>{a.name}</strong>{" "}
                 <span className="badge badge-success">{badgeIcon("badge-success")} {a.subtype}</span>
                 <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>{a.description} · ~{num(a.approximate_count ?? 0)}</p>
               </div>
             ))}
+            </ScrollBox>}
         </div>
         <div style={card}>
-          <h2 style={{ ...h2, fontSize: "15px" }}>Inventario de creativos</h2>
+          <h2 style={{ ...h2, fontSize: "15px" }}>
+            Inventario de creativos
+            {r.creatives.length > 0 && <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", fontWeight: 400 }}> · {r.creatives.length}</span>}
+          </h2>
           {r.creatives.length === 0 ? <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Sin creativos.</p> :
-            r.creatives.map((c: ReportCreative, i: number) => (
+            <ScrollBox>
+            {r.creatives.map((c: ReportCreative, i: number) => (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.5rem 0", borderBottom: "1px solid var(--border-color)", fontSize: "0.85rem" }}>
                 {/* 5.4(c): thumbnail real del creativo — la `url` ya venía del
                     reporte pero no se mostraba, solo texto. Fallback a un
@@ -458,6 +527,7 @@ export default function Reporte() {
                 </div>
               </div>
             ))}
+            </ScrollBox>}
         </div>
       </div>
 
