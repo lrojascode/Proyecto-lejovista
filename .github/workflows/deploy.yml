@@ -59,34 +59,11 @@ jobs:
             ghcr.io/lrojascode/proyectolejovista-frontend:latest
             ghcr.io/lrojascode/proyectolejovista-frontend:${{ github.event.workflow_run.head_sha }}
 
-  deploy:
-    name: Deploy al VPS
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    env:
-      DEPLOY_HOST: ${{ secrets.VPS_HOST || secrets.SSH_HOST }}
-      DEPLOY_USER: ${{ secrets.VPS_USER || secrets.SSH_USER }}
-      DEPLOY_KEY: ${{ secrets.VPS_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
-    # Gate manual: este Environment debe configurarse en Settings → Environments
-    # con "Required reviewers" — el job queda en pausa ("Waiting for approval")
-    # hasta que alguien lo apruebe desde la pestaña Actions.
-    environment: production
-    steps:
-      - name: Validar secretos de deploy
-        run: |
-          test -n "$DEPLOY_HOST" || { echo "::error::Falta configurar el secret VPS_HOST (o SSH_HOST)"; exit 1; }
-          test -n "$DEPLOY_USER" || { echo "::error::Falta configurar el secret VPS_USER (o SSH_USER)"; exit 1; }
-          test -n "$DEPLOY_KEY" || { echo "::error::Falta configurar el secret VPS_SSH_KEY (o SSH_PRIVATE_KEY)"; exit 1; }
-
-      - name: SSH deploy (pull + up -d)
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ env.DEPLOY_HOST }}
-          username: ${{ env.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_KEY }}
-          script: |
-            set -euo pipefail
-            cd ${{ vars.VPS_DEPLOY_PATH }}
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d
-            docker image prune -f
+  # El deploy al VPS lo gestiona AHORA Coolify, no un job SSH. Este workflow solo
+  # construye y publica las imágenes en GHCR; Coolify hace el pull al redesplegar el
+  # recurso lejovista (manual por ahora; se puede automatizar con un "deploy webhook"
+  # de Coolify llamado como un paso extra aquí).
+  #
+  # Se eliminó el job "Deploy al VPS" (appleboy/ssh-action + docker compose
+  # -f docker-compose.prod.yml up -d): con la migración a Coolify chocaba —
+  # levantaba el stack viejo con nginx tomando 80/443, que son del proxy de Coolify.
