@@ -3,6 +3,10 @@
 # 🚀 LejoVista — Script de Configuración de VPS HostGator
 # ══════════════════════════════════════════════════════════
 #
+# ⚠️ OBSOLETO: este script describe el aprovisionamiento manual pre-Coolify
+# (Certbot wildcard + docker compose a mano). Producción ahora corre en Coolify;
+# para desplegar ver docs/infra/deploy-runbook.md. Se conserva como referencia.
+#
 # Instrucciones de uso:
 # 1. Copiar este script al VPS: scp scripts/setup-hostgator.sh root@tu_ip:/tmp/
 # 2. Entrar por SSH al VPS y ejecutar: chmod +x /tmp/setup-hostgator.sh && /tmp/setup-hostgator.sh
@@ -84,5 +88,5 @@ echo ""
 echo "2. Genera el certificado SSL wildcard con Certbot:"
 echo "   certbot certonly --manual --preferred-challenges dns -d midominio.com -d *.midominio.com"
 echo ""
-echo "3. Copia el código a /opt/lejovista y ejecuta: docker compose -f docker-compose.prod.yml up -d"
+echo "3. (Modelo actual) Desplegar desde Coolify: recurso lejovista -> Redeploy. Ver docs/infra/deploy-runbook.md"
 echo "=================================================="

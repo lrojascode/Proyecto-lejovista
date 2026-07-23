@@ -3,6 +3,10 @@ name: Deploy
 # Se dispara cuando el workflow "CI" (ci.yml) termina en main. Así el build de
 # imágenes solo arranca si los tests ya pasaron — no hay una segunda carrera
 # de jobs comprobando lo mismo.
+#
+# Este workflow SOLO construye y publica las imágenes en GHCR (tags `latest` +
+# `${head_sha}`). El despliegue lo hace Coolify: panel → recurso lejovista →
+# "Redeploy". Flujo completo y rollback en docs/infra/deploy-runbook.md.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -59,11 +63,17 @@ jobs:
             ghcr.io/lrojascode/proyectolejovista-frontend:latest
             ghcr.io/lrojascode/proyectolejovista-frontend:${{ github.event.workflow_run.head_sha }}
 
-  # El deploy al VPS lo gestiona AHORA Coolify, no un job SSH. Este workflow solo
-  # construye y publica las imágenes en GHCR; Coolify hace el pull al redesplegar el
-  # recurso lejovista (manual por ahora; se puede automatizar con un "deploy webhook"
-  # de Coolify llamado como un paso extra aquí).
-  #
-  # Se eliminó el job "Deploy al VPS" (appleboy/ssh-action + docker compose
-  # -f docker-compose.prod.yml up -d): con la migración a Coolify chocaba —
-  # levantaba el stack viejo con nginx tomando 80/443, que son del proxy de Coolify.
+      # Cada imagen se publica con dos tags: `latest` (lo que Coolify pullea en un
+      # Redeploy normal) y `${head_sha}` inmutable (para rollback determinista:
+      # apuntar IMAGE_TAG al sha anterior en Coolify — ver deploy-runbook.md).
+      - name: Resumen
+        run: |
+          SHA='${{ github.event.workflow_run.head_sha }}'
+          echo "Imágenes publicadas en GHCR con tags: latest y $SHA"
+          echo "Para desplegar: Coolify → recurso lejovista → Redeploy."
+
+  # El deploy al VPS lo gestiona AHORA Coolify, no un job SSH. Se eliminó el job
+  # "Deploy al VPS" (appleboy/ssh-action + docker compose -f docker-compose.prod.yml
+  # up -d): con la migración a Coolify chocaba — levantaba el stack viejo con nginx
+  # tomando 80/443, que son del proxy de Coolify. Coolify hace el pull al redesplegar
+  # el recurso lejovista (manual por ahora; automatizable con un "deploy webhook").

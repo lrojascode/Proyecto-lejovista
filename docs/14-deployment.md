@@ -2,7 +2,7 @@
 
 ## 1. Topología de contenedores
 
-Una sola imagen de **backend** se reutiliza para el API, los 3 workers y beat (solo cambia el `command`). El **frontend** es una imagen Next.js standalone. Nginx es el único punto de entrada.
+Una sola imagen de **backend** se reutiliza para el API, los 3 workers y beat (solo cambia el `command`). El **frontend** es una imagen Next.js standalone. En **local** Nginx es el punto de entrada; en **producción** el proxy + TLS los pone **Coolify** (no hay servicio `nginx` en el compose de prod — ver [§3](#3-producción-coolify)).
 
 | Servicio | Imagen | Rol |
 |----------|--------|-----|
@@ -15,7 +15,7 @@ Una sola imagen de **backend** se reutiliza para el API, los 3 workers y beat (s
 | `celery-worker-creation` | ídem | Colas `creation,celery` (concurrency 1) |
 | `celery-beat` | ídem | Cron |
 | `frontend` | `proyectolejovista-frontend` | Next.js standalone |
-| `nginx` | `nginx:alpine` | Reverse proxy + TLS |
+| `nginx` | `nginx:alpine` | Reverse proxy + TLS **solo en local**; en prod lo reemplaza Coolify |
 
 ## 2. Desarrollo local (`docker-compose.yml`)
 
@@ -32,28 +32,26 @@ docker compose up -d
 
 `alembic upgrade head` ya no es un paso aparte (`O-2`, resuelto): el servicio `migrate` lo corre automáticamente y `backend` espera a que termine (`depends_on: migrate: condition: service_completed_successfully`) antes de arrancar.
 
-## 3. Producción (`docker-compose.prod.yml`)
+## 3. Producción (Coolify)
 
-Filosofía: **no se construye nada en el VPS**. Las imágenes se compilan en la máquina del desarrollador y se publican en un registry (GHCR por defecto); el VPS solo hace `pull`.
+lejovista corre en producción como recurso **Docker Compose de Coolify** sobre el VPS, usando [`docs/infra/coolify/lejovista.compose.yml`](infra/coolify/lejovista.compose.yml) (idéntico al stack local pero **sin `nginx`**: el proxy + TLS los pone Coolify). Dominios: `lejovista.agenciakibo.com` (frontend) y `api.lejovista.agenciakibo.com` (backend).
 
-```bash
-# En la máquina de build (ej. Mac arm64 → target amd64):
-BASE_DOMAIN=tudominio.com ./build-push.sh
+Filosofía: **no se construye nada en el VPS**. Las imágenes se compilan en CI (GitHub Actions) y se publican en GHCR; Coolify solo hace `pull`.
 
-# En el VPS:
-docker compose -f docker-compose.prod.yml pull
-docker compose -f docker-compose.prod.yml up -d
-docker image prune -f
-```
+**Flujo de despliegue** (detalle y rollback en [`docs/infra/deploy-runbook.md`](infra/deploy-runbook.md)):
 
-Igual que en local, el `pull`+`up -d` ya deja el esquema al día — el servicio `migrate` corre `alembic upgrade head` una sola vez (no una por réplica) antes de que `backend` levante.
+1. Push a `main` → CI corre los tests.
+2. CI verde → `deploy.yml` construye y publica las imágenes en GHCR (tags `latest` + `${sha}`).
+3. Coolify → recurso lejovista → **Redeploy**: pullea las imágenes, corre `migrate` (`alembic upgrade head`) y reinicia el stack.
 
-- `IMAGE_PREFIX` / `IMAGE_TAG` se leen del `.env` (default `ghcr.io/lrojascode` / `latest`).
-- El backend **no** publica puertos al host (acceso solo vía Nginx).
+El `Redeploy` deja el esquema al día igual que en local — el servicio `migrate` corre una sola vez (no una por réplica) antes de que `backend` levante.
+
+- `IMAGE_PREFIX` / `IMAGE_TAG` son variables del recurso en Coolify (default `ghcr.io/lrojascode` / `latest`). Cambiar `IMAGE_TAG` a un `${sha}` inmutable y redeployar = rollback determinista.
+- El backend **no** publica puertos al host (acceso solo vía el proxy de Coolify).
 - Volúmenes: `postgres_data`, `redis_data`, `media_data` (imágenes subidas, compartido entre `backend` y `celery-worker-creation`).
-- Nginx monta `production.conf.example` como `default.conf` y los certificados de `/etc/letsencrypt`.
 
-### `build-push.sh`
+### `build-push.sh` (fallback manual)
+Normalmente el build lo hace CI. `build-push.sh` es la alternativa manual desde la Mac si Actions está caído:
 - Usa `docker buildx` (cross-platform, `PLATFORM=linux/amd64` por defecto).
 - Publica dos imágenes: backend (única) y frontend.
 - **Inyecta las `NEXT_PUBLIC_*` en build**: `https://api.<BASE_DOMAIN>`, `wss://api.<BASE_DOMAIN>`. Por eso cambiar de dominio exige reconstruir el frontend.
@@ -78,8 +76,8 @@ Multi-stage:
 - `api.localhost` → backend.
 - `localhost` → frontend (landing).
 
-### Producción (`nginx/conf.d/production.conf.example`)
-Plantilla con TLS y subdominios reales (a completar por dominio).
+### Producción (Coolify)
+No hay archivo de nginx en prod: **Coolify actúa de reverse proxy y termina el TLS** (Let's Encrypt automático) para `lejovista.agenciakibo.com` y `api.lejovista.agenciakibo.com`. Los subdominios/dominios se asignan en la UI de Coolify por servicio.
 
 ### Túnel / single-host (`nginx/conf.d-tunnel/tunnel.conf` + `docker-compose.tunnel.yml`)
 - Un solo hostname; rutea por **path**: `/ws/` (con upgrade headers), `/api/` → backend; el resto → frontend.
@@ -100,10 +98,9 @@ Plantilla con TLS y subdominios reales (a completar por dominio).
 ## 8. CI/CD
 
 - **CI** (`.github/workflows/ci.yml`): en cada push/PR a `main` corre pytest+alembic (backend) y tsc+jest+build (frontend).
-- **CD** (`.github/workflows/deploy.yml`): se dispara solo si CI termina en éxito sobre `main` (`workflow_run`). Construye y publica backend/frontend en GHCR (reemplaza el uso rutinario de `build-push.sh`, que queda como alternativa manual/local) y luego un job de deploy hace SSH al VPS (`pull` + `up -d`).
-- **Gate manual**: el job de deploy usa el Environment `production`, configurado en GitHub (Settings → Environments) con *required reviewers* — queda en pausa hasta que alguien lo aprueba desde la pestaña Actions. Mientras el proyecto siga cambiando rápido, cada despliegue real requiere ese clic explícito.
-- Secrets/vars necesarios en el repo: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (secrets) y `BASE_DOMAIN`, `VPS_DEPLOY_PATH` (variables).  
-  - Compatibilidad: también acepta `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY` como alias de secrets.
+- **CD** (`.github/workflows/deploy.yml`): se dispara solo si CI termina en éxito sobre `main` (`workflow_run`). **Solo construye y publica** backend/frontend en GHCR con tags `latest` + `${sha}` (reemplaza el uso rutinario de `build-push.sh`, que queda como alternativa manual/local). **No despliega**: el deploy lo hace Coolify.
+- **Deploy**: manual desde el panel de Coolify (recurso lejovista → Redeploy). Automatizable a futuro con un *deploy webhook* de Coolify llamado como paso extra en `deploy.yml`. Flujo completo y rollback en [`docs/infra/deploy-runbook.md`](infra/deploy-runbook.md).
+- Variable necesaria en el repo: `BASE_DOMAIN` (Actions variable) — se inlina en las `NEXT_PUBLIC_*` del build del frontend. Los secrets de deploy por SSH (`VPS_*`) ya **no se usan** (se eliminó el job SSH con la migración a Coolify).
 
 ## 9. Scripts auxiliares
 

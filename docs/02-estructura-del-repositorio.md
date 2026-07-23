@@ -11,9 +11,8 @@ Proyecto lejovista/
 ├── nginx/                      # Configuración del reverse proxy
 ├── docs/                       # Esta documentación
 ├── docker-compose.yml          # Stack de desarrollo local
-├── docker-compose.prod.yml     # Stack de producción (pull de imágenes)
 ├── docker-compose.tunnel.yml   # Override para exponer vía túnel (single-host)
-├── build-push.sh               # Compila y publica imágenes a GHCR
+├── build-push.sh               # Compila y publica imágenes a GHCR (fallback manual)
 ├── .env / .env.example         # Variables de entorno
 ├── HANDOFF.md                  # Bitácora de auditoría (hallazgos)
 ├── plan-implementacion-auditoria.md
@@ -125,12 +124,13 @@ frontend/
 ```
 nginx/
 ├── conf.d/
-│   ├── default.conf            # Local: *.localhost→frontend, api.localhost→backend
-│   └── production.conf.example # Plantilla de prod (TLS, subdominios reales)
+│   └── default.conf            # Local: *.localhost→frontend, api.localhost→backend
 ├── conf.d-tunnel/
 │   └── tunnel.conf             # Single-host: rutea por path (/api, /ws, /)
-└── ssl/                        # Certificados (montados desde el host en prod)
+└── ssl/                        # Certificados para el túnel local
 ```
+
+> En **producción** no hay nginx propio: el proxy + TLS los pone **Coolify**. El stack de prod vive en [`docs/infra/coolify/lejovista.compose.yml`](infra/coolify/lejovista.compose.yml). Ver [14-deployment §3](14-deployment.md).
 
 ## 5. Archivos generados / que conviene ignorar
 

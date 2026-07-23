@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 #
 # Construye y publica las imágenes de producción en el registry, desde tu Mac.
-# El VPS luego solo hace `docker compose -f docker-compose.prod.yml pull && up -d`.
+# Fallback manual del pipeline: normalmente esto lo hace GitHub Actions
+# (.github/workflows/deploy.yml). Úsalo si Actions está caído. El deploy al VPS
+# lo hace Coolify (panel → recurso lejovista → Redeploy); ver docs/infra/deploy-runbook.md.
 #
 # Uso:
 #   BASE_DOMAIN=tudominio.com ./build-push.sh
@@ -60,7 +62,5 @@ echo "✔ Publicado:"
 echo "   ${BACKEND_IMAGE}"
 echo "   ${FRONTEND_IMAGE}"
 echo
-echo "En el VPS:"
-echo "   docker compose -f docker-compose.prod.yml pull"
-echo "   docker compose -f docker-compose.prod.yml up -d"
-echo "   docker image prune -f"
+echo "Para desplegar: Coolify → recurso lejovista → Redeploy"
+echo "(Coolify pullea estas imágenes, corre 'migrate' y reinicia el stack)."

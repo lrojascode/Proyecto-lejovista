@@ -1,5 +1,12 @@
 # Reset del VPS agenciakibo.com + Coolify + n8n + Evolution + lejovista + wacrm (CRM)
 
+> **✅ ESTADO: MIGRACIÓN COMPLETADA.** Las 4 apps corren bajo Coolify sobre el VPS,
+> cada una con su URL y SSL: `coolify.agenciakibo.com` (panel), `n8n.agenciakibo.com`,
+> `api.evolution.agenciakibo.com`, `lejovista.agenciakibo.com` + `api.lejovista.agenciakibo.com`,
+> y `crm.agenciakibo.com` (wacrm). El texto abajo se conserva como registro histórico
+> del plan; describe el estado *previo* a la migración. Para el flujo de deploy y
+> rollback de lejovista, ver [`deploy-runbook.md`](deploy-runbook.md).
+
 ## Contexto
 
 El VPS (`vps-1803332.agenciakibo.com`, 69.6.220.199) corre hoy un stack manual con

@@ -34,7 +34,7 @@ services:
     mem_limit: 320m
     cpus: 0.5
 
-  # O-2: mismo one-shot de migraciones que docker-compose.prod.yml — corre
+  # O-2: mismo one-shot de migraciones que el compose de prod (Coolify) — corre
   # `alembic upgrade head` y termina antes de que `backend` arranque, en vez
   # de depender de que alguien lo corra a mano tras el primer `up`.
   # `restart: "no"` explícito (con `unless-stopped` reiniciaría en bucle).
