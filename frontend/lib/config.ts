@@ -19,6 +19,16 @@ export const getApiUrl = (): string => {
     }
     // Si la API corre en el mismo host
     if (window.location.hostname.endsWith("localhost")) {
+      // Subdominios de tenant (cliente1.localhost) son un SITIO distinto de
+      // `localhost` a secas — en `.localhost` cada combinación es su propio
+      // registrable domain. Pegarle al API en `localhost:8000` sería entonces
+      // cross-site y el navegador descartaría la cookie de refresh
+      // (SameSite=Lax), rompiendo el refresh silencioso al recargar / cambiar
+      // de cuenta. Yendo al mismo host (nginx enruta /api al backend) queda
+      // same-origin y la cookie siempre acompaña.
+      if (window.location.hostname !== "localhost") return "";
+      // `localhost` pelado (acceso directo al frontend en :3000) ya es same-site
+      // con el backend en :8000; se mantiene el acceso directo sin nginx.
       return "http://localhost:8000";
     }
     return `https://api.${BASE_DOMAIN.replace(":3000", "")}`;

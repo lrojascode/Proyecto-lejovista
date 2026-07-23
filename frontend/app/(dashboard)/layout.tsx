@@ -26,8 +26,10 @@ function AdAccountSelector() {
         style={{ background: "var(--color-obsidian)", fontSize: "12px", padding: "6px 8px" }}
         value={activeAdAccountId || ""}
         onChange={(e) => {
+          // Cambiar de cuenta ya no recarga toda la página: setActiveAdAccountId
+          // actualiza el contexto + localStorage, y AccountScopedContent
+          // remonta el contenido para re-fetchear con el nuevo X-Ad-Account-Id.
           setActiveAdAccountId(e.target.value);
-          window.location.reload();
         }}
       >
         {!activeAdAccountId && (
@@ -39,6 +41,21 @@ function AdAccountSelector() {
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+// Remonta el contenido de la página cuando cambia la cuenta publicitaria activa,
+// para que cada página vuelva a hacer sus fetches con el nuevo header
+// X-Ad-Account-Id (lo lee apiRequest de localStorage). Reemplaza el
+// window.location.reload() que hacía el selector — sin recargar todo el
+// navegador ni reconectar el WebSocket. Va DENTRO de WebSocketProvider para no
+// tumbar la conexión al cambiar de cuenta.
+function AccountScopedContent({ children }: { children: React.ReactNode }) {
+  const { activeAdAccountId } = useAdAccount();
+  return (
+    <div key={activeAdAccountId || "none"} style={{ display: "contents" }}>
+      {children}
     </div>
   );
 }
@@ -192,7 +209,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Main Content Container */}
         <main className="main-content">
           <WebSocketProvider tenantId={orgId}>
-            {children}
+            <AccountScopedContent>{children}</AccountScopedContent>
           </WebSocketProvider>
         </main>
       </div>
