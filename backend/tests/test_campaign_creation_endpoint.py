@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign_draft import CampaignDraft
-from app.api.v1.campaigns import MAX_CAMPAIGNS_PER_SESSION
+from app.services.campaign_creation import MAX_CAMPAIGNS_PER_SESSION
 
 
 async def _signup_with_ad_account(async_client: AsyncClient, slug: str):
@@ -48,14 +48,14 @@ def _mock_validator_and_chain(mocker):
     # La validación síncrona hace un GET real a Meta (MetaApiClient no respeta
     # MOCK_SERVICES, ver A-3 en el HANDOFF) — se mockea para no requerir red.
     mocker.patch(
-        "app.api.v1.campaigns.CampaignValidator.validate", autospec=True, return_value=None
+        "app.services.campaign_creation.CampaignValidator.validate", autospec=True, return_value=None
     )
     # Conectar una cuenta dispara un sync_ad_account.delay(...) real (ver
     # mock_celery en test_api_v1.py) — sin esto, .delay() intenta hablar con un
     # broker/backend de Redis real que no existe en el entorno de test.
     mocker.patch("app.api.v1.organizations.sync_ad_account")
     # El chain de Celery no debe intentar conectarse a un broker real en tests.
-    mock_chain_factory = mocker.patch("app.api.v1.campaigns.chain")
+    mock_chain_factory = mocker.patch("app.services.campaign_creation.chain")
     mock_chain_instance = mock_chain_factory.return_value
     mock_chain_instance.on_error.return_value = mock_chain_instance
     return mock_chain_instance

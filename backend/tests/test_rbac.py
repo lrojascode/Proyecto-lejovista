@@ -36,11 +36,11 @@ async def _set_role(db_session: AsyncSession, org_id: str, role: str):
 def _mock_side_effects(mocker):
     mocker.patch("app.api.v1.organizations.sync_ad_account")
     mocker.patch("app.api.v1.insights.run_ai_analysis")
-    mock_chain_factory = mocker.patch("app.api.v1.campaigns.chain")
+    mock_chain_factory = mocker.patch("app.services.campaign_creation.chain")
     mock_chain_instance = mock_chain_factory.return_value
     mock_chain_instance.on_error.return_value = mock_chain_instance
     mocker.patch(
-        "app.api.v1.campaigns.CampaignValidator.validate", autospec=True, return_value=None
+        "app.services.campaign_creation.CampaignValidator.validate", autospec=True, return_value=None
     )
 
 

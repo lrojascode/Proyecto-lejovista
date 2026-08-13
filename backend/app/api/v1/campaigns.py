@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc
 from app.database import get_db
 from app.models.user import User
 from app.models.campaign_snapshot import CampaignSnapshot
@@ -17,7 +17,6 @@ import logging
 import os
 import uuid
 from fastapi import status
-from celery import chain
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -36,15 +35,12 @@ from app.services.campaign_preflight import CampaignPreflight
 from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
 from app.services.report_cache import get_report
 from app.services.campaign_risk import assess_campaign_risk
-from app.services.ai.llm import OpenRouterClient
-from app.services.ai.token_tracking import UsageContext
-from app.workers.creation_tasks import (
-    task_upload_image,
-    task_create_campaign,
-    task_create_adset,
-    task_create_creative,
-    task_create_ad,
-    task_handle_chain_error
+from app.services.campaign_proposal import build_campaign_proposal
+from app.services.campaign_creation import (
+    start_campaign_creation,
+    CampaignCapReachedError,
+    MAX_CAMPAIGNS_PER_SESSION,
+    CAMPAIGN_SESSION_WINDOW_HOURS,
 )
 from app.schemas.response_schemas import (
     ApiCallHistoryEntry, SuggestionResponse, ImageUploadResponse, RiskPreviewResponse,
@@ -54,11 +50,6 @@ from app.schemas.response_schemas import (
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
-
-# Anti-bloqueo (playbook §2): tope de campañas nuevas por ventana de tiempo,
-# scopeado por organización (no hay un concepto explícito de "sesión").
-MAX_CAMPAIGNS_PER_SESSION = 5
-CAMPAIGN_SESSION_WINDOW_HOURS = 24
 
 # Nivel de riesgo base de la creación (playbook §2). Ya NO es el valor que se
 # devuelve: el riesgo se calcula dinámicamente en `assess_campaign_risk`
@@ -237,55 +228,7 @@ async def get_campaign_suggestion(
     if not ad_account:
         raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
-    org = await db.get(Organization, current_user.organization_id)
-
-    # `image_path` es `{organization_id}/{uuid}.ext` (lo devuelve /upload-image).
-    # Sin este chequeo, un tenant podría pedir el copy con la foto de otro.
-    if image_path and not image_path.startswith(f"{current_user.organization_id}/"):
-        raise HTTPException(status_code=400, detail="La imagen no pertenece a esta organización.")
-
-    suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=product_name)
-    copy = await OpenRouterClient().suggest_campaign_copy(
-        org, ad_account, product_name=product_name,
-        winning_context=suggestion.get("winning_campaign"),
-        winning_ad_copy=suggestion.get("winning_ad_copy"),
-        image_path=image_path,
-        diagnostics=suggestion.get("analysis"),
-        usage_ctx=UsageContext(
-            feature="campaign_copy",
-            organization_id=current_user.organization_id,
-            ad_account_id=ad_account.id,
-        ),
-    )
-
-    risk = assess_campaign_risk(
-        budget=suggestion["suggested_budget"],
-        # 3.4: primary_text ahora es un array de 2 variantes; se evalúa la
-        # primera para el chequeo de riesgo (lenguaje que Meta suele rechazar).
-        copy_text=(copy.get("primary_text") or [""])[0],
-        suggestion=suggestion,
-    )
-
-    return {
-        "risk_level": risk["level"],
-        "risk_reasons": risk["reasons"],
-        "has_history": suggestion["has_history"],
-        "maturity": suggestion["maturity"],
-        "analysis": suggestion["analysis"],
-        "objective": suggestion["objective"],
-        "optimization_goal": suggestion["optimization_goal"],
-        "destination_type": suggestion["destination_type"],
-        "suggested_campaign_name": suggestion.get("suggested_campaign_name"),
-        "suggested_budget": suggestion["suggested_budget"],
-        "suggested_days": suggestion["suggested_days"],
-        "excluded_placements": suggestion["excluded_placements"],
-        "best_device": suggestion["best_device"],
-        "best_age_range": suggestion["best_age_range"],
-        "winning_campaign": suggestion["winning_campaign"],
-        "winning_ad_copy": suggestion["winning_ad_copy"],
-        "evidence": suggestion["evidence"],
-        "copy": copy,
-    }
+    return await build_campaign_proposal(db, current_user, ad_account, product_name, image_path)
 
 
 _ALLOWED_IMAGE_TYPES = {
@@ -490,13 +433,13 @@ async def create_campaign(
 ):
     """
     Inicia la creación de una campaña en Meta Ads (Saga).
-    """
-    tenant_id = current_user.organization_id
 
-    # 0. Validar que la cuenta destino pertenezca al tenant autenticado.
+    La lógica real vive en `start_campaign_creation` (CH-1): es el único camino
+    de escritura, compartido con el chat de creación de campañas.
+    """
     q_acc = select(AdAccount).where(
         AdAccount.id == request.ad_account_id,
-        AdAccount.organization_id == tenant_id,
+        AdAccount.organization_id == current_user.organization_id,
         AdAccount.status != "ARCHIVED",
     )
     res_acc = await db.execute(q_acc)
@@ -504,144 +447,10 @@ async def create_campaign(
     if not ad_account:
         raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
-    # Anti-bloqueo (playbook §2: "Máx ~5 campañas nuevas por sesión"). Meta puede
-    # inhabilitar la cuenta si detecta ráfagas de creación. No hay un concepto
-    # explícito de "sesión" en el modelo, así que se aproxima con una ventana
-    # móvil de 24h por organización.
-    window_start = datetime.datetime.utcnow() - datetime.timedelta(hours=CAMPAIGN_SESSION_WINDOW_HOURS)
-    q_recent = select(func.count()).select_from(CampaignDraft).where(
-        CampaignDraft.organization_id == tenant_id,
-        CampaignDraft.created_at >= window_start,
-    )
-    recent_count = (await db.execute(q_recent)).scalar_one()
-    if recent_count >= MAX_CAMPAIGNS_PER_SESSION:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Se alcanzó el límite de {MAX_CAMPAIGNS_PER_SESSION} campañas nuevas en las "
-                f"últimas {CAMPAIGN_SESSION_WINDOW_HOURS}h (protección anti-bloqueo de cuenta "
-                "en Meta, ver playbook §2). Intenta de nuevo más tarde."
-            ),
-        )
-
-    validator = CampaignValidator(ad_account, db=db)
-
-    # 1. Validación síncrona
-    await validator.validate(request)
-
-    # 1a. Presupuesto normalizado a TOTAL. `budget` puede venir como monto
-    # diario (budget_type="DAILY"); todo lo que razona sobre presupuesto
-    # —riesgo, calibración R1 del suggester y el costo esperado del outcome
-    # loop (`suggested_budget / 20`)— asume un total de la campaña. Se
-    # normaliza una sola vez aquí para que esos tres no tengan que saber del
-    # modo y para que los registros históricos no cambien de semántica.
-    budget_total = request.total_budget()
-
-    # 1b. Razonamiento + riesgo dinámico (deterministas). La sugerencia se
-    # recalcula del histórico real (sin LLM) para tener madurez/análisis con qué
-    # documentar la decisión y comparar el presupuesto que envió el usuario.
-    suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=request.product_name)
-    risk = assess_campaign_risk(
-        budget=budget_total,
-        copy_text=request.copy_text,
-        suggestion=suggestion,
-    )
-
-    # 2. Registrar el intento (CampaignDraft real en BD — antes se generaba un
-    # uuid suelto que no se persistía en ningún lado, así que el estado de la
-    # Saga no se podía consultar de verdad).
-    draft = CampaignDraft(
-        organization_id=tenant_id,
-        created_by_user_id=current_user.id,
-        name=f"{request.product_name}",
-        payload=request.model_dump(),
-        status="PENDING_CREATION",
-    )
-    db.add(draft)
-    await db.commit()
-    draft_id = draft.id
-
-    # 2b. Historial de entrenamiento (Ajuste 2A): guarda qué propuso la IA y por
-    # qué, para que futuras creaciones aprendan de esto y detecten convergencia.
-    learning_log = CampaignLearningLog(
-        organization_id=tenant_id,
-        ad_account_id=ad_account.id,
-        draft_id=draft_id,
-        product=request.product_name,
-        params_json={
-            # `budget` es lo que pidió el usuario (diario o total, según
-            # budget_type); `budget_total` es la cifra comparable entre
-            # campañas y la que usa el aprendizaje.
-            "budget": request.budget,
-            "budget_type": request.budget_type,
-            "budget_total": budget_total,
-            "days": request.days,
-            "objective": suggestion["objective"],
-            "excluded_placements": suggestion["excluded_placements"],
-            "best_device": suggestion["best_device"],
-            "best_age_range": suggestion["best_age_range"],
-            "suggested_budget": suggestion["suggested_budget"],
-        },
-        analysis_json=suggestion["analysis"],
-        maturity_json=suggestion["maturity"],
-        risk_level=risk["level"],
-        status="CREATED",
-    )
-    db.add(learning_log)
-    await db.commit()
-
-    # 3. Preparar el contexto inicial
-    initial_context = {
-        "draft_id": draft_id,
-        "tenant_id": tenant_id,
-        "ad_account_id": request.ad_account_id,
-        "page_id": request.page_id,
-        "product_name": request.product_name,
-        # Nombre con la nomenclatura real de la cuenta (F3): se resuelve aquí
-        # para que el que ve el usuario en el formulario sea el que se crea.
-        "campaign_name": suggestion.get("suggested_campaign_name"),
-        "budget": request.budget,
-        "budget_type": request.budget_type,
-        "days": request.days,
-        "whatsapp_number": request.whatsapp_number,
-        "image_url": request.image_url,
-        "image_hash": request.image_hash,
-        "image_path": request.image_path,
-        "video_id": request.video_id,
-        "video_path": request.video_path,
-        "thumbnail_url": request.thumbnail_url,
-        "copy_text": request.copy_text,
-        # Título y descripción del anuncio (link_data.name / link_data.description).
-        # Se validaban y luego se perdían: nunca llegaban a la Saga.
-        "headline": request.headline,
-        "description": request.description,
-        # Señales de optimización derivadas del histórico ganador (Ajuste 2):
-        # el AdSet las aplica en su `targeting` en vez de hardcodear edad/
-        # dispositivo/placements. Fallback a defaults si no hay histórico.
-        "best_age_range": suggestion.get("best_age_range"),
-        "best_device": suggestion.get("best_device"),
-        "excluded_placements": suggestion.get("excluded_placements") or [],
-    }
-    
-    # 4. Despachar la Saga (Chain)
-    # El chain ejecuta secuencialmente. set(countdown=40) asegura la pausa requerida por protocolo.
-    creation_chain = chain(
-        task_upload_image.s(initial_context),
-        task_create_campaign.s().set(countdown=40),
-        task_create_adset.s().set(countdown=40),
-        task_create_creative.s().set(countdown=40),
-        task_create_ad.s().set(countdown=40)
-    ).on_error(task_handle_chain_error.s(draft_id, tenant_id))
-    
-    creation_chain.apply_async()
-
-    return {
-        "message": "Campaign creation started",
-        "draft_id": draft_id,
-        "risk_level": risk["level"],
-        "risk_reasons": risk["reasons"],
-        "analysis": suggestion["analysis"],
-    }
+    try:
+        return await start_campaign_creation(db, current_user, ad_account, request)
+    except CampaignCapReachedError as e:
+        raise HTTPException(status_code=429, detail=str(e))
 
 
 @router.get("/drafts/{draft_id}", response_model=CampaignDraftResponse)
