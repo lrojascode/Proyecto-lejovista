@@ -33,5 +33,12 @@
     "openapi-typescript": "^7.13.0",
     "ts-node": "^10.9.2",
     "typescript": "^5"
-  }
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "sharp",
+      "unrs-resolver"
+    ]
+  },
+  "packageManager": "pnpm@10.33.0"
 }
