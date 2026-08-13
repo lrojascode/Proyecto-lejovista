@@ -374,6 +374,102 @@ export interface paths {
         patch: operations["update_whatsapp_number_api_v1_organizations_my_whatsapp_numbers__number_id__patch"];
         trace?: never;
     };
+    "/api/v1/campaigns/chat/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Chat Sessions */
+        get: operations["list_chat_sessions_api_v1_campaigns_chat_sessions_get"];
+        put?: never;
+        /**
+         * Create Chat Session
+         * @description Arranca una conversación nueva: resuelve la cuenta activa y la página +
+         *     WhatsApp de destino (regla AI-1, sin ambigüedad) ANTES de saludar — si algo
+         *     falta, el error llega de una en vez de descubrirse a mitad de chat.
+         */
+        post: operations["create_chat_session_api_v1_campaigns_chat_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/chat/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chat Session */
+        get: operations["get_chat_session_api_v1_campaigns_chat_sessions__session_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/chat/sessions/{session_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Chat Message */
+        post: operations["post_chat_message_api_v1_campaigns_chat_sessions__session_id__messages_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/chat/sessions/{session_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post Chat Decision */
+        post: operations["post_chat_decision_api_v1_campaigns_chat_sessions__session_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/chat/sessions/{session_id}/advance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Advance Chat Session
+         * @description Relee el estado real de la Saga (`CampaignDraft`) y lo persiste en la
+         *     conversación — es lo que el frontend llama en su polling de ~2.5s mientras
+         *     la campaña se está creando (fallback si el WebSocket se cae).
+         */
+        post: operations["advance_chat_session_api_v1_campaigns_chat_sessions__session_id__advance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaigns/recent": {
         parameters: {
             query?: never;
@@ -596,6 +692,9 @@ export interface paths {
         /**
          * Create Campaign
          * @description Inicia la creación de una campaña en Meta Ads (Saga).
+         *
+         *     La lógica real vive en `start_campaign_creation` (CH-1): es el único camino
+         *     de escritura, compartido con el chat de creación de campañas.
          */
         post: operations["create_campaign_api_v1_campaigns__post"];
         delete?: never;
@@ -640,6 +739,28 @@ export interface paths {
          *     cada creación, con su madurez y riesgo. Scopeado a la cuenta activa.
          */
         get: operations["get_learning_history_api_v1_campaigns_learning_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/sync-learning-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sync Learning History
+         * @description Aprendizaje longitudinal por sincronización (Q2): el rendimiento medido de
+         *     la cuenta en cada sync y cómo cambió respecto al anterior, con su veredicto de
+         *     tendencia y observaciones deterministas. Scopeado a la cuenta activa.
+         */
+        get: operations["get_sync_learning_history_api_v1_campaigns_sync_learning_history_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1436,6 +1557,341 @@ export interface components {
             /** Cost Per Conv 7D */
             cost_per_conv_7d?: number | null;
         };
+        /** ChatAction */
+        ChatAction: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "accept" | "reject" | "change";
+            /** Label */
+            label: string;
+            /**
+             * Style
+             * @enum {string}
+             */
+            style: "primary" | "danger" | "neutral";
+        };
+        /**
+         * ChatDecisionRequest
+         * @description La compuerta estilo Claude Code: aceptar/rechazar/cambiar una tarjeta
+         *     de revisión o de riesgo. `card_id` referencia la tarjeta a la que
+         *     responde, para no poder contestar una vieja tras un reload.
+         */
+        ChatDecisionRequest: {
+            /** Client Turn Id */
+            client_turn_id: string;
+            /** Card Id */
+            card_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "accept" | "reject" | "change";
+            /** Text */
+            text?: string | null;
+        };
+        /** ChatErrorMessage */
+        ChatErrorMessage: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+            /**
+             * Code
+             * @enum {string}
+             */
+            code: "CAP_REACHED" | "PREFLIGHT_FAILED" | "SAGA_FAILED" | "VALIDATION" | "INTERNAL";
+            /** Text */
+            text: string;
+            /** Retry After Hours */
+            retry_after_hours?: number | null;
+            /** Actions */
+            actions?: components["schemas"]["ChatAction"][];
+        };
+        /** ChatMediaMessage */
+        ChatMediaMessage: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "media";
+            /** Image Path */
+            image_path?: string | null;
+            /** Video Path */
+            video_path?: string | null;
+        };
+        /** ChatMediaPreview */
+        ChatMediaPreview: {
+            /** Image Path */
+            image_path?: string | null;
+            /** Video Path */
+            video_path?: string | null;
+        };
+        /**
+         * ChatMessageRequest
+         * @description Turno de texto libre o de un archivo ya subido (`POST
+         *     /campaigns/upload-image|upload-video` corre ANTES; acá solo viaja la ruta
+         *     resultante). `client_turn_id` deja repetir un turno sin duplicar efectos
+         *     ante un reintento de red.
+         */
+        ChatMessageRequest: {
+            /** Client Turn Id */
+            client_turn_id: string;
+            /** Text */
+            text?: string | null;
+            /** Image Path */
+            image_path?: string | null;
+            /** Video Path */
+            video_path?: string | null;
+        };
+        /** ChatProgressMessage */
+        ChatProgressMessage: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "progress";
+            /** Draft Id */
+            draft_id?: string | null;
+            /** Step */
+            step: string;
+            /** Percent */
+            percent: number;
+            /** Text */
+            text: string;
+        };
+        /** ChatProposalField */
+        ChatProposalField: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Value */
+            value: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "ai_suggestion" | "user" | "account_default" | "fixed_rule";
+            /**
+             * Editable
+             * @default true
+             */
+            editable: boolean;
+        };
+        /** ChatResultMessage */
+        ChatResultMessage: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "result";
+            /** Draft Id */
+            draft_id: string;
+            /** Campaign Id */
+            campaign_id?: string | null;
+            /** Adset Id */
+            adset_id?: string | null;
+            /** Ad Id */
+            ad_id?: string | null;
+            /** Campaign Name */
+            campaign_name?: string | null;
+            /** Text */
+            text: string;
+        };
+        /** ChatReviewCard */
+        ChatReviewCard: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "review_card";
+            /** Card Id */
+            card_id: string;
+            /** Title */
+            title: string;
+            /** Fields */
+            fields: components["schemas"]["ChatProposalField"][];
+            copy_preview: components["schemas"]["SuggestionCopy"];
+            media_preview?: components["schemas"]["ChatMediaPreview"] | null;
+            /** Evidence */
+            evidence?: string[];
+            /** Actions */
+            actions: components["schemas"]["ChatAction"][];
+        };
+        /** ChatRiskCard */
+        ChatRiskCard: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "risk_card";
+            /** Card Id */
+            card_id: string;
+            /** Title */
+            title: string;
+            /**
+             * Risk Level
+             * @enum {string}
+             */
+            risk_level: "LOW" | "MEDIUM" | "HIGH";
+            /** Risk Reasons */
+            risk_reasons?: string[];
+            /** Preflight Ok */
+            preflight_ok?: boolean | null;
+            /** Preflight Checks */
+            preflight_checks?: components["schemas"]["PreflightCheck"][];
+            /** Actions */
+            actions: components["schemas"]["ChatAction"][];
+        };
+        /**
+         * ChatSessionCreateRequest
+         * @description `ad_account_id` es opcional: si falta, se usa la cuenta activa
+         *     (header `X-Ad-Account-Id`, igual que el resto de la app).
+         */
+        ChatSessionCreateRequest: {
+            /** Ad Account Id */
+            ad_account_id?: string | null;
+        };
+        /** ChatSessionResponse */
+        ChatSessionResponse: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Status */
+            status: string;
+            /** Ad Account Id */
+            ad_account_id: string;
+            /** Draft Id */
+            draft_id?: string | null;
+            slots: components["schemas"]["ChatSlots"];
+            /** Messages */
+            messages: (components["schemas"]["ChatTextMessage"] | components["schemas"]["ChatMediaMessage"] | components["schemas"]["ChatReviewCard"] | components["schemas"]["ChatRiskCard"] | components["schemas"]["ChatProgressMessage"] | components["schemas"]["ChatResultMessage"] | components["schemas"]["ChatErrorMessage"])[];
+            /** Created At */
+            created_at: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ChatSessionSummary */
+        ChatSessionSummary: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Status */
+            status: string;
+            /** Ad Account Id */
+            ad_account_id: string;
+            /** Draft Id */
+            draft_id?: string | null;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ChatSlots */
+        ChatSlots: {
+            /** Goal Text */
+            goal_text?: string | null;
+            /** Product Name */
+            product_name?: string | null;
+            /** Budget */
+            budget?: number | null;
+            /** Budget Type */
+            budget_type?: ("LIFETIME" | "DAILY") | null;
+            /** Days */
+            days?: number | null;
+            /** Image Path */
+            image_path?: string | null;
+            /** Video Path */
+            video_path?: string | null;
+            /** Page Id */
+            page_id?: string | null;
+            /** Whatsapp Number */
+            whatsapp_number?: string | null;
+            /** Headline */
+            headline?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Copy Text */
+            copy_text?: string | null;
+        };
+        /** ChatTextMessage */
+        ChatTextMessage: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "assistant" | "user" | "system";
+            /** Created At */
+            created_at: string;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "text";
+            /** Text */
+            text: string;
+            /** Quick Replies */
+            quick_replies?: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1928,6 +2384,39 @@ export interface components {
             cost_per_conv: number;
             /** Ctr */
             ctr: number;
+        };
+        /** SyncLearningResponse */
+        SyncLearningResponse: {
+            /** Id */
+            id: string;
+            /** Window Days */
+            window_days?: number | null;
+            /** Verdict */
+            verdict?: string | null;
+            /** Kpis */
+            kpis?: {
+                [key: string]: unknown;
+            } | null;
+            /** Deltas */
+            deltas?: {
+                [key: string]: unknown;
+            } | null;
+            /** Top */
+            top?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Bottom */
+            bottom?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Segmentation */
+            segmentation?: {
+                [key: string]: unknown;
+            } | null;
+            /** Observations */
+            observations?: string[] | null;
+            /** Created At */
+            created_at?: string | null;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -2620,6 +3109,191 @@ export interface operations {
             };
         };
     };
+    list_chat_sessions_api_v1_campaigns_chat_sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionSummary"][];
+                };
+            };
+        };
+    };
+    create_chat_session_api_v1_campaigns_chat_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSessionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chat_session_api_v1_campaigns_chat_sessions__session_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_chat_message_api_v1_campaigns_chat_sessions__session_id__messages_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_chat_decision_api_v1_campaigns_chat_sessions__session_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    advance_chat_session_api_v1_campaigns_chat_sessions__session_id__advance_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_recent_campaign_snapshots_api_v1_campaigns_recent_get: {
         parameters: {
             query?: never;
@@ -2969,6 +3643,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LearningLogResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_sync_learning_history_api_v1_campaigns_sync_learning_history_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SyncLearningResponse"][];
                 };
             };
             /** @description Validation Error */

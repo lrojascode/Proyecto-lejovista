@@ -4,6 +4,7 @@ from app.config import settings
 from app.database import engine, Base
 from app.api.v1.auth import router as auth_router
 from app.api.v1.organizations import router as org_router
+from app.api.v1.campaign_chat import router as campaign_chat_router
 from app.api.v1.campaigns import router as campaign_router
 from app.api.v1.insights import router as insight_router
 from app.api.v1.actions import router as action_router
@@ -100,6 +101,7 @@ async def tenant_slug_middleware(request: Request, call_next):
 # Incluir Rutas de la API v1
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(org_router, prefix="/api/v1")
+app.include_router(campaign_chat_router, prefix="/api/v1")
 app.include_router(campaign_router, prefix="/api/v1")
 app.include_router(insight_router, prefix="/api/v1")
 app.include_router(action_router, prefix="/api/v1")

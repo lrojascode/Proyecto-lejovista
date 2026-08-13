@@ -30,6 +30,7 @@ Documentación técnica generada a partir del análisis directo del código fuen
 | 20 | [Creación de campañas (Saga)](20-creacion-campanas.md) | Orquestación por pasos, sugeridor, validador, targeting, UX del formulario |
 | 21 | [Producto — datos visualizados](21-producto-datos-visualizados.md) | Qué dato ve el cliente, dónde y por qué: dashboard, lista y reporte; brechas de producto |
 | 22 | [Plan de remediación de deuda](22-plan-remediacion-deuda.md) | Plan de trabajo secuenciado (sprints) para cerrar los hallazgos de 15-deuda-tecnica |
+| 23 | [Chat de creación de campañas](23-chat-creacion-campanas.md) | Segunda puerta de entrada conversacional al mismo motor: máquina de estados, extracción de slots, compuertas de revisión/riesgo |
 
 ## Cómo se mantiene esta documentación
 

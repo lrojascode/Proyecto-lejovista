@@ -3,6 +3,7 @@ import type {
   TokenResponse, User, Organization, AdAccount, MetaPage, WhatsAppNumber, BusinessPolicies, AiModelsResponse,
   CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
+  ChatSessionResponse, ChatSessionSummary,
 } from "./types";
 
 // (S-2) El access token vive SOLO en memoria del módulo, nunca en
@@ -301,6 +302,38 @@ export const api = {
     }),
   getLearningHistory: (limit: number = 20) =>
     apiRequest<LearningLog[]>(`/api/v1/campaigns/learning-history?limit=${limit}`, "GET"),
+
+  // --- CHAT DE CREACIÓN DE CAMPAÑAS ---
+  startCampaignChat: (adAccountId?: string) =>
+    apiRequest<ChatSessionResponse>("/api/v1/campaigns/chat/sessions", "POST", {
+      ad_account_id: adAccountId ?? null,
+    }),
+  listCampaignChatSessions: () =>
+    apiRequest<ChatSessionSummary[]>("/api/v1/campaigns/chat/sessions", "GET"),
+  getCampaignChatSession: (sessionId: string) =>
+    apiRequest<ChatSessionResponse>(`/api/v1/campaigns/chat/sessions/${sessionId}`, "GET"),
+  sendCampaignChatMessage: (
+    sessionId: string,
+    data: { clientTurnId: string; text?: string; imagePath?: string; videoPath?: string }
+  ) =>
+    apiRequest<ChatSessionResponse>(`/api/v1/campaigns/chat/sessions/${sessionId}/messages`, "POST", {
+      client_turn_id: data.clientTurnId,
+      text: data.text ?? null,
+      image_path: data.imagePath ?? null,
+      video_path: data.videoPath ?? null,
+    }),
+  decideCampaignChatCard: (
+    sessionId: string,
+    data: { clientTurnId: string; cardId: string; decision: "accept" | "reject" | "change"; text?: string }
+  ) =>
+    apiRequest<ChatSessionResponse>(`/api/v1/campaigns/chat/sessions/${sessionId}/decision`, "POST", {
+      client_turn_id: data.clientTurnId,
+      card_id: data.cardId,
+      decision: data.decision,
+      text: data.text ?? null,
+    }),
+  advanceCampaignChat: (sessionId: string) =>
+    apiRequest<ChatSessionResponse>(`/api/v1/campaigns/chat/sessions/${sessionId}/advance`, "POST"),
   getSyncLearningHistory: (limit: number = 10) =>
     apiRequest<SyncLearningSnapshot[]>(`/api/v1/campaigns/sync-learning-history?limit=${limit}`, "GET"),
 

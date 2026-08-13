@@ -95,3 +95,17 @@ export type AiUsage = Schemas["AiUsageResponse"];
 
 // --- API CALL HISTORY (/campaigns/api-call-history) ---
 export type ApiCallHistoryEntry = Schemas["ApiCallHistoryEntry"];
+
+// --- CHAT DE CREACIÓN DE CAMPAÑAS (/campaigns/chat) ---
+export type ChatSessionResponse = Schemas["ChatSessionResponse"];
+export type ChatSessionSummary = Schemas["ChatSessionSummary"];
+export type ChatSlots = Schemas["ChatSlots"];
+export type ChatMessage = ChatSessionResponse["messages"][number];
+export type ChatTextMessage = Schemas["ChatTextMessage"];
+export type ChatMediaMessage = Schemas["ChatMediaMessage"];
+export type ChatReviewCard = Schemas["ChatReviewCard"];
+export type ChatRiskCard = Schemas["ChatRiskCard"];
+export type ChatProgressMessage = Schemas["ChatProgressMessage"];
+export type ChatResultMessage = Schemas["ChatResultMessage"];
+export type ChatErrorMessage = Schemas["ChatErrorMessage"];
+export type ChatAction = Schemas["ChatAction"];

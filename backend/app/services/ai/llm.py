@@ -27,6 +27,14 @@ PROMPT_VERSION = "master-brief-v2"
 # proveedor lo soporta.
 CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v2"
 
+# Prompt del extractor de slots del chat de creación de campañas (CH-1). El
+# LLM SOLO interpreta texto libre ambiguo — el motor (`campaign_chat/engine.py`)
+# intenta primero el extractor determinista y solo llama acá cuando ese
+# devuelve "unclear". Cualquier cifra que el LLM proponga se descarta si no
+# hay un dígito literal en el mensaje del usuario (regla AI-1: el LLM nunca
+# elige un número).
+CAMPAIGN_CHAT_PROMPT_VERSION = "campaign-chat-extract-v1"
+
 # Claves obligatorias del JSON de copy que debe devolver el LLM. headline y
 # primary_text son ARRAYS de 2 variantes (v2); description/welcome_message
 # siguen siendo un único string.
@@ -64,6 +72,25 @@ MODELS_BY_PROVIDER = {
         {"value": "anthropic/claude-3-5-sonnet", "label": "Claude 3.5 Sonnet (premium)"},
     ],
 }
+
+
+def _extract_json_object(content: str) -> Optional[Dict[str, Any]]:
+    """Extrae el primer objeto JSON de la respuesta de un LLM. Tolera que el
+    modelo lo envuelva en texto o en ```json ... ``` pese a la instrucción de
+    no hacerlo (pasa igual con `response_format: json_object`, algunos
+    proveedores lo ignoran). Devuelve `None` si no hay nada parseable —
+    compartido por `_parse_copy_json` (copy de campaña) y el extractor del
+    chat de creación (CH-1), cada uno valida sus propias claves después."""
+    import re
+
+    match = re.search(r"\{.*\}", content.strip(), re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _delimit_untrusted(text: str) -> str:
@@ -488,6 +515,115 @@ class OpenRouterClient:
 
         return self._generate_mock_copy(product_name, winning_context)
 
+    _CHAT_EXTRACT_KEYS = {
+        "intent", "product_name", "goal_text", "budget", "budget_type",
+        "days", "copy_text", "headline", "description", "reply_hint",
+    }
+    _CHAT_EXTRACT_INTENTS = {"provide_info", "accept", "reject", "change", "cancel", "unclear"}
+
+    async def extract_campaign_slots(
+        self,
+        org: Organization,
+        user_text: str,
+        state: str,
+        current_slots: Dict[str, Any],
+        usage_ctx: Optional[UsageContext] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Interpreta un mensaje de texto libre AMBIGUO del chat de creación de
+        campañas (CH-1) — se llama solo cuando el extractor determinista
+        (`app/services/campaign_chat/extraction.py`) no pudo clasificarlo.
+
+        Devuelve `None` si no hay API key, si `MOCK_SERVICES` está activo, o si
+        la llamada/parseo falla — el motor cae al extractor determinista sin
+        romper la conversación (mismo criterio que `_generate_mock_copy`).
+
+        El texto del usuario es la primera superficie donde una persona externa
+        escribe directo dentro de un prompt: va envuelto en `_delimit_untrusted`
+        y el LLM solo puede devolver el JSON de este contrato — no tiene
+        herramientas ni puede disparar ninguna acción. El motor vuelve a validar
+        cada campo (rangos, regex de `product_name`) antes de usarlo.
+        """
+        if settings.MOCK_SERVICES or not self.api_key:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "LejoVista Platform",
+            "Content-Type": "application/json",
+        }
+
+        system_prompt = (
+            "Interpretás mensajes cortos de un chat en español donde un cliente arma una "
+            "campaña de anuncios. Tu única salida es un JSON con este contrato exacto:\n"
+            '{"intent": "provide_info|accept|reject|change|cancel|unclear", '
+            '"product_name": "string ASCII o null", "goal_text": "string o null", '
+            '"budget": "number o null", "budget_type": "LIFETIME|DAILY o null", '
+            '"days": "integer o null", "copy_text": "string o null", "headline": "string o null", '
+            '"description": "string o null", "reply_hint": "string corto en español o null"}\n\n'
+            "REGLAS INQUEBRANTABLES:\n"
+            "- NUNCA inventes ni estimes budget/days. Si el usuario no escribió una cifra "
+            "explícita, esos campos van en null. El presupuesto y la duración los decide "
+            "el sistema, no vos.\n"
+            "- `product_name` debe ser ASCII puro: sin tildes, sin ñ, sin emojis, sin signos, "
+            "máximo 40 caracteres. Es un identificador técnico, no un título de anuncio.\n"
+            "- `reply_hint` (opcional, máx. 200 caracteres): una frase corta reconociendo lo "
+            "que dijo el usuario. Nunca incluyas URLs, HTML ni markdown ahí.\n\n"
+            f"{_PROMPT_INJECTION_GUARD}"
+        )
+
+        user_prompt = (
+            f"Estado actual de la conversación: {state}\n"
+            f"Datos ya conocidos: {json.dumps(current_slots, ensure_ascii=False)}\n"
+            f"Mensaje del usuario: {_delimit_untrusted(user_text)}\n"
+            "Devuelve solo el JSON del contrato."
+        )
+
+        # Modelo más barato disponible del proveedor activo — esto es
+        # clasificación de intención sobre un mensaje corto, no redacción; no
+        # tiene sentido cobrar precio de un modelo premium para parsear "sí".
+        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        if self.is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
+        payload = {
+            "model": model,
+            "temperature": 0.0,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(self.base_url, json=payload, headers=headers)
+                if response.status_code != 200:
+                    logger.error(
+                        "OpenRouter API (extracción del chat) devolvió error %s: %s",
+                        response.status_code, response.text,
+                    )
+                    return None
+                result = response.json()
+                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                content = result["choices"][0]["message"]["content"]
+                return self._parse_chat_extraction_json(content)
+        except Exception:
+            logger.exception("Error llamando a la API del LLM para extracción del chat.")
+            return None
+
+    @classmethod
+    def _parse_chat_extraction_json(cls, content: str) -> Optional[Dict[str, Any]]:
+        data = _extract_json_object(content)
+        if data is None or "intent" not in data:
+            return None
+        intent = data.get("intent")
+        if intent not in cls._CHAT_EXTRACT_INTENTS:
+            return None
+        return {k: v for k, v in data.items() if k in cls._CHAT_EXTRACT_KEYS}
+
     @staticmethod
     def _parse_copy_json(content: str) -> Optional[Dict[str, Any]]:
         """Extrae el JSON del copy de la respuesta del LLM. Tolera que el modelo
@@ -495,15 +631,8 @@ class OpenRouterClient:
         hacerlo. Devuelve None si no se puede parsear, faltan claves, las
         variantes de headline/primary_text no son exactamente 2, o algún
         headline/description excede el límite de caracteres de Meta."""
-        import re
-        match = re.search(r"\{.*\}", content.strip(), re.DOTALL)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group(0))
-        except (json.JSONDecodeError, TypeError):
-            return None
-        if not isinstance(data, dict) or not _REQUIRED_COPY_KEYS.issubset(data.keys()):
+        data = _extract_json_object(content)
+        if data is None or not _REQUIRED_COPY_KEYS.issubset(data.keys()):
             return None
 
         result: Dict[str, Any] = {}

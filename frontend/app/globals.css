@@ -565,6 +565,138 @@ select:focus-visible {
   font-weight: var(--font-weight-w510);
 }
 
+/* Chat de creación de campañas (CH-1) — burbujas, tarjetas de revisión/riesgo,
+   compositor. Reusa los tokens y clases existentes (.glass-card, .btn-*,
+   .badge*) en vez de introducir un sistema de estilos paralelo. */
+.chat-shell {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 180px);
+  min-height: 480px;
+}
+
+.chat-transcript {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-16) var(--spacing-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-16);
+}
+
+.chat-bubble-row {
+  display: flex;
+  width: 100%;
+}
+
+.chat-bubble-row.assistant {
+  justify-content: flex-start;
+}
+
+.chat-bubble-row.user {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  max-width: 640px;
+  border-radius: var(--radius-cards);
+  padding: 12px 16px;
+  font-size: var(--text-body-sm);
+  line-height: var(--leading-body-sm);
+  white-space: pre-wrap;
+}
+
+.chat-bubble.assistant {
+  background: var(--color-carbon);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-subtle);
+}
+
+.chat-bubble.user {
+  background: var(--color-obsidian);
+  color: var(--color-mist);
+  border: 1px solid var(--color-graphite);
+}
+
+.chat-quick-replies {
+  display: flex;
+  gap: var(--spacing-8);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-8);
+}
+
+.chat-card {
+  max-width: 640px;
+  width: 100%;
+}
+
+.chat-card-field {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-16);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-graphite);
+  font-size: 14px;
+}
+
+.chat-card-field:last-of-type {
+  border-bottom: none;
+}
+
+.chat-card-field-label {
+  color: var(--text-secondary);
+}
+
+.chat-card-field-value {
+  color: var(--color-mist);
+  font-weight: var(--font-weight-w510);
+  text-align: right;
+}
+
+.chat-card-actions {
+  display: flex;
+  gap: var(--spacing-8);
+  flex-wrap: wrap;
+  margin-top: var(--spacing-16);
+}
+
+.chat-media-preview {
+  max-width: 220px;
+  border-radius: var(--radius-inputs);
+  margin-bottom: var(--spacing-12);
+  display: block;
+}
+
+.chat-composer {
+  display: flex;
+  gap: var(--spacing-8);
+  align-items: flex-end;
+  padding: var(--spacing-16) var(--spacing-8) 0;
+  border-top: 1px solid var(--color-graphite);
+}
+
+.chat-composer textarea {
+  flex: 1;
+  resize: none;
+  min-height: 44px;
+  max-height: 140px;
+}
+
+.chat-file-btn {
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .chat-shell {
+    height: calc(100vh - 220px);
+  }
+
+  .chat-bubble,
+  .chat-card {
+    max-width: 100%;
+  }
+}
+
 /* 5.4(e): impresión genérica de cualquier pantalla del dashboard con
    Ctrl/Cmd+P (el botón "Exportar PDF" de /reporte ya no depende de esto —
    usa un PDF real renderizado en el servidor, ver pdf_report.py — pero el

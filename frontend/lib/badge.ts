@@ -16,6 +16,17 @@ export function badgeIcon(cls: string): string {
 // Meta. Antes `campaigns/page.tsx` mostraba el badge de rendimiento bajo la
 // columna "Estado", haciendo ver como "apagada"/"fallida" a una campaña que
 // en Meta seguía activa (o viceversa).
+// Colores por nivel de riesgo de creación de campaña (paleta "midnight").
+// Usado tanto por el formulario (campaigns/new) como por el chat de
+// creación — una sola copia, para que el nivel de riesgo se vea igual
+// sin importar por qué puerta se creó la campaña.
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH";
+export const RISK_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
+  LOW: { bg: "rgba(39, 174, 96, 0.1)", border: "rgba(39, 174, 96, 0.25)", color: "var(--color-pulse-green)", label: "BAJO" },
+  MEDIUM: { bg: "rgba(242, 201, 76, 0.1)", border: "rgba(242, 201, 76, 0.25)", color: "#f2c94c", label: "MEDIO" },
+  HIGH: { bg: "rgba(235, 87, 87, 0.1)", border: "rgba(235, 87, 87, 0.25)", color: "var(--color-coral-red)", label: "ALTO" },
+};
+
 export function metaStatusBadge(status: string): { cls: string; label: string } {
   switch (status) {
     case "ACTIVE":

@@ -65,6 +65,19 @@ Respuesta de signup/login/refresh: `TokenResponse { access_token, token_type, us
 
 `POST /campaigns/` recibe `CampaignCreateRequest` (`ad_account_id`, `page_id`, `product_name`, `budget`, `days`, `whatsapp_number`, imagen/video, `copy_text`, `headline?`, `description?`). Ver [20-creacion-campanas](20-creacion-campanas.md).
 
+## 5b. Chat de creación de campañas — `/api/v1/campaigns/chat`
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/campaigns/chat/sessions` | Arranca una sesión (resuelve cuenta + página/WhatsApp, tope anti-bloqueo) |
+| GET | `/campaigns/chat/sessions` | Sesiones de la organización |
+| GET | `/campaigns/chat/sessions/{id}` | Sesión + transcripción (materializa el progreso de la Saga sin persistir) |
+| POST | `/campaigns/chat/sessions/{id}/messages` | Turno de texto libre o de un archivo ya subido |
+| POST | `/campaigns/chat/sessions/{id}/decision` | Aceptar/rechazar/cambiar una tarjeta de revisión o riesgo |
+| POST | `/campaigns/chat/sessions/{id}/advance` | Relee y persiste el estado real de la Saga (polling del frontend) |
+
+Segunda puerta de entrada al mismo motor de creación — nunca abre un camino de escritura paralelo. Ver [23-chat-creacion-campanas](23-chat-creacion-campanas.md).
+
 ## 6. Insights (Diagnósticos) — `/api/v1/insights`
 
 | Método | Ruta | Descripción |
@@ -122,6 +135,7 @@ Tipos de evento (`event_type`): `sync_status`, `analysis_status`, `campaign_crea
 |--------|---------|-----|
 | `auth.py` | `/api/v1/auth` | auth |
 | `organizations.py` | `/api/v1/organizations` | organizations |
+| `campaign_chat.py` | `/api/v1/campaigns/chat` | campaign-chat |
 | `campaigns.py` | `/api/v1/campaigns` | campaigns |
 | `insights.py` | `/api/v1/insights` | insights |
 | `actions.py` | `/api/v1/actions` | actions |

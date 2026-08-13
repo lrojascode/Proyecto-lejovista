@@ -7,8 +7,8 @@ declarado en el backend, `GET /openapi.json` lo expone correctamente, y
 `frontend/lib/types.ts` se puede generar desde ahí (`npm run generate-types`)
 en vez de mantenerse por separado.
 """
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from pydantic import BaseModel, Field
 
 
 # --- Reporte (ReportBuilder.build / report_cache.get_report) ---
@@ -398,3 +398,152 @@ class PreflightCheck(BaseModel):
 class CampaignPreflightResponse(BaseModel):
     ok: bool
     checks: List[PreflightCheck]
+
+
+# --- Chat de creación de campañas (CH-1..CH-5) ---
+# Unión discriminada por `type`: cada variante es una forma de mensaje o
+# tarjeta que el frontend renderiza sin adivinar — un solo `switch` sobre
+# `type`, nada de campos opcionales sueltos que hay que interpretar.
+
+class ChatAction(BaseModel):
+    action: Literal["accept", "reject", "change"]
+    label: str
+    style: Literal["primary", "danger", "neutral"]
+
+
+class ChatQuickReply(BaseModel):
+    label: str
+    value: str
+
+
+class ChatMessageBase(BaseModel):
+    id: str
+    role: Literal["assistant", "user", "system"]
+    created_at: str
+
+
+class ChatTextMessage(ChatMessageBase):
+    type: Literal["text"] = "text"
+    text: str
+    quick_replies: List[str] = Field(default_factory=list)
+
+
+class ChatMediaMessage(ChatMessageBase):
+    type: Literal["media"] = "media"
+    image_path: Optional[str] = None
+    video_path: Optional[str] = None
+
+
+class ChatProposalField(BaseModel):
+    key: str
+    label: str
+    value: str
+    source: Literal["ai_suggestion", "user", "account_default", "fixed_rule"]
+    editable: bool = True
+
+
+class ChatMediaPreview(BaseModel):
+    image_path: Optional[str] = None
+    video_path: Optional[str] = None
+
+
+class ChatReviewCard(ChatMessageBase):
+    type: Literal["review_card"] = "review_card"
+    card_id: str
+    title: str
+    fields: List[ChatProposalField]
+    copy_preview: SuggestionCopy
+    media_preview: Optional[ChatMediaPreview] = None
+    evidence: List[str] = Field(default_factory=list)
+    actions: List[ChatAction]
+
+
+class ChatRiskCard(ChatMessageBase):
+    type: Literal["risk_card"] = "risk_card"
+    card_id: str
+    title: str
+    risk_level: Literal["LOW", "MEDIUM", "HIGH"]
+    risk_reasons: List[str] = Field(default_factory=list)
+    preflight_ok: Optional[bool] = None
+    preflight_checks: List[PreflightCheck] = Field(default_factory=list)
+    actions: List[ChatAction]
+
+
+class ChatProgressMessage(ChatMessageBase):
+    type: Literal["progress"] = "progress"
+    draft_id: Optional[str] = None
+    step: str
+    percent: int
+    text: str
+
+
+class ChatResultMessage(ChatMessageBase):
+    type: Literal["result"] = "result"
+    draft_id: str
+    campaign_id: Optional[str] = None
+    adset_id: Optional[str] = None
+    ad_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    text: str
+
+
+class ChatErrorMessage(ChatMessageBase):
+    type: Literal["error"] = "error"
+    code: Literal["CAP_REACHED", "PREFLIGHT_FAILED", "SAGA_FAILED", "VALIDATION", "INTERNAL"]
+    text: str
+    retry_after_hours: Optional[int] = None
+    actions: List[ChatAction] = Field(default_factory=list)
+
+
+ChatMessage = Annotated[
+    Union[
+        ChatTextMessage, ChatMediaMessage, ChatReviewCard, ChatRiskCard,
+        ChatProgressMessage, ChatResultMessage, ChatErrorMessage,
+    ],
+    Field(discriminator="type"),
+]
+
+
+class ChatSlots(BaseModel):
+    goal_text: Optional[str] = None
+    product_name: Optional[str] = None
+    budget: Optional[float] = None
+    budget_type: Optional[Literal["LIFETIME", "DAILY"]] = None
+    days: Optional[int] = None
+    image_path: Optional[str] = None
+    video_path: Optional[str] = None
+    page_id: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    headline: Optional[str] = None
+    description: Optional[str] = None
+    copy_text: Optional[str] = None
+
+
+class ChatSessionResponse(BaseModel):
+    id: str
+    state: str
+    status: str
+    ad_account_id: str
+    draft_id: Optional[str] = None
+    slots: ChatSlots
+    messages: List[ChatMessage]
+    created_at: str
+    updated_at: str
+
+
+class ChatTurnResponse(BaseModel):
+    session_id: str
+    state: str
+    status: str
+    draft_id: Optional[str] = None
+    slots: ChatSlots
+    messages: List[ChatMessage]
+
+
+class ChatSessionSummary(BaseModel):
+    id: str
+    state: str
+    status: str
+    ad_account_id: str
+    draft_id: Optional[str] = None
+    updated_at: str

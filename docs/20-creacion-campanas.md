@@ -2,6 +2,8 @@
 
 La creación de campañas es el flujo de escritura más complejo. Combina sugerencia determinista, copy del LLM, evaluación de riesgo, validación síncrona y una **Saga asíncrona de 5 pasos** contra Meta.
 
+> Dos puertas de entrada a este mismo motor: el formulario (`campaigns/new`, descrito en la §8 de este documento) y el **chat conversacional** (`campaigns/chat`, ver [23-chat-creacion-campanas](23-chat-creacion-campanas.md)). Ninguna de las dos abre un camino de escritura propio — ambas terminan en `start_campaign_creation` (antes inline en el endpoint, extraído a `app/services/campaign_creation.py` para que el chat pudiera reusarlo sin duplicar lógica).
+
 ## 1. Actores
 
 | Componente | Módulo | Rol |

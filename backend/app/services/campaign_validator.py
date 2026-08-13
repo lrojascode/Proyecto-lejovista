@@ -9,6 +9,12 @@ from app.services.ai.llm import META_HEADLINE_MAX_CHARS, META_DESCRIPTION_MAX_CH
 
 logger = logging.getLogger(__name__)
 
+# Letras, números, espacios y guiones básicos — sin tildes, ñ ni emojis.
+# Constante importable para que el chat de creación (CH-1) pueda normalizar
+# `product_name` ANTES de llegar acá, en vez de duplicar la regex.
+PRODUCT_NAME_PATTERN = r"^[A-Za-z0-9 _-]+$"
+
+
 class CampaignValidator:
     """
     Ejecuta validaciones síncronas antes de encolar la creación de una campaña.
@@ -60,7 +66,7 @@ class CampaignValidator:
 
         # 2. Sanitización de nombre de producto/zona (no tildes ni emojis)
         # Permite letras, números, espacios y guiones bajos básicos
-        if not re.match(r"^[A-Za-z0-9 _-]+$", request.product_name):
+        if not re.match(PRODUCT_NAME_PATTERN, request.product_name):
             raise HTTPException(status_code=400, detail="product_name contains invalid characters (no accents or emojis allowed).")
 
         # 3. Límites de caracteres de Meta para el Ad Creative (3.4). Solo se

@@ -61,8 +61,11 @@ export default function CampaignsList() {
           <Link href="/campaigns/learning" className="btn-secondary" style={{ whiteSpace: "nowrap" }}>
             Aprendizaje de la IA
           </Link>
-          <Link href="/campaigns/new" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
+          <Link href="/campaigns/new" className="btn-secondary" style={{ whiteSpace: "nowrap" }}>
             + Crear Campaña
+          </Link>
+          <Link href="/campaigns/chat" className="btn-primary" style={{ whiteSpace: "nowrap" }}>
+            💬 Chat
           </Link>
         </div>
       </div>

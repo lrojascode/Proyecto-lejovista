@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Optional
 
 # Modo de presupuesto del AdSet. LIFETIME = monto total repartido en `days`
@@ -88,3 +88,44 @@ class CampaignCreateRequest(BaseModel):
                 "copy_text": "¡Mejora tu conectividad!..."
             }
         }
+
+
+# --- Chat de creación de campañas (CH-1) ---
+
+class ChatSessionCreateRequest(BaseModel):
+    """`ad_account_id` es opcional: si falta, se usa la cuenta activa
+    (header `X-Ad-Account-Id`, igual que el resto de la app)."""
+    ad_account_id: Optional[str] = None
+
+
+class ChatMessageRequest(BaseModel):
+    """Turno de texto libre o de un archivo ya subido (`POST
+    /campaigns/upload-image|upload-video` corre ANTES; acá solo viaja la ruta
+    resultante). `client_turn_id` deja repetir un turno sin duplicar efectos
+    ante un reintento de red."""
+    client_turn_id: str = Field(..., max_length=64)
+    text: Optional[str] = Field(None, max_length=2000)
+    image_path: Optional[str] = None
+    video_path: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _requires_some_payload(self):
+        if not self.text and not self.image_path and not self.video_path:
+            raise ValueError("El mensaje necesita texto o un archivo.")
+        return self
+
+
+class ChatDecisionRequest(BaseModel):
+    """La compuerta estilo Claude Code: aceptar/rechazar/cambiar una tarjeta
+    de revisión o de riesgo. `card_id` referencia la tarjeta a la que
+    responde, para no poder contestar una vieja tras un reload."""
+    client_turn_id: str = Field(..., max_length=64)
+    card_id: str
+    decision: Literal["accept", "reject", "change"]
+    text: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _change_requires_text(self):
+        if self.decision == "change" and not self.text:
+            raise ValueError("decision='change' requiere 'text' con lo que hay que cambiar.")
+        return self

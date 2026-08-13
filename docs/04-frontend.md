@@ -29,7 +29,8 @@ app/
     ├── campaigns/
     │   ├── page.tsx          # Listado de campañas (estado real de Meta)
     │   ├── [id]/page.tsx     # Detalle + historial (gráfico)
-    │   ├── new/page.tsx      # Creación asistida por IA (622 líneas)
+    │   ├── new/page.tsx      # Creación asistida por IA (formulario)
+    │   ├── chat/page.tsx     # Creación conversacional (CH-1) — botón resaltado en la lista
     │   └── learning/page.tsx # Historial de entrenamiento de la IA
     ├── reporte/page.tsx      # Master Brief + descarga PDF + comparativa 7/30/90d
     ├── diagnostics/page.tsx  # Insights de IA (Capa 1 y 2)

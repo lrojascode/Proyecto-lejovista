@@ -1,0 +1,74 @@
+"""Tope anti-bloqueo (máx. 5 campañas nuevas / 24h por organización) dentro
+del chat — CH-1: debe avisarse ANTES de llegar a la compuerta final y
+bloquear la creación con un mensaje legible, nunca un 500/429 crudo."""
+import datetime
+import uuid
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.campaign_draft import CampaignDraft
+from app.services.campaign_creation import MAX_CAMPAIGNS_PER_SESSION
+from tests.test_campaign_chat_flow import _mock_side_effects, _signup_with_ad_account_and_page  # noqa: F401
+from tests.test_campaign_chat_gates import _create_session_at_review
+
+
+def _turn_id() -> str:
+    return str(uuid.uuid4())
+
+
+async def _seed_recent_drafts(db_session: AsyncSession, org_id: str, count: int):
+    for i in range(count):
+        db_session.add(CampaignDraft(
+            organization_id=org_id, name=f"Filler {i}", payload={}, status="CREATED",
+        ))
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_session_creation_warns_early_when_cap_already_reached(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    headers, org_id, ad_account_id = await _signup_with_ad_account_and_page(
+        async_client, db_session, "chat-cap-early"
+    )
+    await _seed_recent_drafts(db_session, org_id, MAX_CAMPAIGNS_PER_SESSION)
+
+    res = await async_client.post(
+        "/api/v1/campaigns/chat/sessions", json={"ad_account_id": ad_account_id}, headers=headers,
+    )
+    assert res.status_code == 400
+    assert "límite" in res.json()["detail"].lower() or "campañas" in res.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_confirm_blocks_with_readable_error_when_cap_reached_mid_conversation(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    headers, org_id, session_id, review_card = await _create_session_at_review(
+        async_client, db_session, "chat-cap-mid"
+    )
+    # El tope se alcanza DESPUÉS de haber empezado la conversación (otra
+    # sesión/el formulario crearon campañas mientras tanto).
+    await _seed_recent_drafts(db_session, org_id, MAX_CAMPAIGNS_PER_SESSION)
+
+    accept_review = await async_client.post(
+        f"/api/v1/campaigns/chat/sessions/{session_id}/decision",
+        json={"client_turn_id": _turn_id(), "card_id": review_card["card_id"], "decision": "accept"},
+        headers=headers,
+    )
+    risk_card = next(m for m in accept_review.json()["messages"] if m["type"] == "risk_card")
+
+    accept_risk = await async_client.post(
+        f"/api/v1/campaigns/chat/sessions/{session_id}/decision",
+        json={"client_turn_id": _turn_id(), "card_id": risk_card["card_id"], "decision": "accept"},
+        headers=headers,
+    )
+    assert accept_risk.status_code == 200
+    session = accept_risk.json()
+    assert session["draft_id"] is None
+    error_msg = next(m for m in session["messages"] if m["type"] == "error")
+    assert error_msg["code"] == "CAP_REACHED"
+    # La sesión sigue abierta: el usuario puede reintentar más tarde.
+    assert session["status"] == "OPEN"

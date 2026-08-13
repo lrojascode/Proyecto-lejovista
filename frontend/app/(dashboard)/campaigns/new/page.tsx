@@ -6,13 +6,7 @@ import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import type { MetaPage, WhatsAppNumber, Suggestion } from "@/lib/types";
-
-// Colores por nivel de riesgo (paleta del design system "midnight").
-const RISK_STYLES: Record<string, { bg: string; border: string; color: string; label: string }> = {
-  LOW: { bg: "rgba(39, 174, 96, 0.1)", border: "rgba(39, 174, 96, 0.25)", color: "var(--color-pulse-green)", label: "BAJO" },
-  MEDIUM: { bg: "rgba(242, 201, 76, 0.1)", border: "rgba(242, 201, 76, 0.25)", color: "#f2c94c", label: "MEDIO" },
-  HIGH: { bg: "rgba(235, 87, 87, 0.1)", border: "rgba(235, 87, 87, 0.25)", color: "var(--color-coral-red)", label: "ALTO" },
-};
+import { RISK_STYLES } from "@/lib/badge";
 
 type DraftStatus = "idle" | "submitting" | "polling" | "success" | "error";
 
