@@ -45,6 +45,35 @@ En el recurso lejovista de Coolify → **Environment Variables**:
 
 ---
 
+## ⚠️ El `:-default` del compose NO pisa a la variable del panel
+
+En el compose, `ENABLE_META_WRITEBACK: '${ENABLE_META_WRITEBACK:-true}'` **no
+asigna `true`**: dice *"usá la variable; si no existe o está vacía, entonces
+`true`"*. Si en **Environment Variables** de Coolify hay una fila
+`ENABLE_META_WRITEBACK=false`, esa gana y el default no se aplica nunca.
+
+Editar el compose no arregla un valor equivocado del panel, y **reiniciar o
+redesplegar tampoco**: el valor de origen sigue siendo el mismo. Hay que
+corregir (o borrar) la fila en el panel.
+
+Costó horas de debugging el 14-ago-2026: campañas que decían "creada" y no
+existían en Meta, porque el write-back estaba apagado desde el panel mientras
+el compose parecía tenerlo encendido.
+
+**Cómo ver el valor efectivo**, que es la única fuente de verdad — terminal del
+servicio que importa (para creación de campañas, `celery-worker-creation`, no
+el backend):
+
+```bash
+printenv | grep -E "MOCK_SERVICES|ENABLE_META_WRITEBACK|WRITEBACK_ACCOUNT"
+```
+
+El backend además lo dice al arrancar, en un `WARNING` de la primera línea:
+`ESCRITURAS A META SIMULADAS (ENABLE_META_WRITEBACK=false): ...` o
+`Escrituras a Meta REALES para TODAS las cuentas`.
+
+---
+
 ## Rollback (volver a una versión anterior)
 
 De más rápido a más robusto:
