@@ -2,9 +2,10 @@ import datetime
 import logging
 
 from celery import chain
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models.ad_account import AdAccount
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
@@ -45,16 +46,50 @@ class CampaignCapReachedError(Exception):
         )
 
 
+def _draft_reached_meta(draft: CampaignDraft) -> bool:
+    """¿Este draft llegó de verdad a Meta? Un draft simulado (write-back
+    apagado) no hizo ni una llamada de escritura."""
+    result = (draft.payload or {}).get("result") or {}
+    return not result.get("simulated", False)
+
+
 async def count_recent_drafts(db: AsyncSession, organization_id: str) -> int:
-    """Cuántos `CampaignDraft` se crearon en la ventana anti-bloqueo vigente.
-    Expuesto aparte de `start_campaign_creation` para que el chat pueda avisar
-    del tope ANTES de hacer preguntas, no solo al confirmar."""
+    """Cuántas campañas que REALMENTE llegaron a Meta se crearon en la ventana
+    anti-bloqueo vigente.
+
+    Las simuladas no cuentan: el tope existe para que Meta no bloquee la cuenta
+    por crear demasiadas campañas seguidas, y una campaña simulada no hace ni
+    una sola llamada a Meta. Contarlas dejaba el sistema trabado 24h por
+    intentos que nunca salieron del servidor — y encima el usuario veía "ya
+    creaste 5" habiendo creado cero (reportado 14-ago-2026).
+
+    Se filtra en Python y no en SQL porque `payload` es JSON y la sintaxis para
+    entrar a una clave anidada difiere entre Postgres y el SQLite de los tests;
+    la ventana es de 24h por organización, así que son unas pocas filas.
+    """
     window_start = datetime.datetime.utcnow() - datetime.timedelta(hours=CAMPAIGN_SESSION_WINDOW_HOURS)
-    q = select(func.count()).select_from(CampaignDraft).where(
+    q = select(CampaignDraft).where(
         CampaignDraft.organization_id == organization_id,
         CampaignDraft.created_at >= window_start,
     )
-    return (await db.execute(q)).scalar_one()
+    drafts = (await db.execute(q)).scalars().all()
+    return sum(1 for d in drafts if _draft_reached_meta(d))
+
+
+async def cap_reached(db: AsyncSession, organization_id: str, ad_account: AdAccount) -> bool:
+    """¿Hay que frenar por el tope anti-bloqueo?
+
+    Único lugar donde se decide: lo consultan `start_campaign_creation` y las
+    dos compuertas del chat (al abrir la sesión y al confirmar la creación).
+    Cuando estaban repartidas, cada una podía quedar con un criterio distinto.
+
+    Con las escrituras simuladas devuelve `False` siempre: el tope existe para
+    que Meta no bloquee la cuenta, y una campaña simulada no le manda ni una
+    llamada.
+    """
+    if settings.simulate_meta_writes_for(ad_account.id, ad_account.external_account_id):
+        return False
+    return await count_recent_drafts(db, organization_id) >= MAX_CAMPAIGNS_PER_SESSION
 
 
 async def start_campaign_creation(
@@ -73,8 +108,7 @@ async def start_campaign_creation(
     """
     tenant_id = current_user.organization_id
 
-    recent_count = await count_recent_drafts(db, tenant_id)
-    if recent_count >= MAX_CAMPAIGNS_PER_SESSION:
+    if await cap_reached(db, tenant_id, ad_account):
         raise CampaignCapReachedError(MAX_CAMPAIGNS_PER_SESSION, CAMPAIGN_SESSION_WINDOW_HOURS)
 
     # Se normaliza ANTES de validar: la regex de `product_name` no admite

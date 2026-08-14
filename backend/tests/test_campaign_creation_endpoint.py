@@ -72,8 +72,21 @@ async def test_create_campaign_returns_medium_risk_level(async_client: AsyncClie
     assert res.json()["risk_level"] == "MEDIUM"
 
 
+@pytest.fixture
+def _writes_are_real(monkeypatch):
+    """El tope anti-bloqueo solo aplica cuando las escrituras llegan de verdad
+    a Meta — es a la cuenta de Meta a la que protege. La suite corre con
+    MOCK_SERVICES=true, donde está (correctamente) desactivado."""
+    # Se parchea la CLASE: `settings` es un modelo de pydantic y no acepta que
+    # se le cuelgue un método en la instancia.
+    from app.config import Settings
+    monkeypatch.setattr(Settings, "simulate_meta_writes_for", lambda self, *a, **kw: False)
+
+
 @pytest.mark.asyncio
-async def test_create_campaign_blocks_after_session_cap(async_client: AsyncClient, db_session: AsyncSession):
+async def test_create_campaign_blocks_after_session_cap(
+    async_client: AsyncClient, db_session: AsyncSession, _writes_are_real,
+):
     """Playbook §2: máx ~5 campañas nuevas por sesión (anti-bloqueo de cuenta)."""
     headers, org_id, ad_account_id = await _signup_with_ad_account(async_client, "cap-org")
 
@@ -91,7 +104,7 @@ async def test_create_campaign_blocks_after_session_cap(async_client: AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_create_campaign_session_cap_scoped_per_organization(async_client: AsyncClient):
+async def test_create_campaign_session_cap_scoped_per_organization(async_client: AsyncClient, _writes_are_real):
     """Los drafts de otra organización no deben contar contra el tope propio."""
     headers_a, _, ad_account_a = await _signup_with_ad_account(async_client, "cap-org-a")
     headers_b, _, ad_account_b = await _signup_with_ad_account(async_client, "cap-org-b")

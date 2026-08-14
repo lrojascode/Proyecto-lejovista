@@ -32,7 +32,7 @@ from app.services.campaign_creation import (
     CAMPAIGN_SESSION_WINDOW_HOURS,
     MAX_CAMPAIGNS_PER_SESSION,
     CampaignCapReachedError,
-    count_recent_drafts,
+    cap_reached,
     start_campaign_creation,
 )
 from app.services.campaign_destination import resolve_destination
@@ -91,8 +91,7 @@ async def create_session(
     if not ad_account:
         raise ChatGuardError("AdAccount no encontrada para esta organización.")
 
-    recent_count = await count_recent_drafts(db, current_user.organization_id)
-    if recent_count >= MAX_CAMPAIGNS_PER_SESSION:
+    if await cap_reached(db, current_user.organization_id, ad_account):
         raise ChatGuardError(
             f"Ya llegaste al máximo de {MAX_CAMPAIGNS_PER_SESSION} campañas nuevas en las últimas "
             f"{CAMPAIGN_SESSION_WINDOW_HOURS}h (protección para que Meta no bloquee tu cuenta por "
@@ -441,14 +440,13 @@ async def _handle_accept_risk(
         session.state = "CREATING"
         return
 
-    recent_count = await count_recent_drafts(db, current_user.organization_id)
-    if recent_count >= MAX_CAMPAIGNS_PER_SESSION:
+    ad_account = await db.get(AdAccount, session.ad_account_id)
+    if await cap_reached(db, current_user.organization_id, ad_account):
         messages.append(cards.build_error_message(
             "CAP_REACHED", cards.CAP_REACHED_TEXT, retry_after_hours=CAMPAIGN_SESSION_WINDOW_HOURS,
         ))
         return
 
-    ad_account = await db.get(AdAccount, session.ad_account_id)
     request = _build_create_request(session)
     try:
         result = await start_campaign_creation(db, current_user, ad_account, request)
