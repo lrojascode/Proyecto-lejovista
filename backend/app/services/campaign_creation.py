@@ -46,22 +46,40 @@ class CampaignCapReachedError(Exception):
         )
 
 
+# Prefijo de los ids que genera la Saga cuando las escrituras están simuladas
+# (ver `creation_tasks`). Es la prueba retroactiva de que un draft nunca salió
+# del servidor, incluso en las filas anteriores a que existiera `simulated`.
+MOCK_ID_PREFIX = "mock_"
+
+
 def _draft_reached_meta(draft: CampaignDraft) -> bool:
-    """¿Este draft llegó de verdad a Meta? Un draft simulado (write-back
-    apagado) no hizo ni una llamada de escritura."""
+    """¿Este draft llegó de verdad a Meta?
+
+    Dos señales, porque la marca explícita solo existe en los drafts creados
+    después de que se agregara: un `campaign_id` con prefijo `mock_` delata una
+    simulación igual de bien y funciona hacia atrás, sin tener que tocar la BD.
+
+    Ante la ausencia de las dos —draft en vuelo, o que falló antes de llegar a
+    crear la campaña— se cuenta: el tope protege la cuenta de Meta y equivocarse
+    para el lado de contarlo de más es el error barato.
+    """
     result = (draft.payload or {}).get("result") or {}
-    return not result.get("simulated", False)
+    if result.get("simulated", False):
+        return False
+    campaign_id = result.get("campaign_id") or ""
+    return not campaign_id.startswith(MOCK_ID_PREFIX)
 
 
 async def count_recent_drafts(db: AsyncSession, organization_id: str) -> int:
     """Cuántas campañas que REALMENTE llegaron a Meta se crearon en la ventana
     anti-bloqueo vigente.
 
-    Las simuladas no cuentan: el tope existe para que Meta no bloquee la cuenta
-    por crear demasiadas campañas seguidas, y una campaña simulada no hace ni
-    una sola llamada a Meta. Contarlas dejaba el sistema trabado 24h por
-    intentos que nunca salieron del servidor — y encima el usuario veía "ya
-    creaste 5" habiendo creado cero (reportado 14-ago-2026).
+    Las simuladas no cuentan (ver `_draft_reached_meta`): el tope existe para
+    que Meta no bloquee la cuenta por crear demasiadas campañas seguidas, y una
+    campaña simulada no hace ni una sola llamada a Meta. Contarlas dejaba el
+    sistema trabado 24h por intentos que nunca salieron del servidor — y encima
+    el usuario veía "ya creaste 5" habiendo creado cero (reportado
+    14-ago-2026).
 
     Se filtra en Python y no en SQL porque `payload` es JSON y la sintaxis para
     entrar a una clave anidada difiere entre Postgres y el SQLite de los tests;

@@ -134,19 +134,47 @@ async def test_drafts_marked_simulated_do_not_count(db_session: AsyncSession, _w
 
 
 @pytest.mark.asyncio
-async def test_drafts_without_the_flag_still_count(db_session: AsyncSession):
-    """Los drafts viejos (anteriores a que existiera `simulated`) se cuentan:
-    ante la duda, se protege la cuenta de Meta."""
+async def test_a_mock_campaign_id_betrays_a_simulation_without_the_flag(db_session: AsyncSession):
+    """Los drafts anteriores a que existiera `simulated` igual se reconocen por
+    el prefijo `mock_` del campaign_id — si no, arreglar la config te dejaba
+    bloqueado 24h por simulaciones viejas, que es justo lo que paso el
+    14-ago-2026 al encender el write-back."""
     from app.models.organization import Organization
     from app.services.campaign_creation import count_recent_drafts
 
     org = Organization(slug="cap-sin-flag", name="Cap Sin Flag", status="ACTIVE")
     db_session.add(org)
     await db_session.flush()
+    for i in range(MAX_CAMPAIGNS_PER_SESSION):
+        db_session.add(CampaignDraft(
+            organization_id=org.id, name=f"Vieja simulada {i}", status="CREATED",
+            payload={"result": {"campaign_id": f"mock_camp_17867156{i}"}},
+        ))
     db_session.add(CampaignDraft(
-        organization_id=org.id, name="Antigua", status="CREATED",
+        organization_id=org.id, name="Real", status="CREATED",
         payload={"result": {"campaign_id": "120200001"}},
     ))
     await db_session.commit()
 
     assert await count_recent_drafts(db_session, org.id) == 1
+
+
+@pytest.mark.asyncio
+async def test_in_flight_and_failed_drafts_still_count(db_session: AsyncSession):
+    """Sin campaign_id no hay prueba de que NO haya llegado a Meta: se cuenta.
+    Equivocarse para el lado de contar de mas es el error barato."""
+    from app.models.organization import Organization
+    from app.services.campaign_creation import count_recent_drafts
+
+    org = Organization(slug="cap-en-vuelo", name="Cap En Vuelo", status="ACTIVE")
+    db_session.add(org)
+    await db_session.flush()
+    db_session.add(CampaignDraft(
+        organization_id=org.id, name="En vuelo", status="PENDING", payload={},
+    ))
+    db_session.add(CampaignDraft(
+        organization_id=org.id, name="Fallida", status="FAILED", payload={"result": {}},
+    ))
+    await db_session.commit()
+
+    assert await count_recent_drafts(db_session, org.id) == 2
