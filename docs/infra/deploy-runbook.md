@@ -45,20 +45,32 @@ En el recurso lejovista de Coolify → **Environment Variables**:
 
 ---
 
-## ⚠️ El `:-default` del compose NO pisa a la variable del panel
+## ⚠️ Cambiar un `:-default` del compose NO cambia el valor en Coolify
 
-En el compose, `ENABLE_META_WRITEBACK: '${ENABLE_META_WRITEBACK:-true}'` **no
-asigna `true`**: dice *"usá la variable; si no existe o está vacía, entonces
-`true`"*. Si en **Environment Variables** de Coolify hay una fila
-`ENABLE_META_WRITEBACK=false`, esa gana y el default no se aplica nunca.
+`ENABLE_META_WRITEBACK: '${ENABLE_META_WRITEBACK:-true}'` **no asigna `true`**:
+es el valor a usar *si la variable no existe o está vacía*.
 
-Editar el compose no arregla un valor equivocado del panel, y **reiniciar o
-redesplegar tampoco**: el valor de origen sigue siendo el mismo. Hay que
-corregir (o borrar) la fila en el panel.
+Y Coolify **congela el valor la primera vez que parsea el compose**. Si en ese
+momento el default era `false`, guarda `false` y lo conserva. Después muestra la
+fila como *"Managed by Docker Compose — Update this value in the Compose file"*,
+de solo lectura... pero editar el compose **ya no actualiza el valor guardado**.
+Queda un estado donde el compose dice `:-true`, el panel no se deja editar, y el
+contenedor recibe `false`. Redesplegar no cambia nada: el valor de origen es el
+mismo.
+
+**Remedio:** poner el literal en el compose, sin interpolación, para que no haya
+variable que administrar:
+
+```yaml
+ENABLE_META_WRITEBACK: 'true'
+```
+
+Si Coolify igual inyecta el valor viejo, renombrar la clave (una que nunca haya
+visto) fuerza una entrada nueva con el default correcto.
 
 Costó horas de debugging el 14-ago-2026: campañas que decían "creada" y no
-existían en Meta, porque el write-back estaba apagado desde el panel mientras
-el compose parecía tenerlo encendido.
+existían en Meta, porque el write-back estaba apagado con un compose que
+aparentaba tenerlo encendido.
 
 **Cómo ver el valor efectivo**, que es la única fuente de verdad — terminal del
 servicio que importa (para creación de campañas, `celery-worker-creation`, no
