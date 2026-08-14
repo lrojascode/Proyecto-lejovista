@@ -70,6 +70,10 @@ export default function NewCampaignPage() {
   const [pendingRisk, setPendingRisk] = useState<{ level: string; reasons: string[] } | null>(null);
   const [riskChecking, setRiskChecking] = useState(false);
   const [resultCampaignId, setResultCampaignId] = useState<string | null>(null);
+  // El servidor puede tener las escrituras a Meta apagadas: la Saga termina
+  // igual y el draft queda CREATED, pero en Ads Manager no hay nada. Se muestra
+  // en vez de festejar una campaña que no existe.
+  const [resultSimulated, setResultSimulated] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const pollAttempts = useRef(0);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -270,8 +274,10 @@ export default function NewCampaignPage() {
         if (draft.status === "CREATED") {
           // payload es JSON libre (Dict[str, Any] en el backend) — result se
           // va llenando paso a paso por la Saga, sin forma fija que declarar.
-          const payload = draft.payload as { result?: { campaign_id?: string } } | undefined;
+          const payload = draft.payload as
+            { result?: { campaign_id?: string; simulated?: boolean } } | undefined;
           setResultCampaignId(payload?.result?.campaign_id || null);
+          setResultSimulated(Boolean(payload?.result?.simulated));
           setStatus("success");
         } else if (draft.status === "FAILED") {
           setErrorMessage(draft.error_message || "La creación falló en Meta.");
@@ -431,12 +437,17 @@ export default function NewCampaignPage() {
               animation: "spin 1s linear infinite",
             }}></div>
           ) : (
-            <div style={{ fontSize: "40px", color: "var(--color-pulse-green)", marginBottom: "16px" }}>✓</div>
+            <div style={{
+              fontSize: "40px", marginBottom: "16px",
+              color: resultSimulated ? "var(--color-solar-amber)" : "var(--color-pulse-green)",
+            }}>{resultSimulated ? "⚠" : "✓"}</div>
           )}
           <h2 style={{ fontSize: "18px", fontWeight: 510 }}>
             {status === "submitting" && "Validando contra Meta..."}
             {status === "polling" && "Creando campaña (pausada) en Meta..."}
-            {status === "success" && "¡Campaña creada — en estado PAUSADA!"}
+            {status === "success" && (resultSimulated
+              ? "Simulación — la campaña NO se creó en Meta"
+              : "¡Campaña creada — en estado PAUSADA!")}
           </h2>
           {status === "polling" && (
             <p style={{ color: "var(--color-fog)", marginTop: "8px", fontSize: "13px", maxWidth: "420px", textAlign: "center" }}>
@@ -458,10 +469,21 @@ export default function NewCampaignPage() {
           {status === "success" && (
             <div style={{ textAlign: "center", marginTop: "16px" }}>
               <p style={{ color: "var(--color-fog)", fontSize: "14px", maxWidth: "480px" }}>
-                Recuerda: 1) si tu cuenta tiene el límite de gasto topado, súbelo en Meta; 2) revisa la campaña en
-                Ads Manager; 3) actívala manualmente cuando esté todo correcto.
+                {resultSimulated ? (
+                  <>
+                    Este servidor tiene las escrituras a Meta apagadas
+                    (<code>ENABLE_META_WRITEBACK</code>), así que la campaña quedó guardada acá pero
+                    no existe en Ads Manager. El presupuesto, el copy y la segmentación sí son
+                    reales: al encender el write-back, se crea de verdad.
+                  </>
+                ) : (
+                  <>
+                    Recuerda: 1) si tu cuenta tiene el límite de gasto topado, súbelo en Meta; 2) revisa la campaña en
+                    Ads Manager; 3) actívala manualmente cuando esté todo correcto.
+                  </>
+                )}
               </p>
-              {adsManagerLink && (
+              {adsManagerLink && !resultSimulated && (
                 <a href={adsManagerLink} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ marginTop: "16px", display: "inline-block" }}>
                   Abrir en Ads Manager
                 </a>

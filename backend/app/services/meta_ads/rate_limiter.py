@@ -9,8 +9,12 @@ from app.models.api_call_log import APICallLog
 logger = logging.getLogger("lejovista.rate_limiter")
 
 class MetaAPIRateLimiter:
-    def __init__(self, ad_account_id: Optional[str] = None):
+    def __init__(self, ad_account_id: Optional[str] = None, external_account_id: Optional[str] = None):
         self.ad_account_id = ad_account_id
+        # Id de Meta (`act_123...`). Solo se usa para el gating del write-back:
+        # `WRITEBACK_ACCOUNT_ALLOWLIST` acepta este formato además del uuid
+        # interno, porque es el que cualquiera escribe al configurar la variable.
+        self.external_account_id = external_account_id
         # Contador de llamadas en la sesión actual
         self.call_count = 0
         
@@ -76,7 +80,7 @@ class MetaAPIRateLimiter:
         # Lecturas: reales si MOCK_SERVICES=false.
         # Escrituras (POST/DELETE): reales solo si el write-back está explícitamente
         # habilitado Y (sin allowlist, o) esta cuenta está en la piloto (F-2).
-        simulate = settings.simulate_meta_writes_for(self.ad_account_id) if es_escritura else settings.MOCK_SERVICES
+        simulate = settings.simulate_meta_writes_for(self.ad_account_id, self.external_account_id) if es_escritura else settings.MOCK_SERVICES
 
         # Aplicar el delay antes de la llamada
         await self._apply_delay(es_escritura)
@@ -195,7 +199,7 @@ class MetaAPIRateLimiter:
         """
         await self._apply_delay(True)
 
-        if settings.simulate_meta_writes_for(self.ad_account_id):
+        if settings.simulate_meta_writes_for(self.ad_account_id, self.external_account_id):
             logger.info(f"[MOCK] API CALL (multipart) - POST - {endpoint} - file={filename}")
             await self._log_api_call("POST", endpoint, data, 200, "MOCK RESPONSE OK")
             if mock_response is not None:

@@ -97,3 +97,28 @@ async def test_advance_persists_result_and_closes_session(async_client: AsyncCli
     session2 = res2.json()
     result_msgs = [m for m in session2["messages"] if m["type"] == "result"]
     assert len(result_msgs) == 1
+
+
+# --- Honestidad del resultado (14-ago-2026): con las escrituras a Meta
+# apagadas, la Saga termina igual y el draft queda CREATED. Decir "¡Listo!" ahí
+# es mentirle al usuario: la campaña no existe en Ads Manager. ---
+
+def test_result_card_announces_a_simulated_creation():
+    from app.services.campaign_chat import cards
+
+    msg = cards.build_result_message(
+        "draft-1", {"campaign_id": "mock_camp_1", "simulated": True}, "MI_CAMPANA",
+    )
+    assert msg["simulated"] is True
+    assert "no se creó en Meta" in msg["text"]
+    assert "¡Listo!" not in msg["text"]
+
+
+def test_result_card_celebrates_a_real_creation():
+    from app.services.campaign_chat import cards
+
+    msg = cards.build_result_message(
+        "draft-1", {"campaign_id": "120200000", "simulated": False}, "MI_CAMPANA",
+    )
+    assert msg["simulated"] is False
+    assert "¡Listo!" in msg["text"]

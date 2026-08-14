@@ -86,17 +86,26 @@ class Settings(BaseSettings):
         disponible — respeta el allowlist de la cuenta piloto (F-2)."""
         return self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK
 
-    def simulate_meta_writes_for(self, ad_account_id: Optional[str]) -> bool:
+    def simulate_meta_writes_for(
+        self, ad_account_id: Optional[str], external_account_id: Optional[str] = None
+    ) -> bool:
         """F-2: como SIMULATE_META_WRITES, pero además restringe el write-back
         real a las cuentas de WRITEBACK_ACCOUNT_ALLOWLIST cuando está configurado
         — así ENABLE_META_WRITEBACK=true no enciende escritura real para todo el
-        parque de cuentas de golpe, solo para la(s) piloto."""
+        parque de cuentas de golpe, solo para la(s) piloto.
+
+        El allowlist acepta el id interno (uuid) O el de Meta (`act_123...`):
+        poner el `act_` es lo que hace cualquiera que lea la variable, y como
+        antes solo se comparaba contra el uuid, el efecto era apagar el
+        write-back para TODAS las cuentas en silencio — parecía configurado y
+        no lo estaba (14-ago-2026).
+        """
         if self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK:
             return True
-        allowlist = [a.strip() for a in self.WRITEBACK_ACCOUNT_ALLOWLIST.split(",") if a.strip()]
+        allowlist = {a.strip() for a in self.WRITEBACK_ACCOUNT_ALLOWLIST.split(",") if a.strip()}
         if not allowlist:
             return False  # sin allowlist configurado: todas las cuentas, comportamiento anterior
-        return ad_account_id not in allowlist
+        return not ({ad_account_id, external_account_id} & allowlist)
 
     # Usar .env buscando de forma robusta en la raíz del proyecto o del backend
     model_config = SettingsConfigDict(

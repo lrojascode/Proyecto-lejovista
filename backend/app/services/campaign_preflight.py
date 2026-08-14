@@ -54,7 +54,7 @@ class CampaignPreflight:
     def __init__(self, ad_account: AdAccount, rules: Dict[str, Any], limiter: Optional[MetaAPIRateLimiter] = None):
         self.acc = ad_account
         self.rules = rules
-        self.limiter = limiter or MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        self.limiter = limiter or MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
 
     async def run(
         self,

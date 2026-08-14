@@ -484,6 +484,9 @@ class ChatResultMessage(ChatMessageBase):
     adset_id: Optional[str] = None
     ad_id: Optional[str] = None
     campaign_name: Optional[str] = None
+    # True cuando el servidor tiene las escrituras a Meta apagadas: la campaña
+    # existe acá pero NO en Ads Manager. La UI lo dice en vez de festejar.
+    simulated: bool = False
     text: str
 
 

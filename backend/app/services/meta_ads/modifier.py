@@ -31,7 +31,7 @@ class MetaCampaignModifier:
         Ejecuta la modificación especificada en la acción sobre Meta Ads.
         Guarda un snapshot del estado actual antes de modificar para permitir rollback.
         """
-        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
         token = ad_account.get_access_token()
 
         target_id = _resolve_target_id(action)
@@ -40,7 +40,7 @@ class MetaCampaignModifier:
 
         # 1. Obtener estado actual (Backup para rollback)
         backup_state = {}
-        if not settings.simulate_meta_writes_for(ad_account.id):
+        if not settings.simulate_meta_writes_for(ad_account.id, ad_account.external_account_id):
             # En producción, hacemos un GET del estado actual
             backup_state = await limiter.call_api(
                 f"{target_id}",
@@ -171,7 +171,7 @@ class MetaCampaignModifier:
         if not backup_state:
             raise ValueError("No se encontró backup_state en los parámetros de la acción para realizar rollback.")
 
-        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
         token = ad_account.get_access_token()
 
         target_id = _resolve_target_id(action)

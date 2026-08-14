@@ -45,6 +45,24 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("AUTO_CREATE_TABLES=false → el esquema se gestiona con Alembic (alembic upgrade head).")
     
+    # Estado del write-back, bien visible al arrancar. Sin esto hay que deducirlo
+    # de un `[MOCK] API CALL` perdido en los logs del worker, o peor: descubrirlo
+    # porque la campaña "creada" no aparece en Ads Manager.
+    if settings.SIMULATE_META_WRITES:
+        motivo = "MOCK_SERVICES=true" if settings.MOCK_SERVICES else "ENABLE_META_WRITEBACK=false"
+        logger.warning(
+            "ESCRITURAS A META SIMULADAS (%s): crear/pausar/ajustar campañas NO llega a Meta. "
+            "Las campañas creadas reciben ids ficticios (mock_camp_...).", motivo,
+        )
+    elif settings.WRITEBACK_ACCOUNT_ALLOWLIST.strip():
+        logger.warning(
+            "Escrituras a Meta REALES, pero solo para las cuentas de "
+            "WRITEBACK_ACCOUNT_ALLOWLIST=%s. El resto se simula. Se acepta el uuid interno "
+            "o el id de Meta (act_...).", settings.WRITEBACK_ACCOUNT_ALLOWLIST,
+        )
+    else:
+        logger.warning("Escrituras a Meta REALES para TODAS las cuentas (sin allowlist).")
+
     # Iniciar listener de Redis para WebSockets
     listener_task = asyncio.create_task(redis_listener())
     

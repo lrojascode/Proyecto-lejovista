@@ -1734,6 +1734,11 @@ export interface components {
             ad_id?: string | null;
             /** Campaign Name */
             campaign_name?: string | null;
+            /**
+             * Simulated
+             * @default false
+             */
+            simulated: boolean;
             /** Text */
             text: string;
         };

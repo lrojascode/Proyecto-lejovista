@@ -144,7 +144,19 @@ def build_progress_message(draft_id: str) -> Dict[str, Any]:
     }
 
 
+SIMULATED_RESULT_TEXT = (
+    "⚠️ Simulación: la campaña quedó registrada acá, pero **no se creó en Meta**. "
+    "El servidor tiene las escrituras a Meta apagadas (`ENABLE_META_WRITEBACK`), "
+    "así que no la vas a encontrar en Ads Manager. Todo lo demás —presupuesto, "
+    "copy, segmentación— es real y queda guardado."
+)
+
+
 def build_result_message(draft_id: str, result: Dict[str, Any], campaign_name: Optional[str]) -> Dict[str, Any]:
+    # `simulated` lo escribe la Saga al terminar. Decir "¡Listo!" cuando no se
+    # creó nada en Meta es la peor forma de fallar: el usuario se entera recién
+    # al no encontrarla en Ads Manager, y sin ninguna pista de por qué.
+    simulated = bool(result.get("simulated"))
     return {
         **_base("assistant"),
         "type": "result",
@@ -153,7 +165,8 @@ def build_result_message(draft_id: str, result: Dict[str, Any], campaign_name: O
         "adset_id": result.get("adset_id"),
         "ad_id": result.get("ad_id"),
         "campaign_name": campaign_name,
-        "text": (
+        "simulated": simulated,
+        "text": SIMULATED_RESULT_TEXT if simulated else (
             "¡Listo! Tu campaña quedó creada, pero en PAUSA a propósito — "
             "revisala en Ads Manager y actívala vos cuando quieras."
         ),

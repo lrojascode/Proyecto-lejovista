@@ -141,7 +141,7 @@ async def _rollback_campaign(db, draft_id: str) -> None:
         return
 
     try:
-        limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+        limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
         res = await limiter.call_api(
             str(campaign_id), {}, method="DELETE", access_token=acc.get_access_token()
         )
@@ -193,7 +193,7 @@ def task_upload_image(self, context: Dict[str, Any]) -> Dict[str, Any]:
             # Meta lo procese y se toma la miniatura que genera. Devuelve las
             # dos cosas porque `video_data` exige `image_url` sí o sí.
             if context.get("video_path"):
-                limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+                limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
                 repo = MetaAssetRepository(limiter)
                 video_id, thumbnail_url = await repo.get_or_upload_video(
                     ad_account_external_id=acc.external_account_id,
@@ -211,7 +211,7 @@ def task_upload_image(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             image_hash = context.get("image_hash")
             if not image_hash:
-                limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+                limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
                 repo = MetaAssetRepository(limiter)
                 image_hash = await repo.get_or_upload_image(
                     ad_account_external_id=acc.external_account_id,
@@ -267,7 +267,7 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "is_adset_budget_sharing_enabled": "false",
             }
 
-            limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+            limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/campaigns"
             result = await limiter.call_api(
                 endpoint, payload, method="POST", access_token=acc.get_access_token()
@@ -276,7 +276,7 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             campaign_id = (
                 f"mock_camp_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id)
+                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
                 else result.get("id")
             )
             if not campaign_id:
@@ -349,7 +349,7 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
             else:
                 payload["lifetime_budget"] = budget_cents
 
-            limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+            limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/adsets"
             result = await limiter.call_api(
                 endpoint, payload, method="POST", access_token=acc.get_access_token()
@@ -358,7 +358,7 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             adset_id = (
                 f"mock_adset_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id)
+                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
                 else result.get("id")
             )
             if not adset_id:
@@ -409,7 +409,7 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "object_story_spec": json.dumps(spec["object_story_spec"]),
             }
 
-            limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+            limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/adcreatives"
             result = await limiter.call_api(
                 endpoint, payload, method="POST", access_token=acc.get_access_token()
@@ -418,7 +418,7 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             creative_id = (
                 f"mock_creative_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id)
+                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
                 else result.get("id")
             )
             if not creative_id:
@@ -453,7 +453,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "status": rules["default_status"],
             }
 
-            limiter = MetaAPIRateLimiter(ad_account_id=acc.id)
+            limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/ads"
             result = await limiter.call_api(
                 endpoint, payload, method="POST", access_token=acc.get_access_token()
@@ -462,7 +462,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             ad_id = (
                 f"mock_ad_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id)
+                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
                 else result.get("id")
             )
             if not ad_id:
@@ -470,7 +470,14 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             context["ad_id"] = ad_id
             context["status"] = "COMPLETED"
-            await _merge_draft_result(db, context["draft_id"], status="CREATED", ad_id=ad_id)
+            # `simulated` viaja hasta el frontend: hasta ahora la Saga terminaba
+            # igual con escrituras simuladas y la pantalla decía "¡Campaña
+            # creada!" sin nada en Meta. Que el sistema sepa la diferencia y no
+            # se la cuente al usuario es lo peor de los dos mundos.
+            await _merge_draft_result(
+                db, context["draft_id"], status="CREATED", ad_id=ad_id,
+                simulated=settings.simulate_meta_writes_for(acc.id, acc.external_account_id),
+            )
 
             # A-1: si la Saga fue despachada por una AIAction (creación
             # aprobada por la IA, no el formulario manual), cerrar el ciclo de
@@ -486,7 +493,7 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
                         "adset_id": context["adset_id"],
                         "creative_id": context["creative_id"],
                         "ad_id": ad_id,
-                        "simulated": settings.simulate_meta_writes_for(acc.id),
+                        "simulated": settings.simulate_meta_writes_for(acc.id, acc.external_account_id),
                     }
                     db.add(action)
                     await db.commit()

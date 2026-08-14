@@ -44,3 +44,31 @@ def test_allowlist_restricts_real_writes_to_listed_accounts():
 def test_allowlist_handles_missing_account_id():
     s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="acc-pilot-1")
     assert s.simulate_meta_writes_for(None) is True
+
+
+# --- El allowlist acepta el id de Meta además del uuid interno (14-ago-2026).
+# Poner `act_123...` es lo que hace cualquiera que lea la variable; como antes
+# solo se comparaba contra el uuid, el efecto era apagar el write-back para
+# TODAS las cuentas en silencio: parecía configurado y no lo estaba. ---
+
+def test_allowlist_accepts_the_meta_account_id():
+    s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_1317785970189038")
+    assert s.simulate_meta_writes_for("4ce00811-uuid-interno", "act_1317785970189038") is False
+    assert s.simulate_meta_writes_for("otra-uuid", "act_999") is True
+
+
+def test_allowlist_still_accepts_the_internal_uuid():
+    s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="4ce00811-uuid-interno")
+    assert s.simulate_meta_writes_for("4ce00811-uuid-interno", "act_1317785970189038") is False
+
+
+def test_allowlist_can_mix_both_formats():
+    s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_111, uuid-dos")
+    assert s.simulate_meta_writes_for("uuid-uno", "act_111") is False
+    assert s.simulate_meta_writes_for("uuid-dos", "act_222") is False
+    assert s.simulate_meta_writes_for("uuid-tres", "act_333") is True
+
+
+def test_allowlist_with_both_ids_missing_simulates():
+    s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_111")
+    assert s.simulate_meta_writes_for(None, None) is True

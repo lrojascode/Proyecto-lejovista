@@ -10,8 +10,13 @@ export function ResultCard({
   externalAccountId?: string;
   onCreateAnother: () => void;
 }) {
+  // Con el write-back apagado la campaña no existe en Meta: el link llevaría a
+  // un Ads Manager donde no hay nada que ver, y el check verde diría que salió
+  // todo bien. Se ocultan los dos.
+  const simulated = message.simulated === true;
+
   const adsManagerLink =
-    externalAccountId && message.campaign_id
+    !simulated && externalAccountId && message.campaign_id
       ? `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${externalAccountId.replace(/^act_/, "")}` +
         `&selected_campaign_ids=${message.campaign_id}`
       : null;
@@ -20,8 +25,14 @@ export function ResultCard({
     <div className="chat-bubble-row assistant">
       <div className="glass-card chat-card">
         <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
-          <CheckIcon size={20} style={{ color: "var(--color-pulse-green)" }} />
-          <h4 style={{ fontSize: "15px", fontWeight: 590 }}>{message.campaign_name || "Campaña creada"}</h4>
+          {simulated ? (
+            <span aria-hidden style={{ fontSize: "18px", color: "var(--color-solar-amber)" }}>⚠</span>
+          ) : (
+            <CheckIcon size={20} style={{ color: "var(--color-pulse-green)" }} />
+          )}
+          <h4 style={{ fontSize: "15px", fontWeight: 590 }}>
+            {simulated ? "Simulación — no se creó en Meta" : message.campaign_name || "Campaña creada"}
+          </h4>
         </div>
         <p style={{ fontSize: "14px", color: "var(--text-primary)" }}>{message.text}</p>
         <div className="chat-card-actions">

@@ -58,7 +58,7 @@ class CampaignValidator:
     """
     def __init__(self, ad_account: AdAccount, limiter: MetaAPIRateLimiter | None = None, db=None):
         self.ad_account = ad_account
-        self.limiter = limiter or MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        self.limiter = limiter or MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
         # Opcional: si se provee, permite marcar la cuenta EXPIRED cuando Meta
         # rechaza el token (code 190), igual que el sync (_maybe_mark_expired) —
         # así el badge "Token expirado" aparece en Configuración sin esperar al

@@ -46,7 +46,7 @@ class MetaAdsSyncService:
         org_id = ad_account.organization_id
 
         try:
-            limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
+            limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
 
             if settings.MOCK_SERVICES:
                 records_synced = await self._sync_mock_data(ad_account, sync_type, limiter)
@@ -385,7 +385,7 @@ class MetaAdsSyncService:
         token = ad_account.get_access_token()
         if not token:
             raise ValueError("Token de acceso de la cuenta no válido o expirado.")
-        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id)
+        limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
         await self._sync_real_pages(ad_account, token, limiter)
         await self.db.commit()
 
