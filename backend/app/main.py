@@ -48,11 +48,11 @@ async def lifespan(app: FastAPI):
     # Estado del write-back, bien visible al arrancar. Sin esto hay que deducirlo
     # de un `[MOCK] API CALL` perdido en los logs del worker, o peor: descubrirlo
     # porque la campaña "creada" no aparece en Ads Manager.
-    if settings.SIMULATE_META_WRITES:
-        motivo = "MOCK_SERVICES=true" if settings.MOCK_SERVICES else "ENABLE_META_WRITEBACK=false"
+    motivo_global = settings.writeback_block_reason()
+    if motivo_global:
         logger.warning(
             "ESCRITURAS A META SIMULADAS (%s): crear/pausar/ajustar campañas NO llega a Meta. "
-            "Las campañas creadas reciben ids ficticios (mock_camp_...).", motivo,
+            "Las campañas creadas reciben ids ficticios (mock_camp_...).", motivo_global,
         )
     elif settings.WRITEBACK_ACCOUNT_ALLOWLIST.strip():
         logger.warning(

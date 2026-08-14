@@ -74,6 +74,10 @@ export default function NewCampaignPage() {
   // igual y el draft queda CREATED, pero en Ads Manager no hay nada. Se muestra
   // en vez de festejar una campaña que no existe.
   const [resultSimulated, setResultSimulated] = useState(false);
+  // Qué variable exactamente lo está apagando: hay tres causas posibles
+  // (MOCK_SERVICES, ENABLE_META_WRITEBACK, el allowlist) y desde la pantalla
+  // eran indistinguibles.
+  const [resultSimulatedReason, setResultSimulatedReason] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const pollAttempts = useRef(0);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -275,9 +279,10 @@ export default function NewCampaignPage() {
           // payload es JSON libre (Dict[str, Any] en el backend) — result se
           // va llenando paso a paso por la Saga, sin forma fija que declarar.
           const payload = draft.payload as
-            { result?: { campaign_id?: string; simulated?: boolean } } | undefined;
+            { result?: { campaign_id?: string; simulated?: boolean; simulated_reason?: string } } | undefined;
           setResultCampaignId(payload?.result?.campaign_id || null);
           setResultSimulated(Boolean(payload?.result?.simulated));
+          setResultSimulatedReason(payload?.result?.simulated_reason || null);
           setStatus("success");
         } else if (draft.status === "FAILED") {
           setErrorMessage(draft.error_message || "La creación falló en Meta.");
@@ -471,10 +476,17 @@ export default function NewCampaignPage() {
               <p style={{ color: "var(--color-fog)", fontSize: "14px", maxWidth: "480px" }}>
                 {resultSimulated ? (
                   <>
-                    Este servidor tiene las escrituras a Meta apagadas
-                    (<code>ENABLE_META_WRITEBACK</code>), así que la campaña quedó guardada acá pero
-                    no existe en Ads Manager. El presupuesto, el copy y la segmentación sí son
-                    reales: al encender el write-back, se crea de verdad.
+                    La campaña quedó guardada acá pero no existe en Ads Manager. El presupuesto, el
+                    copy y la segmentación sí son reales: al encender el write-back, se crea de
+                    verdad.
+                    {resultSimulatedReason && (
+                      <>
+                        <br />
+                        <span className="mono" style={{ fontSize: "13px", color: "var(--color-solar-amber)" }}>
+                          Motivo: {resultSimulatedReason}
+                        </span>
+                      </>
+                    )}
                   </>
                 ) : (
                   <>

@@ -100,12 +100,31 @@ class Settings(BaseSettings):
         write-back para TODAS las cuentas en silencio — parecía configurado y
         no lo estaba (14-ago-2026).
         """
-        if self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK:
-            return True
+        return self.writeback_block_reason(ad_account_id, external_account_id) is not None
+
+    def writeback_block_reason(
+        self, ad_account_id: Optional[str] = None, external_account_id: Optional[str] = None
+    ) -> Optional[str]:
+        """Por QUÉ se simulan las escrituras, nombrando la variable culpable, o
+        `None` si son reales.
+
+        Existe porque "simulado" a secas no le sirve a nadie: hay tres causas
+        posibles y desde afuera son indistinguibles. Este texto viaja hasta la
+        pantalla de "campaña creada" para que se pueda arreglar sin leer logs.
+        """
+        if self.MOCK_SERVICES:
+            return "MOCK_SERVICES=true"
+        if not self.ENABLE_META_WRITEBACK:
+            return "ENABLE_META_WRITEBACK=false"
         allowlist = {a.strip() for a in self.WRITEBACK_ACCOUNT_ALLOWLIST.split(",") if a.strip()}
         if not allowlist:
-            return False  # sin allowlist configurado: todas las cuentas, comportamiento anterior
-        return not ({ad_account_id, external_account_id} & allowlist)
+            return None  # sin allowlist configurado: todas las cuentas escriben real
+        if {ad_account_id, external_account_id} & allowlist:
+            return None
+        return (
+            f"WRITEBACK_ACCOUNT_ALLOWLIST={self.WRITEBACK_ACCOUNT_ALLOWLIST} "
+            f"no incluye esta cuenta ({external_account_id or ad_account_id})"
+        )
 
     # Usar .env buscando de forma robusta en la raíz del proyecto o del backend
     model_config = SettingsConfigDict(

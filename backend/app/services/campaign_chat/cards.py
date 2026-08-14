@@ -144,12 +144,16 @@ def build_progress_message(draft_id: str) -> Dict[str, Any]:
     }
 
 
-SIMULATED_RESULT_TEXT = (
-    "⚠️ Simulación: la campaña quedó registrada acá, pero **no se creó en Meta**. "
-    "El servidor tiene las escrituras a Meta apagadas (`ENABLE_META_WRITEBACK`), "
-    "así que no la vas a encontrar en Ads Manager. Todo lo demás —presupuesto, "
-    "copy, segmentación— es real y queda guardado."
-)
+def simulated_result_text(reason: Optional[str]) -> str:
+    """El motivo exacto —qué variable y con qué valor— en vez de un "está
+    apagado" genérico: hay tres causas posibles y desde la pantalla eran
+    indistinguibles."""
+    detalle = f"\n\nMotivo: `{reason}`" if reason else ""
+    return (
+        "⚠️ Simulación: la campaña quedó registrada acá, pero **no se creó en Meta**, "
+        "así que no la vas a encontrar en Ads Manager. Todo lo demás —presupuesto, "
+        "copy, segmentación— es real y queda guardado." + detalle
+    )
 
 
 def build_result_message(draft_id: str, result: Dict[str, Any], campaign_name: Optional[str]) -> Dict[str, Any]:
@@ -166,7 +170,7 @@ def build_result_message(draft_id: str, result: Dict[str, Any], campaign_name: O
         "ad_id": result.get("ad_id"),
         "campaign_name": campaign_name,
         "simulated": simulated,
-        "text": SIMULATED_RESULT_TEXT if simulated else (
+        "text": simulated_result_text(result.get("simulated_reason")) if simulated else (
             "¡Listo! Tu campaña quedó creada, pero en PAUSA a propósito — "
             "revisala en Ads Manager y actívala vos cuando quieras."
         ),

@@ -474,9 +474,10 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
             # igual con escrituras simuladas y la pantalla decía "¡Campaña
             # creada!" sin nada en Meta. Que el sistema sepa la diferencia y no
             # se la cuente al usuario es lo peor de los dos mundos.
+            motivo = settings.writeback_block_reason(acc.id, acc.external_account_id)
             await _merge_draft_result(
                 db, context["draft_id"], status="CREATED", ad_id=ad_id,
-                simulated=settings.simulate_meta_writes_for(acc.id, acc.external_account_id),
+                simulated=motivo is not None, simulated_reason=motivo,
             )
 
             # A-1: si la Saga fue despachada por una AIAction (creación

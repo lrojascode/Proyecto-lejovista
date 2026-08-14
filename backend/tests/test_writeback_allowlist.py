@@ -72,3 +72,42 @@ def test_allowlist_can_mix_both_formats():
 def test_allowlist_with_both_ids_missing_simulates():
     s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_111")
     assert s.simulate_meta_writes_for(None, None) is True
+
+
+# --- El motivo, no solo el hecho (14-ago-2026). "Simulado" a secas no alcanza:
+# hay tres causas posibles y desde la pantalla eran indistinguibles. ---
+
+def test_block_reason_names_mock_services():
+    s = _settings(MOCK_SERVICES=True)
+    assert s.writeback_block_reason("acc-1", "act_1") == "MOCK_SERVICES=true"
+
+
+def test_block_reason_names_the_writeback_flag():
+    s = _settings(ENABLE_META_WRITEBACK=False)
+    assert s.writeback_block_reason("acc-1", "act_1") == "ENABLE_META_WRITEBACK=false"
+
+
+def test_block_reason_names_the_allowlist_and_the_account():
+    s = _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_999")
+    motivo = s.writeback_block_reason("uuid-1", "act_111")
+    assert "WRITEBACK_ACCOUNT_ALLOWLIST=act_999" in motivo
+    assert "act_111" in motivo
+
+
+def test_no_reason_when_writes_are_real():
+    assert _settings().writeback_block_reason("acc-1", "act_1") is None
+
+
+def test_reason_and_simulate_flag_always_agree():
+    """`simulate_meta_writes_for` está definido en términos del motivo: no puede
+    haber un caso donde uno diga simulado y el otro no."""
+    casos = [
+        _settings(MOCK_SERVICES=True),
+        _settings(ENABLE_META_WRITEBACK=False),
+        _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_999"),
+        _settings(WRITEBACK_ACCOUNT_ALLOWLIST="act_111"),
+        _settings(),
+    ]
+    for s in casos:
+        simulado = s.simulate_meta_writes_for("uuid-1", "act_111")
+        assert simulado is (s.writeback_block_reason("uuid-1", "act_111") is not None)
