@@ -35,6 +35,22 @@ flowchart TB
 
 Sin LLM (CI), solo los cambios numéricos vía texto libre funcionan; cambios de copy/headline en texto libre necesitan el LLM y se degradan a "no entendí" si no hay API key — el chat sigue siendo usable de punta a punta con los botones.
 
+## 3a. Cómo suena: reescritura conversacional (CH-7, `rephrase.py`)
+
+El código decide **qué** se dice; el LLM reescribe **cómo**. El motor arma el texto canónico —con todas las cifras ya calculadas— y `_say()` se lo pasa a `OpenRouterClient.rephrase_chat_message` junto con el último mensaje del cliente, para que la respuesta reaccione a lo que la persona acaba de escribir en vez de repetir una plantilla.
+
+**Al modelo no se le cree.** `rephrase.is_safe_rephrase` compara la reescritura contra el original y exige:
+
+| Control | Por qué |
+|---|---|
+| **Igualdad** de números (normalizados: `1.085,47` == `1085.47`) | Un número de más es una cifra inventada; uno de menos es la respuesta que perdió el dato por el que preguntaron. |
+| Mismos enlaces, sin agregar ni quitar | El link a Ads Manager lleva el `act=` real. |
+| Largo entre 0.4× y 1.8× del original (el piso solo para textos ≥120 caracteres) | Detecta que se comió media respuesta o que se puso a agregar cosas. Los textos cortos sí se pueden acortar: es lo que los hace sonar a persona. |
+
+Si algo no cuadra, se descarta la reescritura **entera** y se usa el texto canónico. Eso es lo que mantiene AI-1 en pie con el LLM redactando: no depende de que el prompt funcione.
+
+**Alcance y costo.** Como mucho **un** mensaje reescrito por turno, tope `MAX_REPHRASED_TURNS=30` contra `turn_count` — deliberadamente **no** contra `llm_calls`, porque ese presupuesto es para *entender* al usuario (funcional) y esto es cosmético: quedarse sin comprensión a mitad de la conversación por haber gastado el cupo en redacción sería el peor intercambio posible. No se reescriben: el saludo, `BUILDING_TEXT` (relleno justo antes del paso más lento), las tarjetas estructuradas, ni los textos de error/tope/guarda, donde la precisión importa más que el tono. Sin API key o con `MOCK_SERVICES` no hay reescritura y el chat responde con los textos fijos — es lo que corre en CI.
+
 ## 3b. Preguntas sobre la marca (CH-6, `questions.py`)
 
 El chat también responde preguntas sobre los datos reales de la cuenta, en cualquier momento de la conversación y sin perder el lugar: el estado y los slots no se tocan, y después de responder se vuelve a plantear lo que estaba pendiente.

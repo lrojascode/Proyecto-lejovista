@@ -235,3 +235,38 @@ async def test_classify_survives_http_error(monkeypatch):
     _key_env(monkeypatch)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(response=_FakeResponse(500, "boom")))
     assert await OpenRouterClient().classify_chat_question(_org(), "algo", _TOPICS) is None
+
+
+# --- Reescritura conversacional (CH-7) ---
+
+@pytest.mark.asyncio
+async def test_rephrase_returns_none_under_mock_services(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    assert await OpenRouterClient().rephrase_chat_message(_org(), "Gastaste S/. 100.", "hola") is None
+
+
+@pytest.mark.asyncio
+async def test_rephrase_returns_the_text(monkeypatch):
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({"text": "Llevás S/. 100 gastados."}))))
+
+    out = await OpenRouterClient().rephrase_chat_message(
+        _org(), "Gastaste S/. 100.", "cuanto gaste?",
+        usage_ctx=UsageContext(feature="campaign_chat", organization_id="org-1", ad_account_id="acc-1"),
+    )
+    assert out == "Llevás S/. 100 gastados."
+
+
+@pytest.mark.asyncio
+async def test_rephrase_of_empty_text_does_not_call_the_model(monkeypatch):
+    _key_env(monkeypatch)
+    assert await OpenRouterClient().rephrase_chat_message(_org(), "   ", "hola") is None
+
+
+@pytest.mark.asyncio
+async def test_rephrase_survives_garbage_json(monkeypatch):
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(response=_topic_response("no soy json")))
+    assert await OpenRouterClient().rephrase_chat_message(_org(), "Gastaste S/. 100.", "hola") is None

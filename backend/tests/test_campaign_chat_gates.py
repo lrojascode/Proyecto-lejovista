@@ -190,3 +190,59 @@ async def test_question_is_rejected_when_the_llm_says_out_of_scope(
     transcript = await _ask(async_client, headers, session_id, "¿cuánto está el dólar hoy?")
 
     assert _OUT_OF_SCOPE_START in transcript
+
+
+# --- Reescritura conversacional (CH-7): el LLM cambia el tono, nunca los datos ---
+
+async def _with_rewriter(monkeypatch, rewrite: str):
+    from app.services.ai.llm import OpenRouterClient
+
+    async def fake_rephrase(self, org, canonical_text, user_message, usage_ctx=None):
+        return rewrite
+
+    monkeypatch.setattr(OpenRouterClient, "rephrase_chat_message", fake_rephrase)
+
+
+@pytest.mark.asyncio
+async def test_faithful_rewrite_reaches_the_user(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    await _with_rewriter(monkeypatch, "Genial. Mandame una foto del producto y seguimos 📸")
+
+    headers, session_id = await _open_session(async_client, db_session, "chat-rewrite-ok")
+    transcript = await _ask(async_client, headers, session_id, "quiero vender termas")
+
+    assert "Mandame una foto del producto" in transcript
+
+
+@pytest.mark.asyncio
+async def test_rewrite_that_invents_a_number_is_discarded(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    """El texto canónico no tiene ninguna cifra; la reescritura inventa "3
+    fotos". Se descarta entera y el usuario ve el texto del código."""
+    await _with_rewriter(monkeypatch, "Genial, mandame 3 fotos del producto y seguimos 📸")
+
+    headers, session_id = await _open_session(async_client, db_session, "chat-rewrite-invented")
+    transcript = await _ask(async_client, headers, session_id, "quiero vender termas")
+
+    assert "3 fotos" not in transcript
+    assert "súbeme la foto del producto" in transcript
+
+
+@pytest.mark.asyncio
+async def test_chat_works_when_the_rewriter_fails(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    """La reescritura es cosmética: si el LLM explota, la conversación sigue."""
+    from app.services.ai.llm import OpenRouterClient
+
+    async def boom(self, org, canonical_text, user_message, usage_ctx=None):
+        raise RuntimeError("proveedor caído")
+
+    monkeypatch.setattr(OpenRouterClient, "rephrase_chat_message", boom)
+
+    headers, session_id = await _open_session(async_client, db_session, "chat-rewrite-boom")
+    transcript = await _ask(async_client, headers, session_id, "quiero vender termas")
+
+    assert "súbeme la foto del producto" in transcript

@@ -25,7 +25,7 @@ from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
-from app.services.campaign_chat import cards, extraction, questions
+from app.services.campaign_chat import cards, extraction, questions, rephrase
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
 from app.services.campaign_chat.slots import sanitize_product_name
 from app.services.campaign_creation import (
@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 # sin él (fallback determinista), así que esto es un techo de costo, no una
 # dependencia funcional.
 MAX_LLM_TURNS_PER_SESSION = 12
+
+# Reescritura conversacional (CH-7): como mucho un mensaje reescrito por turno,
+# y solo mientras la sesión no se haya ido de largo. Va contra `turn_count` y
+# NO contra `llm_calls` a propósito: el presupuesto de `llm_calls` es para
+# entender al usuario, que es funcional; esto es cosmético y no debe poder
+# dejar al chat sin capacidad de comprensión a mitad de una conversación.
+MAX_REPHRASED_TURNS = 30
 
 _SLOT_KEYS = {
     "goal_text", "product_name", "budget", "budget_type", "days",
@@ -310,7 +317,8 @@ async def _build_and_append_proposal(
 
 
 async def _run_auto_steps(
-    db: AsyncSession, current_user: User, session: CampaignChatSession, messages: List[Dict[str, Any]]
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    messages: List[Dict[str, Any]], user_text: str = "",
 ) -> None:
     """Tras aplicar los cambios de un turno, corre lo que corresponda
     automáticamente (armar la propuesta) y muestra la tarjeta del nuevo
@@ -320,13 +328,16 @@ async def _run_auto_steps(
 
     if state == "ASK_GOAL":
         session.state = state
-        messages.append(cards.text_message(cards.ASK_GOAL_TEXT))
+        messages.append(await _say(db, current_user, session, cards.ASK_GOAL_TEXT, user_text))
         return
     if state == "ASK_MEDIA":
         session.state = state
-        messages.append(cards.text_message(cards.ASK_MEDIA_TEXT))
+        messages.append(await _say(db, current_user, session, cards.ASK_MEDIA_TEXT, user_text))
         return
     if state == "BUILD_PLAN":
+        # BUILDING_TEXT no se reescribe: es el relleno que se muestra justo
+        # antes del paso más lento del flujo, y no vale la pena sumarle otra
+        # llamada de red a una espera que ya se siente.
         messages.append(cards.text_message(cards.BUILDING_TEXT))
         if not await _build_and_append_proposal(db, current_user, session, messages):
             session.state = "ASK_MEDIA" if not (session.slots_json or {}).get("image_path") else "ASK_GOAL"
@@ -534,6 +545,39 @@ async def _try_llm_question_topic(
     return topic
 
 
+async def _say(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    text: str, user_text: str,
+) -> Dict[str, Any]:
+    """Mensaje del asistente, reescrito por el LLM para que suene a persona.
+
+    El texto que entra ya viene armado por el código, con las cifras adentro:
+    el modelo cambia el tono, nunca los datos. `rephrase.safe_or_canonical`
+    descarta la reescritura si le sobra o le falta un número o un enlace, así
+    que en el peor caso el usuario ve el texto de siempre — nunca una cifra
+    que el modelo se haya inventado (AI-1).
+    """
+    if (session.turn_count or 0) >= MAX_REPHRASED_TURNS:
+        return cards.text_message(text)
+
+    org = await db.get(Organization, current_user.organization_id)
+    usage_ctx = UsageContext(
+        feature="campaign_chat", organization_id=current_user.organization_id,
+        ad_account_id=session.ad_account_id,
+    )
+    try:
+        rewritten = await OpenRouterClient().rephrase_chat_message(
+            org, text, user_text, usage_ctx=usage_ctx,
+        )
+    except Exception:
+        logger.exception("Fallo reescribiendo un mensaje del chat (sesión %s)", session.id)
+        rewritten = None
+
+    if rewritten is None:
+        return cards.text_message(text)
+    return cards.text_message(rephrase.safe_or_canonical(text, rewritten))
+
+
 async def _handle_off_topic(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
     text: str, messages: List[Dict[str, Any]],
@@ -541,9 +585,9 @@ async def _handle_off_topic(
     """Pregunta sin tema reconocido: se le pregunta al LLM antes de rechazarla."""
     topic = await _try_llm_question_topic(db, current_user, session, text)
     if topic:
-        await _answer_and_resume(db, current_user, session, topic, messages)
+        await _answer_and_resume(db, current_user, session, topic, messages, user_text=text)
         return
-    messages.append(cards.text_message(questions.OUT_OF_SCOPE_TEXT))
+    messages.append(await _say(db, current_user, session, questions.OUT_OF_SCOPE_TEXT, text))
     pendiente = _pending_prompt_for_state(session.state)
     if pendiente:
         messages.append(cards.text_message(pendiente))
@@ -559,7 +603,7 @@ def _slots_from_result(result: extraction.ExtractionResult, *, is_gate: bool) ->
 
 async def _answer_and_resume(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
-    topic: str, messages: List[Dict[str, Any]],
+    topic: str, messages: List[Dict[str, Any]], user_text: str = "",
 ) -> None:
     """Responde una pregunta sobre la marca SIN mover el estado ni tocar los
     slots, y vuelve a dejar planteado lo que estaba pendiente — preguntar algo
@@ -572,7 +616,7 @@ async def _answer_and_resume(
     except Exception:
         logger.exception("No se pudo responder la pregunta '%s' (sesión %s)", topic, session.id)
         answer = questions.NO_DATA_TEXT
-    messages.append(cards.text_message(answer))
+    messages.append(await _say(db, current_user, session, answer, user_text))
 
     pendiente = _pending_prompt_for_state(session.state)
     if pendiente:
@@ -600,7 +644,7 @@ async def _handle_text(
     # elegir el tema — antes se rechazaba de una, y eso descartaba preguntas
     # que el sistema sabía responder con datos que ya tenía en la base.
     if result.intent == "question" and result.question_topic:
-        await _answer_and_resume(db, current_user, session, result.question_topic, messages)
+        await _answer_and_resume(db, current_user, session, result.question_topic, messages, user_text=text)
         return
     if result.intent == "off_topic":
         await _handle_off_topic(db, current_user, session, text, messages)
@@ -625,10 +669,10 @@ async def _handle_text(
     if result.intent in ("change", "provide_info"):
         changes = _slots_from_result(result, is_gate=is_gate)
         _apply_slot_changes(session, changes)
-        await _run_auto_steps(db, current_user, session, messages)
+        await _run_auto_steps(db, current_user, session, messages, user_text=text)
         return
 
-    messages.append(cards.text_message(_unclear_text_for_state(session.state)))
+    messages.append(await _say(db, current_user, session, _unclear_text_for_state(session.state), text))
 
 
 def _validate_media_ownership(current_user: User, image_path: Optional[str], video_path: Optional[str]) -> None:
@@ -701,7 +745,7 @@ async def process_decision(
         # Preguntar algo en el campo "Cambiar algo" se responde como pregunta,
         # sin tocar la propuesta ni volver a dibujar la tarjeta (CH-6).
         if result.intent == "question" and result.question_topic:
-            await _answer_and_resume(db, current_user, session, result.question_topic, messages)
+            await _answer_and_resume(db, current_user, session, result.question_topic, messages, user_text=text or "")
         elif result.intent == "off_topic":
             await _handle_off_topic(db, current_user, session, text or "", messages)
         else:
@@ -711,7 +755,7 @@ async def process_decision(
                     result = llm_result
             changes = _slots_from_result(result, is_gate=is_gate) if result.intent in ("change", "provide_info") else {}
             _apply_slot_changes(session, changes)
-            await _run_auto_steps(db, current_user, session, messages)
+            await _run_auto_steps(db, current_user, session, messages, user_text=text or "")
 
     session.turn_count = (session.turn_count or 0) + 1
     session.last_client_turn_id = client_turn_id
