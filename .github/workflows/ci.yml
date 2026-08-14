@@ -92,7 +92,9 @@ jobs:
         run: pnpm exec tsc --noEmit
 
       - name: Run tests
-        run: pnpm run test -- --ci
+        # `pnpm run test -- --ci` no sirve: a diferencia de npm, pnpm reenvía el
+        # `--` tal cual y jest lo toma como patrón de ruta (0 tests encontrados).
+        run: pnpm exec jest --ci
 
       - name: Build
         run: pnpm run build
