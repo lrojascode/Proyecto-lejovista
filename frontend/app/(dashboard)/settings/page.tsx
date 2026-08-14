@@ -506,11 +506,15 @@ export default function Settings() {
                       ) : (
                         <span className="badge badge-warning">{badgeIcon("badge-warning")} Sin WhatsApp</span>
                       )}
+                      {/* El "Ej." del placeholder no es cosmético: sin él, un
+                          número peruano bien formado se lee como un valor ya
+                          cargado y la persona clickea "Guardar" —deshabilitado
+                          porque el input está vacío— creyendo que lo guardó. */}
                       <input
                         type="text"
                         className="form-input"
                         style={{ width: "160px", padding: "0.35rem 0.5rem", fontSize: "0.85rem" }}
-                        placeholder={p.whatsapp_number || "51999888777"}
+                        placeholder={p.whatsapp_number ? "Cambiar por otro" : "Ej. 51999888777"}
                         aria-label={`Número de WhatsApp de ${p.name}`}
                         value={waInputs[p.id] ?? ""}
                         onChange={(e) => setWaInputs((prev) => ({ ...prev, [p.id]: e.target.value }))}
@@ -630,7 +634,7 @@ export default function Settings() {
                   type="text"
                   className="form-input"
                   style={{ width: "200px", padding: "0.4rem 0.6rem", fontSize: "0.9rem" }}
-                  placeholder="51999888777"
+                  placeholder="Ej. 51999888777"
                   aria-label="Nuevo número de WhatsApp"
                   value={newNumber}
                   onChange={(e) => setNewNumber(e.target.value)}
