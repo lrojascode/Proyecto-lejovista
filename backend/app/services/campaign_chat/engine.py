@@ -504,6 +504,51 @@ async def _try_llm_extraction(
     return extraction.ExtractionResult(intent=intent, slots=slots)
 
 
+async def _try_llm_question_topic(
+    db: AsyncSession, current_user: User, session: CampaignChatSession, text: str
+) -> Optional[str]:
+    """Segunda oportunidad para una pregunta que los regex no reconocieron.
+
+    Rechazar de una es lo barato pero lo equivocado: el sistema TIENE los datos
+    en la base y un typo ("¿cuál es la capana activa?") no debería costarle al
+    usuario una respuesta. El LLM acá solo elige una etiqueta de un catálogo
+    cerrado — la respuesta la arma `questions.answer_question` con las cifras
+    reales, así que sigue sin poder inventar un número (AI-1).
+    """
+    if (session.llm_calls or 0) >= MAX_LLM_TURNS_PER_SESSION:
+        return None
+
+    org = await db.get(Organization, current_user.organization_id)
+    usage_ctx = UsageContext(
+        feature="campaign_chat", organization_id=current_user.organization_id,
+        ad_account_id=session.ad_account_id,
+    )
+    try:
+        topic = await OpenRouterClient().classify_chat_question(
+            org, text, questions.TOPIC_DESCRIPTIONS, usage_ctx=usage_ctx,
+        )
+    except Exception:
+        logger.exception("Fallo clasificando la pregunta del chat (sesión %s)", session.id)
+        return None
+    session.llm_calls = (session.llm_calls or 0) + 1
+    return topic
+
+
+async def _handle_off_topic(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    text: str, messages: List[Dict[str, Any]],
+) -> None:
+    """Pregunta sin tema reconocido: se le pregunta al LLM antes de rechazarla."""
+    topic = await _try_llm_question_topic(db, current_user, session, text)
+    if topic:
+        await _answer_and_resume(db, current_user, session, topic, messages)
+        return
+    messages.append(cards.text_message(questions.OUT_OF_SCOPE_TEXT))
+    pendiente = _pending_prompt_for_state(session.state)
+    if pendiente:
+        messages.append(cards.text_message(pendiente))
+
+
 def _slots_from_result(result: extraction.ExtractionResult, *, is_gate: bool) -> Dict[str, Any]:
     slots = dict(result.slots)
     bare = slots.pop("bare_number", None)
@@ -550,17 +595,15 @@ async def _handle_text(
     is_gate = session.state in GATE_STATES
     result = extraction.extract_message(text, state=session.state, is_gate=is_gate)
 
-    # Una pregunta reconocida se responde con datos reales; una fuera de tema se
-    # rechaza acá. Ninguna de las dos llega al LLM (CH-6: preguntas básicas a
-    # costo cero).
+    # Una pregunta reconocida por regex se responde con datos reales sin gastar
+    # un token (CH-6). Si ningún regex la reconoce, recién ahí entra el LLM a
+    # elegir el tema — antes se rechazaba de una, y eso descartaba preguntas
+    # que el sistema sabía responder con datos que ya tenía en la base.
     if result.intent == "question" and result.question_topic:
         await _answer_and_resume(db, current_user, session, result.question_topic, messages)
         return
     if result.intent == "off_topic":
-        messages.append(cards.text_message(questions.OUT_OF_SCOPE_TEXT))
-        pendiente = _pending_prompt_for_state(session.state)
-        if pendiente:
-            messages.append(cards.text_message(pendiente))
+        await _handle_off_topic(db, current_user, session, text, messages)
         return
 
     if result.intent == "unclear":
@@ -660,8 +703,7 @@ async def process_decision(
         if result.intent == "question" and result.question_topic:
             await _answer_and_resume(db, current_user, session, result.question_topic, messages)
         elif result.intent == "off_topic":
-            messages.append(cards.text_message(questions.OUT_OF_SCOPE_TEXT))
-            messages.append(cards.text_message(cards.RESUME_GATE_TEXT))
+            await _handle_off_topic(db, current_user, session, text or "", messages)
         else:
             if result.intent == "unclear":
                 llm_result = await _try_llm_extraction(db, current_user, session, text or "")

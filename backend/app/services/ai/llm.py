@@ -34,6 +34,7 @@ CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v2"
 # hay un dígito literal en el mensaje del usuario (regla AI-1: el LLM nunca
 # elige un número).
 CAMPAIGN_CHAT_PROMPT_VERSION = "campaign-chat-extract-v1"
+CAMPAIGN_CHAT_QUESTION_PROMPT_VERSION = "campaign-chat-question-v1"
 
 # Claves obligatorias del JSON de copy que debe devolver el LLM. headline y
 # primary_text son ARRAYS de 2 variantes (v2); description/welcome_message
@@ -623,6 +624,93 @@ class OpenRouterClient:
         if intent not in cls._CHAT_EXTRACT_INTENTS:
             return None
         return {k: v for k, v in data.items() if k in cls._CHAT_EXTRACT_KEYS}
+
+    async def classify_chat_question(
+        self,
+        org: Organization,
+        user_text: str,
+        topics: Dict[str, str],
+        usage_ctx: Optional[UsageContext] = None,
+    ) -> Optional[str]:
+        """Segunda oportunidad para una pregunta del chat que los regex de
+        `campaign_chat/questions.py` no reconocieron (un typo, un giro
+        inesperado). Devuelve la etiqueta del tema, o `None` si es realmente
+        fuera de alcance.
+
+        El modelo NO responde la pregunta: solo elige una etiqueta del catálogo
+        cerrado que se le pasa. La respuesta la sigue armando el código con
+        cifras reales de la cuenta, así que esto no puede inventar un número
+        (regla AI-1); el peor caso es que elija mal el tema y el usuario reciba
+        la respuesta de otra pregunta, nunca un dato falso.
+
+        Devuelve `None` sin llamar a nadie si no hay API key o si
+        `MOCK_SERVICES` está activo — el chat cae al rechazo estático de
+        siempre y sigue funcionando.
+        """
+        if settings.MOCK_SERVICES or not self.api_key or not topics:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "LejoVista Platform",
+            "Content-Type": "application/json",
+        }
+
+        catalogo = "\n".join(f"- {clave}: {desc}" for clave, desc in topics.items())
+        system_prompt = (
+            "Clasificás preguntas que un cliente hace sobre SUS campañas de Meta Ads.\n"
+            'Tu única salida es un JSON: {"topic": "ETIQUETA"} o {"topic": null}.\n\n'
+            "Elegí del catálogo la etiqueta que mejor responda la pregunta. Si la pregunta "
+            "no es sobre sus campañas, su gasto, sus resultados, su configuración de destino "
+            "ni sobre este asistente, devolvé null. Ante la duda, null.\n"
+            "NUNCA respondas la pregunta ni incluyas cifras: tu salida es solo la etiqueta.\n\n"
+            f"Catálogo:\n{catalogo}\n\n"
+            f"{_PROMPT_INJECTION_GUARD}"
+        )
+        user_prompt = (
+            f"Pregunta del cliente: {_delimit_untrusted(user_text)}\n"
+            "Devuelve solo el JSON del contrato."
+        )
+
+        # Igual que la extracción de slots: clasificar una frase corta contra un
+        # catálogo cerrado es la tarea más barata que hay, no paga premium.
+        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        if self.is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
+        payload = {
+            "model": model,
+            "temperature": 0.0,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                response = await client.post(self.base_url, json=payload, headers=headers)
+                if response.status_code != 200:
+                    logger.error(
+                        "OpenRouter API (clasificación de pregunta) devolvió error %s: %s",
+                        response.status_code, response.text,
+                    )
+                    return None
+                result = response.json()
+                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                data = _extract_json_object(result["choices"][0]["message"]["content"])
+        except Exception:
+            logger.exception("Error llamando a la API del LLM para clasificar una pregunta.")
+            return None
+
+        if not data:
+            return None
+        topic = data.get("topic")
+        # El catálogo es cerrado: cualquier etiqueta inventada se descarta.
+        return topic if isinstance(topic, str) and topic in topics else None
 
     @staticmethod
     def _parse_copy_json(content: str) -> Optional[Dict[str, Any]]:

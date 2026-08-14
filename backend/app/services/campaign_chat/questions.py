@@ -2,8 +2,15 @@
 
 Alcance deliberadamente cerrado: SOLO datos de la marca (sus campañas, su
 gasto, sus leads, su configuración de destino) y cómo funciona el producto.
-Cualquier otra cosa se rechaza sin llamar al LLM — ese es el punto: una
-pregunta fuera de tema cuesta CERO tokens.
+
+Dos pasos para clasificar, en este orden:
+  1. Regex sobre el texto sin tildes. Cubre la forma en que la gente pregunta
+     esto el 90% de las veces y cuesta CERO tokens.
+  2. Si ningún regex matchea, el motor le pide al LLM que elija una etiqueta
+     del catálogo cerrado (`TOPIC_DESCRIPTIONS`). Rechazar directo era más
+     barato pero descartaba preguntas que el sistema sí sabe responder — un
+     typo no debería costar una respuesta que ya está en la base.
+Fuera del catálogo, se rechaza.
 
 Todas las respuestas se arman con cifras reales de `ReportBuilder` (vía
 `report_cache.get_report`, el mismo dato que ve el dashboard y el reporte),
@@ -104,11 +111,39 @@ _TOPIC_PATTERNS: List[tuple] = [
         r"donde me escriben|a que numero", re.IGNORECASE)),
     ("CAMPAIGNS_OVERVIEW", re.compile(
         r"cuantas campanas|que campanas|mis campanas|lista de campanas|campanas tengo|"
-        r"campanas (activas|corriendo|prendidas)", re.IGNORECASE)),
+        # Singular incluido: "¿cuál es la campaña activa?" es la forma natural de
+        # preguntarlo cuando hay una sola corriendo, y antes no matcheaba nada.
+        r"campanas? (activas?|corriendo|prendidas?|encendidas?)|"
+        r"(cual|que).{0,20}campana.{0,15}(activa|corriendo|prendida|encendida)",
+        re.IGNORECASE)),
     ("SUMMARY", re.compile(
         r"como (me )?va|como voy|como van|\bresumen\b|como esta(n)? (mi|mis|la|las)|"
         r"que tal (va|van)|rendimiento general|como venimos", re.IGNORECASE)),
 ]
+
+# Qué significa cada tema, en una línea. Es lo que se le pasa al LLM cuando los
+# regex no reconocen la pregunta (ver `classify_question_with_llm` en el motor):
+# el modelo NO responde ni calcula nada, solo elige una de estas etiquetas, y la
+# respuesta la sigue armando el código con cifras reales (regla AI-1).
+TOPIC_DESCRIPTIONS: Dict[str, str] = {
+    "HOW_IT_WORKS": "qué es este asistente y qué puede hacer",
+    "WHY_PAUSED": "por qué las campañas se crean pausadas y cómo activarlas",
+    "CPL": "costo por lead / por conversación / por mensaje",
+    "BEST_CAMPAIGN": "cuál campaña rinde mejor",
+    "WORST_CAMPAIGN": "cuál campaña rinde peor o está fallando",
+    "BUDGET_ADVICE": "cuánto conviene invertir",
+    "SPEND": "cuánto se gastó / la inversión hecha",
+    "LEADS": "cuántos leads, conversaciones, mensajes o contactos llegaron",
+    "CTR": "clics, CTR o tasa de clics",
+    "ALERTS": "si hay algo mal, problemas o alertas en la cuenta",
+    "RECOMMENDATIONS": "qué conviene hacer, consejos o sugerencias",
+    "AUDIENCE": "a quién le llega el anuncio: público, edad, ubicación, dispositivo",
+    "DESTINATION": "a qué página de Facebook y a qué número de WhatsApp van los mensajes",
+    "CAMPAIGNS_OVERVIEW": "qué campañas tiene, cuántas hay, cuáles están activas",
+    "SUMMARY": "cómo viene todo en general, un resumen del rendimiento",
+}
+
+SUPPORTED_TOPICS = frozenset(TOPIC_DESCRIPTIONS)
 
 
 def looks_like_question(text: str) -> bool:
@@ -116,9 +151,13 @@ def looks_like_question(text: str) -> bool:
 
 
 def classify_question(text: str) -> Optional[str]:
-    """Devuelve el tema soportado, o `None` si la pregunta no es sobre la
-    marca. `None` NO significa "preguntale al LLM": significa fuera de
-    alcance."""
+    """Devuelve el tema soportado, o `None` si ningún regex lo reconoció.
+
+    `None` no cierra la puerta: el motor le da una segunda oportunidad al LLM
+    (`classify_question_with_llm`) antes de dar la pregunta por fuera de tema.
+    Un typo —"¿cuál es la capana activa?"— no debería costar una respuesta que
+    el sistema sí sabe dar.
+    """
     ascii_text = strip_accents(text or "").lower()
     for topic, pattern in _TOPIC_PATTERNS:
         if pattern.search(ascii_text):

@@ -194,9 +194,9 @@ def extract_message(text: str, *, state: str, is_gate: bool) -> ExtractionResult
 
     # Preguntas sobre la marca (CH-6): se resuelven antes que cualquier slot
     # para que "¿cuánto gasté?" no termine interpretado como un presupuesto ni
-    # como el objetivo de la campaña. Un tema reconocido se responde con datos
-    # reales; una pregunta fuera de tema se rechaza acá mismo, sin gastar un
-    # solo token de LLM.
+    # como el objetivo de la campaña. Un tema reconocido acá se responde con
+    # datos reales sin gastar un token; `off_topic` NO es la palabra final —
+    # el motor le da una segunda pasada al LLM antes de rechazar.
     topic = classify_question(raw)
     if topic:
         return ExtractionResult(intent="question", question_topic=topic)

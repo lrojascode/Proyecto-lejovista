@@ -165,3 +165,73 @@ async def test_network_exception_falls_back_to_none(monkeypatch):
 
     result = await OpenRouterClient().extract_campaign_slots(_org(), "algo", "ASK_GOAL", {})
     assert result is None
+
+
+# --- Clasificación de preguntas que los regex no reconocieron (14-ago-2026).
+# El LLM acá NO responde: elige una etiqueta de un catálogo cerrado. Todo lo que
+# se salga del catálogo se descarta, así que no puede colar una respuesta ni una
+# cifra propia (regla AI-1). ---
+
+def _key_env(monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+
+
+def _topic_response(payload: str):
+    return _FakeResponse(200, json.dumps({
+        "choices": [{"message": {"content": payload}}], "usage": {},
+    }))
+
+
+_TOPICS = {"SPEND": "cuánto se gastó", "CAMPAIGNS_OVERVIEW": "qué campañas tiene"}
+
+
+@pytest.mark.asyncio
+async def test_question_topic_is_classified(monkeypatch):
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({"topic": "CAMPAIGNS_OVERVIEW"}))))
+
+    topic = await OpenRouterClient().classify_chat_question(
+        _org(), "cual es la capana activa ahora?", _TOPICS,
+        usage_ctx=UsageContext(feature="campaign_chat", organization_id="org-1", ad_account_id="acc-1"),
+    )
+    assert topic == "CAMPAIGNS_OVERVIEW"
+
+
+@pytest.mark.asyncio
+async def test_invented_topic_is_discarded(monkeypatch):
+    """El catálogo es cerrado: si el modelo devuelve una etiqueta que no existe,
+    se trata como fuera de tema en vez de reventar al buscar el contestador."""
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({"topic": "PRECIO_DEL_DOLAR"}))))
+
+    assert await OpenRouterClient().classify_chat_question(_org(), "cuanto esta el dolar?", _TOPICS) is None
+
+
+@pytest.mark.asyncio
+async def test_null_topic_means_out_of_scope(monkeypatch):
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({"topic": None}))))
+
+    assert await OpenRouterClient().classify_chat_question(_org(), "quien gano el mundial?", _TOPICS) is None
+
+
+@pytest.mark.asyncio
+async def test_classify_returns_none_under_mock_services(monkeypatch):
+    """Es el camino de CI: sin LLM, el chat cae al rechazo estático de siempre."""
+    from app.config import settings
+    monkeypatch.setattr(settings, "MOCK_SERVICES", True)
+    assert await OpenRouterClient().classify_chat_question(_org(), "cual es la capana activa?", _TOPICS) is None
+
+
+@pytest.mark.asyncio
+async def test_classify_survives_http_error(monkeypatch):
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(response=_FakeResponse(500, "boom")))
+    assert await OpenRouterClient().classify_chat_question(_org(), "algo", _TOPICS) is None

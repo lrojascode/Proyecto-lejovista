@@ -3,8 +3,10 @@
 Dos garantías que se prueban acá:
 1. Las preguntas soportadas se responden con cifras REALES de `get_report` —
    nunca redactadas por un modelo (regla AI-1).
-2. Una pregunta fuera de tema se rechaza sin llamar al LLM, y ni las
-   preguntas ni los rechazos mueven el estado ni los slots de la sesión.
+2. Una pregunta que ningún regex reconoce pasa por el LLM (que solo elige una
+   etiqueta del catálogo cerrado) y recién ahí se rechaza; ni las preguntas ni
+   los rechazos mueven el estado ni los slots de la sesión. Bajo MOCK_SERVICES
+   —lo que corre en CI— no hay LLM y el rechazo es inmediato.
 """
 import types
 import uuid
@@ -48,6 +50,11 @@ def _acc():
     ("¿cuánto debería invertir?", "BUDGET_ADVICE"),
     ("¿cuál es mi CTR?", "CTR"),
     ("¿cuántas campañas tengo?", "CAMPAIGNS_OVERVIEW"),
+    # Singular: la forma natural de preguntarlo cuando hay una sola corriendo.
+    # Caso real reportado 13-ago-2026 — antes caía en "fuera de tema".
+    ("¿cuál es la campaña activa ahora?", "CAMPAIGNS_OVERVIEW"),
+    ("que campana esta corriendo", "CAMPAIGNS_OVERVIEW"),
+    ("¿cuáles campañas están activas?", "CAMPAIGNS_OVERVIEW"),
     ("¿a qué público le llega?", "AUDIENCE"),
     ("¿qué whatsapp uso?", "DESTINATION"),
     ("¿cómo funciona esto?", "HOW_IT_WORKS"),
@@ -417,3 +424,16 @@ def test_a_goal_phrased_as_a_question_still_counts_as_the_goal(text):
     result = extract_message(text, state="ASK_GOAL", is_gate=False)
     assert result.intent == "provide_info"
     assert result.slots.get("goal_text") == text
+
+
+def test_llm_catalog_matches_the_topics_the_code_can_answer():
+    """El catálogo que se le pasa al LLM debe ser exactamente el conjunto de
+    temas respondibles: una etiqueta de más haría gastar la llamada para
+    terminar en OUT_OF_SCOPE, y una de menos sería un tema que el LLM nunca
+    podría elegir aunque el regex sí lo reconozca."""
+    from app.services.campaign_chat.questions import (
+        _KPI_ANSWERS, _REPORT_ANSWERS, _TOPIC_PATTERNS, TOPIC_DESCRIPTIONS,
+    )
+    assert {t for t, _ in _TOPIC_PATTERNS} == set(TOPIC_DESCRIPTIONS)
+    estaticos = {"HOW_IT_WORKS", "WHY_PAUSED", "DESTINATION"}
+    assert set(TOPIC_DESCRIPTIONS) == estaticos | set(_KPI_ANSWERS) | set(_REPORT_ANSWERS)
