@@ -5,10 +5,13 @@ existe para poder corregir al usuario EN EL MOMENTO ("le saqué las tildes al
 nombre") en vez de fallar recién al confirmar la creación (CH-1).
 """
 import re
-import unicodedata
 from typing import Optional
 
-from app.services.campaign_validator import PRODUCT_NAME_PATTERN
+from app.services.campaign_validator import (  # noqa: F401  (strip_accents se re-exporta)
+    PRODUCT_NAME_PATTERN,
+    normalize_product_name,
+    strip_accents,
+)
 
 MAX_PRODUCT_NAME_CHARS = 40
 
@@ -27,31 +30,25 @@ _STOPWORDS = {
     "quisiera", "hacer", "armar", "crear", "campana", "campanas",
 }
 
-_ALLOWED_CHARS_RE = re.compile(r"[^A-Za-z0-9 _-]")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 _PRODUCT_NAME_RE = re.compile(PRODUCT_NAME_PATTERN)
-
-
-def strip_accents(text: str) -> str:
-    """Transliteración ASCII (tildes, ñ, emojis fuera). `CampaignValidator`
-    exige `^[A-Za-z0-9 _-]+$`; sin esto, cualquier frase en español real
-    rompería la creación al final del flujo."""
-    normalized = unicodedata.normalize("NFKD", text)
-    return "".join(c for c in normalized if not unicodedata.combining(c))
 
 
 def sanitize_product_name(raw: Optional[str]) -> str:
     """Deriva un `product_name` válido para Meta/`CampaignValidator` a partir
     de una frase libre (`goal_text`) o de lo que haya dicho el usuario. Se usa
     tanto sobre la salida del extractor determinista como sobre la del LLM —
-    así solo una función puede producir un `product_name` inválido."""
+    así solo una función puede producir un `product_name` inválido.
+
+    Va más allá de `normalize_product_name` (tira palabras de relleno,
+    capitaliza, corta a 40) porque acá el nombre se DERIVA de una frase
+    hablada; en el formulario, donde la persona lo escribió a propósito, se usa
+    la versión mínima."""
     if not raw or not raw.strip():
         return "Producto"
 
-    ascii_text = strip_accents(raw)
-    cleaned = _ALLOWED_CHARS_RE.sub(" ", ascii_text)
-    words = [w for w in _WHITESPACE_RE.split(cleaned) if w]
+    words = [w for w in _WHITESPACE_RE.split(normalize_product_name(raw)) if w]
 
     significant = [w for w in words if w.lower() not in _STOPWORDS]
     if not significant:

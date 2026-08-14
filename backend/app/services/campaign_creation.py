@@ -12,7 +12,7 @@ from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.campaign_suggester import CampaignSuggester
-from app.services.campaign_validator import CampaignValidator
+from app.services.campaign_validator import CampaignValidator, normalize_product_name
 from app.workers.creation_tasks import (
     task_create_ad,
     task_create_adset,
@@ -76,6 +76,14 @@ async def start_campaign_creation(
     recent_count = await count_recent_drafts(db, tenant_id)
     if recent_count >= MAX_CAMPAIGNS_PER_SESSION:
         raise CampaignCapReachedError(MAX_CAMPAIGNS_PER_SESSION, CAMPAIGN_SESSION_WINDOW_HOURS)
+
+    # Se normaliza ANTES de validar: la regex de `product_name` no admite
+    # tildes ni ñ, y hacer que un peruano escriba "diseno" en un campo que dice
+    # "Producto" no es una regla de negocio, es una fuga de un detalle técnico
+    # de Meta. El chat ya normalizaba por su cuenta (`sanitize_product_name`);
+    # esto cierra el mismo hueco para el formulario, que era el único camino
+    # donde el error llegaba al usuario.
+    request.product_name = normalize_product_name(request.product_name)
 
     validator = CampaignValidator(ad_account, db=db)
     await validator.validate(request)

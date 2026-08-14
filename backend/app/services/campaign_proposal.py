@@ -10,6 +10,7 @@ from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.campaign_suggester import CampaignSuggester
+from app.services.campaign_validator import normalize_product_name
 
 
 async def build_campaign_proposal(
@@ -30,6 +31,13 @@ async def build_campaign_proposal(
     """
     if image_path and not image_path.startswith(f"{current_user.organization_id}/"):
         raise HTTPException(status_code=400, detail="La imagen no pertenece a esta organización.")
+
+    # El nombre de campaña que se arma acá se le muestra al usuario como si ya
+    # fuera válido. Sin esto, "diseño web a medida" produce
+    # AGENCIAKIB_MSJ_DISEÑOWEBAMEDIDA_AGO2026 y recién al confirmar salta el
+    # error de `PRODUCT_NAME_PATTERN` — la sugerencia llevaba al usuario a un
+    # callejón sin salida (reportado 14-ago-2026).
+    product_name = normalize_product_name(product_name)
 
     org = await db.get(Organization, current_user.organization_id)
 

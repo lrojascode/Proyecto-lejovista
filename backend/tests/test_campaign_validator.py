@@ -223,3 +223,40 @@ async def test_validate_marks_account_expired_on_code_190(db_session: AsyncSessi
     # La cuenta y su credencial quedaron marcadas EXPIRED.
     await db_session.refresh(acc_a)
     assert acc_a.status == "EXPIRED"
+
+
+# --- Normalización de product_name (14-ago-2026). El formulario dejaba pasar
+# "diseño web a medida", mostraba AGENCIAKIB_MSJ_DISEÑOWEBAMEDIDA_AGO2026 como
+# nombre sugerido, y recién al confirmar tiraba
+# "product_name contains invalid characters". ---
+
+import pytest as _pytest
+
+from app.services.campaign_validator import PRODUCT_NAME_PATTERN, normalize_product_name
+
+
+@_pytest.mark.parametrize("raw,expected", [
+    ("diseño web a medida", "diseno web a medida"),
+    ("Cerámicas Piñero", "Ceramicas Pinero"),
+    ("Termas de Relajación", "Termas de Relajacion"),
+    ("Zapatillas 🔥", "Zapatillas"),
+    ("  espacios   de   más  ", "espacios de mas"),
+    # No reordena ni capitaliza: la persona lo escribió así a propósito.
+    ("polo básico azul", "polo basico azul"),
+])
+def test_normalize_product_name(raw, expected):
+    assert normalize_product_name(raw) == expected
+
+
+@_pytest.mark.parametrize("raw", [
+    "diseño web a medida", "Cerámicas Piñero", "Termas de Relajación", "Zapatillas 🔥",
+])
+def test_normalized_names_pass_the_validator_regex(raw):
+    import re
+    assert re.match(PRODUCT_NAME_PATTERN, normalize_product_name(raw))
+
+
+def test_normalize_is_idempotent():
+    """El chat ya manda nombres limpios: normalizar de nuevo no debe tocarlos."""
+    ya_limpio = "Optimiza Proceso Contratos Ventas"
+    assert normalize_product_name(ya_limpio) == ya_limpio

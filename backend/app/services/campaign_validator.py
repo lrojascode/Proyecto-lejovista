@@ -1,5 +1,8 @@
 import re
 import logging
+import unicodedata
+from typing import Optional
+
 from fastapi import HTTPException
 from app.config import settings
 from app.models.ad_account import AdAccount
@@ -13,6 +16,31 @@ logger = logging.getLogger(__name__)
 # Constante importable para que el chat de creación (CH-1) pueda normalizar
 # `product_name` ANTES de llegar acá, en vez de duplicar la regex.
 PRODUCT_NAME_PATTERN = r"^[A-Za-z0-9 _-]+$"
+
+_DISALLOWED_CHARS_RE = re.compile(r"[^A-Za-z0-9 _-]")
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def strip_accents(text: str) -> str:
+    """Transliteración ASCII (tildes, ñ, emojis fuera). Sin esto, cualquier
+    frase en español real rompe `PRODUCT_NAME_PATTERN`."""
+    normalized = unicodedata.normalize("NFKD", text or "")
+    return "".join(c for c in normalized if not unicodedata.combining(c))
+
+
+def normalize_product_name(raw: Optional[str]) -> str:
+    """Adapta un `product_name` escrito por una persona a lo que exige Meta,
+    sin cambiar lo que dijo: "diseño web a medida" → "diseno web a medida".
+
+    Es deliberadamente MÍNIMA —solo transliterar y sacar lo que la regex no
+    admite— a diferencia de `campaign_chat.slots.sanitize_product_name`, que
+    además tira palabras de relleno y capitaliza porque ahí el nombre se está
+    DERIVANDO de una frase hablada. Acá la persona escribió el nombre en un
+    campo a propósito: reordenarle las palabras sería una sorpresa, dejarla
+    contra un error que no puede resolver sola es peor.
+    """
+    cleaned = _DISALLOWED_CHARS_RE.sub(" ", strip_accents(raw or ""))
+    return _WHITESPACE_RE.sub(" ", cleaned).strip()
 
 
 class CampaignValidator:
