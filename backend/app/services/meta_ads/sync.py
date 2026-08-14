@@ -881,10 +881,16 @@ class MetaAdsSyncService:
                 ig_id = (p.get("connected_instagram_account") or {}).get("id")
                 if ig_id:
                     entry["instagram_actor_id"] = ig_id
+                # Token de página: solo lo devuelve /me/accounts, y solo si se
+                # pide explícitamente. Es lo único con lo que se puede leer
+                # `whatsapp_number` (ver abajo). No se persiste — vive en
+                # memoria durante este sync y nada más.
+                if p.get("access_token"):
+                    entry["page_token"] = p["access_token"]
 
         _collect(await limiter.call_api(
             "me/accounts",
-            {"fields": "name,id,category,connected_instagram_account", "limit": "100"},
+            {"fields": "name,id,category,connected_instagram_account,access_token", "limit": "100"},
             access_token=token,
         ), "me/accounts")
 
@@ -931,11 +937,20 @@ class MetaAdsSyncService:
                 row.instagram_actor_id = info["instagram_actor_id"]
             row.status = "ACTIVE"
 
-            wa_res = await limiter.call_api(ext_id, {"fields": "whatsapp_number"}, access_token=token)
+            # `whatsapp_number` del nodo Page se lee con el TOKEN DE LA PÁGINA,
+            # no con el del usuario: con el de usuario Meta responde error y el
+            # número quedaba siempre vacío, obligando a cargarlo a mano aunque
+            # el token tuviera todos los permisos. El de usuario queda como
+            # fallback para las páginas que llegaron por los Business Manager o
+            # por promote_pages, donde Meta no entrega token de página.
+            page_token = info.get("page_token")
+            wa_res = await limiter.call_api(
+                ext_id, {"fields": "whatsapp_number"}, access_token=page_token or token,
+            )
             if self._has_error(wa_res):
                 logger.info(
-                    "La página %s no expone whatsapp_number (o el token no tiene permiso): %s",
-                    ext_id, wa_res,
+                    "La página %s no expone whatsapp_number (token de %s): %s",
+                    ext_id, "página" if page_token else "usuario", wa_res,
                 )
             elif wa_res.get("whatsapp_number"):
                 # Solo sobreescribir con un valor real: si Meta no devuelve el

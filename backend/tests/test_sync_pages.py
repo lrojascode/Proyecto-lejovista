@@ -190,6 +190,80 @@ async def test_sync_real_pages_continues_when_me_accounts_fails(db_session: Asyn
     assert "page_own" in ids  # vino por owned_pages aunque me/accounts falló
 
 
+# --- `whatsapp_number` necesita el token de la PÁGINA (13-ago-2026): con el
+# token de usuario Meta devuelve error aunque tenga whatsapp_business_management,
+# así que el número quedaba SIEMPRE vacío y había que cargarlo a mano. ---
+
+class _PageTokenFakeLimiter:
+    """Registra con qué token se pidió el `whatsapp_number` de cada página.
+
+    `/me/accounts` entrega token de página (si se pide en `fields`); las páginas
+    que llegan por los Business Manager no lo traen, y ahí solo queda el token
+    de usuario.
+    """
+
+    def __init__(self):
+        self.wa_tokens = {}
+        self.me_accounts_fields = ""
+
+    async def call_api(self, endpoint, params, method="GET", access_token=""):
+        if endpoint == "me/accounts":
+            self.me_accounts_fields = params.get("fields", "")
+            return {"data": [{"id": "page_own", "name": "Página Propia",
+                              "access_token": "PAGE-TOKEN-own"}]}
+        if endpoint == "me/businesses":
+            return {"data": [{"id": "biz_1", "name": "Mi Business"}]}
+        if endpoint == "biz_1/owned_pages":
+            return {"data": [{"id": "page_biz", "name": "Página del Business"}]}
+        if params.get("fields") == "whatsapp_number":
+            self.wa_tokens[endpoint] = access_token
+            if access_token.startswith("PAGE-TOKEN"):
+                return {"whatsapp_number": "51999888777"}
+            return {"error": {"message": "Tried accessing nonexisting field", "code": 100}}
+        return {}
+
+    async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+        return await self.call_api(endpoint, params, method=method, access_token=access_token)
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_number_uses_page_token_when_available(db_session: AsyncSession):
+    org, acc = await _make_org_and_account(db_session, slug="pages-org-page-token")
+    limiter = _PageTokenFakeLimiter()
+
+    await MetaAdsSyncService(db_session)._sync_real_pages(acc, "valid-token", limiter)
+    await db_session.flush()
+
+    # El token de página solo viene si se pide explícitamente en `fields`.
+    assert "access_token" in limiter.me_accounts_fields
+    assert limiter.wa_tokens["page_own"] == "PAGE-TOKEN-own"
+
+    page = (await db_session.execute(select(MetaPage).where(
+        MetaPage.organization_id == org.id, MetaPage.external_page_id == "page_own",
+    ))).scalar_one()
+    assert page.whatsapp_number == "51999888777"
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_number_falls_back_to_user_token_without_page_token(db_session: AsyncSession):
+    """Las páginas descubiertas vía Business Manager / promote_pages no traen
+    token propio: se intenta igual con el de usuario y, si falla, esa página
+    queda sin número sin afectar a las demás."""
+    org, acc = await _make_org_and_account(db_session, slug="pages-org-no-page-token")
+    limiter = _PageTokenFakeLimiter()
+
+    await MetaAdsSyncService(db_session)._sync_real_pages(acc, "valid-token", limiter)
+    await db_session.flush()
+
+    assert limiter.wa_tokens["page_biz"] == "valid-token"
+
+    page = (await db_session.execute(select(MetaPage).where(
+        MetaPage.organization_id == org.id, MetaPage.external_page_id == "page_biz",
+    ))).scalar_one()
+    assert page.whatsapp_number is None
+    assert page.name == "Página del Business"  # el resto sí se guardó
+
+
 @pytest.mark.asyncio
 async def test_sync_does_not_wipe_manual_whatsapp_number(db_session: AsyncSession):
     """El WhatsApp cargado a mano (PATCH /my/pages/{id}/whatsapp) NO debe
