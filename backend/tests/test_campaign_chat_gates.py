@@ -164,9 +164,9 @@ async def test_unrecognized_question_is_answered_when_the_llm_finds_the_topic(
 ):
     from app.services.ai.llm import OpenRouterClient
 
-    async def fake_classify(self, org, text, topics, usage_ctx=None):
+    async def fake_classify(self, org, text, topics, periods=None, usage_ctx=None):
         assert "DESTINATION" in topics  # se le pasa el catálogo cerrado
-        return "DESTINATION"
+        return "DESTINATION", None
 
     monkeypatch.setattr(OpenRouterClient, "classify_chat_question", fake_classify)
 
@@ -246,3 +246,49 @@ async def test_chat_works_when_the_rewriter_fails(
     transcript = await _ask(async_client, headers, session_id, "quiero vender termas")
 
     assert "súbeme la foto del producto" in transcript
+
+
+# --- El LLM redacta las respuestas del historial (CH-8) ---
+
+async def _with_analyst(monkeypatch, written: str):
+    """Sustituye la redacción del LLM. `answer_question` se mockea para que
+    devuelva `facts` sin depender de datos sincronizados."""
+    from app.services.ai.llm import OpenRouterClient
+    from app.services.campaign_chat import questions
+
+    async def fake_answer(db, org_id, ad_account, topic, slots, period=None):
+        return "Llevás S/. 1085.47 de inversión.", {"spend": 1085.47, "conversations": 402}
+
+    async def fake_compose(self, org, question, topic, facts, usage_ctx=None):
+        return written
+
+    monkeypatch.setattr(questions, "answer_question", fake_answer)
+    monkeypatch.setattr(OpenRouterClient, "compose_chat_answer", fake_compose)
+
+
+@pytest.mark.asyncio
+async def test_grounded_analysis_replaces_the_template(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    await _with_analyst(monkeypatch, "Vas bien: **402 conversaciones** y S/. 1085.47 invertidos. 👍")
+
+    headers, session_id = await _open_session(async_client, db_session, "chat-analisis-ok")
+    transcript = await _ask(async_client, headers, session_id, "¿cuánto gasté este mes?")
+
+    assert "402 conversaciones" in transcript
+    assert "👍" in transcript  # es la redacción del modelo, no la plantilla
+
+
+@pytest.mark.asyncio
+async def test_an_analysis_that_invents_a_figure_is_discarded(
+    async_client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    """El costo por conversación no está en los datos: el modelo lo calculó.
+    Se descarta la respuesta entera y se muestra la del código."""
+    await _with_analyst(monkeypatch, "Gastaste S/. 1085.47 en 402 conversaciones, S/. 2.70 cada una.")
+
+    headers, session_id = await _open_session(async_client, db_session, "chat-analisis-inventa")
+    transcript = await _ask(async_client, headers, session_id, "¿cuánto gasté este mes?")
+
+    assert "2.70" not in transcript
+    assert "Llevás S/. 1085.47 de inversión." in transcript

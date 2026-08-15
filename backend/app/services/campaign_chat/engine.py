@@ -9,6 +9,7 @@ Principio rector: el chat NO abre un segundo camino de escritura. Todo
 termina llamando a las mismas funciones que usa `POST /campaigns/` — nunca
 construye su propio `CampaignDraft` ni su propio chain de Celery.
 """
+import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,6 +28,7 @@ from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.services.campaign_chat import cards, extraction, questions, rephrase
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
+from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
 from app.services.campaign_chat.slots import sanitize_product_name
 from app.services.campaign_creation import (
     CAMPAIGN_SESSION_WINDOW_HOURS,
@@ -515,7 +517,7 @@ async def _try_llm_extraction(
 
 async def _try_llm_question_topic(
     db: AsyncSession, current_user: User, session: CampaignChatSession, text: str
-) -> Optional[str]:
+) -> Tuple[Optional[str], Optional[Period]]:
     """Segunda oportunidad para una pregunta que los regex no reconocieron.
 
     Rechazar de una es lo barato pero lo equivocado: el sistema TIENE los datos
@@ -525,7 +527,7 @@ async def _try_llm_question_topic(
     reales, así que sigue sin poder inventar un número (AI-1).
     """
     if (session.llm_calls or 0) >= MAX_LLM_TURNS_PER_SESSION:
-        return None
+        return None, None
 
     org = await db.get(Organization, current_user.organization_id)
     usage_ctx = UsageContext(
@@ -533,14 +535,17 @@ async def _try_llm_question_topic(
         ad_account_id=session.ad_account_id,
     )
     try:
-        topic = await OpenRouterClient().classify_chat_question(
-            org, text, questions.TOPIC_DESCRIPTIONS, usage_ctx=usage_ctx,
+        topic, period_key = await OpenRouterClient().classify_chat_question(
+            org, text, questions.TOPIC_DESCRIPTIONS,
+            periods=list(PERIOD_ENUM), usage_ctx=usage_ctx,
         )
     except Exception:
         logger.exception("Fallo clasificando la pregunta del chat (sesión %s)", session.id)
-        return None
+        return None, None
     session.llm_calls = (session.llm_calls or 0) + 1
-    return topic
+    # El período determinista del texto manda sobre el del LLM: si la persona
+    # escribió "30 días", ese dígito literal es mejor evidencia que una etiqueta.
+    return topic, parse_period(text) or period_from_enum(period_key)
 
 
 async def _say(
@@ -576,14 +581,56 @@ async def _say(
     return cards.text_message(rephrase.safe_or_canonical(text, rewritten))
 
 
+async def _analyze(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    user_text: str, topic: str, canonical: str, facts: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Respuesta sobre el historial, redactada por el LLM desde las cifras
+    reales (CH-8).
+
+    Acá el modelo tiene margen para analizar de verdad —elegir qué destacar,
+    comparar, explicar qué significa— y no solo maquillar una plantilla. Lo que
+    lo hace seguro no es el prompt sino `numbers_are_grounded`: cada número que
+    escriba tiene que existir en `facts`, así que no puede inventar ni calcular
+    una cifra sobre la plata del cliente. Si mete uno nuevo, se descarta su
+    respuesta entera y se usa la del código.
+
+    Es deliberadamente MÁS libre que `_say`, que se sigue usando para el flujo
+    de creación: ahí cada palabra empuja a una acción irreversible y la
+    exigencia es igualdad exacta.
+    """
+    if (session.turn_count or 0) >= MAX_REPHRASED_TURNS:
+        return cards.text_message(canonical)
+
+    org = await db.get(Organization, current_user.organization_id)
+    usage_ctx = UsageContext(
+        feature="campaign_chat", organization_id=current_user.organization_id,
+        ad_account_id=session.ad_account_id,
+    )
+    facts_blob = json.dumps(facts, ensure_ascii=False, default=str)
+    try:
+        written = await OpenRouterClient().compose_chat_answer(
+            org, user_text, topic, facts, usage_ctx=usage_ctx,
+        )
+    except Exception:
+        logger.exception("Fallo analizando el historial (sesión %s, tema %s)", session.id, topic)
+        written = None
+
+    if written is None:
+        return cards.text_message(canonical)
+    return cards.text_message(rephrase.grounded_or_canonical(facts_blob, canonical, written))
+
+
 async def _handle_off_topic(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
     text: str, messages: List[Dict[str, Any]],
 ) -> None:
     """Pregunta sin tema reconocido: se le pregunta al LLM antes de rechazarla."""
-    topic = await _try_llm_question_topic(db, current_user, session, text)
+    topic, period = await _try_llm_question_topic(db, current_user, session, text)
     if topic:
-        await _answer_and_resume(db, current_user, session, topic, messages, user_text=text)
+        await _answer_and_resume(
+            db, current_user, session, topic, messages, user_text=text, period=period,
+        )
         return
     messages.append(await _say(db, current_user, session, questions.OUT_OF_SCOPE_TEXT, text))
     pendiente = _pending_prompt_for_state(session.state)
@@ -602,19 +649,28 @@ def _slots_from_result(result: extraction.ExtractionResult, *, is_gate: bool) ->
 async def _answer_and_resume(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
     topic: str, messages: List[Dict[str, Any]], user_text: str = "",
+    period: Optional[Period] = None,
 ) -> None:
     """Responde una pregunta sobre la marca SIN mover el estado ni tocar los
     slots, y vuelve a dejar planteado lo que estaba pendiente — preguntar algo
     a mitad del armado no debe hacerte perder el lugar (CH-6)."""
     ad_account = await db.get(AdAccount, session.ad_account_id)
+    facts = None
     try:
-        answer = await questions.answer_question(
+        answer, facts = await questions.answer_question(
             db, current_user.organization_id, ad_account, topic, session.slots_json or {},
+            period=period,
         )
     except Exception:
         logger.exception("No se pudo responder la pregunta '%s' (sesión %s)", topic, session.id)
         answer = questions.NO_DATA_TEXT
-    messages.append(await _say(db, current_user, session, answer, user_text))
+
+    if facts:
+        # Preguntas sobre el pasado: el LLM redacta el análisis desde las cifras
+        # (CH-8). Los textos de producto (`facts is None`) no pasan por acá.
+        messages.append(await _analyze(db, current_user, session, user_text, topic, answer, facts))
+    else:
+        messages.append(await _say(db, current_user, session, answer, user_text))
 
     pendiente = _pending_prompt_for_state(session.state)
     if pendiente:
@@ -642,7 +698,10 @@ async def _handle_text(
     # elegir el tema — antes se rechazaba de una, y eso descartaba preguntas
     # que el sistema sabía responder con datos que ya tenía en la base.
     if result.intent == "question" and result.question_topic:
-        await _answer_and_resume(db, current_user, session, result.question_topic, messages, user_text=text)
+        await _answer_and_resume(
+            db, current_user, session, result.question_topic, messages,
+            user_text=text, period=result.question_period,
+        )
         return
     if result.intent == "off_topic":
         await _handle_off_topic(db, current_user, session, text, messages)
@@ -743,7 +802,10 @@ async def process_decision(
         # Preguntar algo en el campo "Cambiar algo" se responde como pregunta,
         # sin tocar la propuesta ni volver a dibujar la tarjeta (CH-6).
         if result.intent == "question" and result.question_topic:
-            await _answer_and_resume(db, current_user, session, result.question_topic, messages, user_text=text or "")
+            await _answer_and_resume(
+                db, current_user, session, result.question_topic, messages,
+                user_text=text or "", period=result.question_period,
+            )
         elif result.intent == "off_topic":
             await _handle_off_topic(db, current_user, session, text or "", messages)
         else:

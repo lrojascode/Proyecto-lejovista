@@ -7,10 +7,28 @@ Master Brief v2) para reutilizarlo también en el resumen del dashboard
 import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.campaign_snapshot import CampaignSnapshot
+
+
+async def days_of_history(db: AsyncSession, ad_account_id: str) -> int:
+    """Cuántos días de datos hay realmente sincronizados para esta cuenta.
+
+    Es el techo honesto de cualquier ventana: si alguien pregunta por los
+    últimos 90 días y solo hay 10 sincronizados, responder "en los últimos 90
+    días" daría por ceros 80 días que nunca se midieron. Devuelve 0 si no hay
+    ningún snapshot.
+    """
+    oldest = (await db.execute(
+        select(func.min(CampaignSnapshot.date)).where(
+            CampaignSnapshot.ad_account_id == ad_account_id
+        )
+    )).scalar_one_or_none()
+    if oldest is None:
+        return 0
+    return (datetime.date.today() - oldest).days + 1
 
 
 async def get_window_kpis(

@@ -77,3 +77,33 @@ def safe_or_canonical(original: str, rewritten: str) -> str:
     """Punto de entrada del motor: devuelve la reescritura si pasa el control,
     o el texto canónico intacto si no."""
     return rewritten.strip() if is_safe_rephrase(original, rewritten) else original
+
+
+# --- Análisis del historial: el LLM redacta, pero no calcula (CH-8) ---
+
+MAX_ANALYSIS_CHARS = 2000
+
+
+def numbers_are_grounded(facts_blob: str, answer: str) -> bool:
+    """¿Todos los números de la respuesta existen en los datos?
+
+    Es SUBCONJUNTO, no igualdad — ahí está la libertad: el modelo elige qué
+    cifras mencionar, cuáles omitir y en qué orden contarlas. Lo que no puede
+    es escribir un número que no esté en los datos, y eso incluye los que
+    calcule él mismo: un promedio, un múltiplo o un porcentaje derivado son
+    números nuevos y tumban la respuesta entera.
+
+    La contracara: el modelo puede decir "casi el triple" con palabras. Está
+    bien — lo que se protege es que ninguna CIFRA sobre la plata del cliente
+    salga de un modelo en vez de una query.
+    """
+    answer = (answer or "").strip()
+    if not answer or len(answer) > MAX_ANALYSIS_CHARS:
+        return False
+    if url_tokens(answer):
+        return False  # un análisis no tiene por qué inventar enlaces
+    return numeric_tokens(answer) <= numeric_tokens(facts_blob)
+
+
+def grounded_or_canonical(facts_blob: str, canonical: str, answer: str) -> str:
+    return answer.strip() if numbers_are_grounded(facts_blob, answer) else canonical

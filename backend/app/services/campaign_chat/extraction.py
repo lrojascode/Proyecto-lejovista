@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from app.services.campaign_chat.period import Period, parse_period
 from app.services.campaign_chat.questions import classify_question, looks_like_question
 from app.services.campaign_chat.slots import normalize_whatsapp, sanitize_product_name, strip_accents
 
@@ -170,6 +171,9 @@ class ExtractionResult:
     slots: Dict[str, Any] = field(default_factory=dict)
     # Solo con intent="question": el tema soportado que resolvió `questions.py`.
     question_topic: Optional[str] = None
+    # Período mencionado en la pregunta ("este mes", "los últimos 30 días").
+    # `None` = no mencionó ninguno y se usa la ventana por defecto.
+    question_period: Optional[Period] = None
 
 
 def extract_message(text: str, *, state: str, is_gate: bool) -> ExtractionResult:
@@ -199,7 +203,7 @@ def extract_message(text: str, *, state: str, is_gate: bool) -> ExtractionResult
     # el motor le da una segunda pasada al LLM antes de rechazar.
     topic = classify_question(raw)
     if topic:
-        return ExtractionResult(intent="question", question_topic=topic)
+        return ExtractionResult(intent="question", question_topic=topic, question_period=parse_period(raw))
     if looks_like_question(raw):
         # Una pregunta que no es de la marca se rechaza... salvo que sea la
         # forma cortés de decir el objetivo ("¿me ayudás a vender zapatillas?"),

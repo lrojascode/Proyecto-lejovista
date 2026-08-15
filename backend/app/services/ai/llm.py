@@ -1,7 +1,7 @@
 import logging
 import json
 import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 import httpx
 from app.config import settings
 from app.models.organization import Organization
@@ -36,6 +36,7 @@ CAMPAIGN_COPY_PROMPT_VERSION = "campaign-copy-v2"
 CAMPAIGN_CHAT_PROMPT_VERSION = "campaign-chat-extract-v1"
 CAMPAIGN_CHAT_QUESTION_PROMPT_VERSION = "campaign-chat-question-v1"
 CAMPAIGN_CHAT_REPHRASE_PROMPT_VERSION = "campaign-chat-rephrase-v1"
+CAMPAIGN_CHAT_ANSWER_PROMPT_VERSION = "campaign-chat-answer-v1"
 
 # Claves obligatorias del JSON de copy que debe devolver el LLM. headline y
 # primary_text son ARRAYS de 2 variantes (v2); description/welcome_message
@@ -626,6 +627,96 @@ class OpenRouterClient:
             return None
         return {k: v for k, v in data.items() if k in cls._CHAT_EXTRACT_KEYS}
 
+    async def compose_chat_answer(
+        self,
+        org: Organization,
+        question: str,
+        topic: str,
+        facts: Dict[str, Any],
+        usage_ctx: Optional[UsageContext] = None,
+    ) -> Optional[str]:
+        """Redacta la respuesta a una pregunta sobre el historial de la cuenta
+        a partir de las cifras reales (CH-8). Devuelve `None` si no hay LLM
+        disponible o si algo falla — el motor usa la plantilla del código.
+
+        A diferencia de `rephrase_chat_message`, acá el modelo SÍ compone: elige
+        qué cifras destacar, las compara y explica qué significan. Lo que no
+        puede es producir un número que no esté en `facts`; el motor lo valida
+        con `rephrase.numbers_are_grounded` y descarta la respuesta entera si
+        aparece uno nuevo, incluido cualquiera que el modelo haya calculado.
+        """
+        if settings.MOCK_SERVICES or not self.api_key or not facts:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "LejoVista Platform",
+            "Content-Type": "application/json",
+        }
+
+        system_prompt = (
+            "Sos el analista de Meta Ads de un dueño de negocio peruano que no sabe de "
+            "marketing. Te dan sus datos reales y una pregunta, y respondés como le "
+            "explicarías a un amigo: directo, cálido, sin jerga.\n\n"
+            "REGLAS INQUEBRANTABLES:\n"
+            "- Solo podés escribir números que aparezcan TAL CUAL en los datos. Copiálos "
+            "exactos, con sus decimales.\n"
+            "- PROHIBIDO calcular. Nada de promedios, sumas, restas, porcentajes ni "
+            "múltiplos que no estén ya en los datos. Si querés comparar, hacelo con "
+            "palabras ('bastante más caro', 'casi el doble'), nunca con una cifra nueva.\n"
+            "- No inventes campañas, fechas ni métricas que no estén en los datos.\n"
+            "- Si los datos no alcanzan para responder, decilo con honestidad.\n\n"
+            "ESTILO: 2 a 5 frases. Respondé primero lo que preguntó, y recién después "
+            "agregá el contexto que le sirva para decidir. Podés usar **negrita** para el "
+            "dato clave y viñetas si son varias campañas. Máximo un emoji. Sin saludos ni "
+            "despedidas: es una conversación en curso.\n\n"
+            'Tu única salida es un JSON: {"text": "la respuesta"}.\n\n'
+            f"{_PROMPT_INJECTION_GUARD}"
+        )
+        user_prompt = (
+            f"Tema: {topic}\n"
+            f"Pregunta del cliente: {_delimit_untrusted(question or '(sin texto)')}\n\n"
+            f"Datos reales de su cuenta:\n{json.dumps(facts, ensure_ascii=False, default=str)}\n\n"
+            "Devuelve solo el JSON del contrato."
+        )
+
+        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        if self.is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
+        payload = {
+            "model": model,
+            "temperature": 0.3,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                response = await client.post(self.base_url, json=payload, headers=headers)
+                if response.status_code != 200:
+                    logger.error(
+                        "OpenRouter API (análisis del chat) devolvió error %s: %s",
+                        response.status_code, response.text,
+                    )
+                    return None
+                result = response.json()
+                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                data = _extract_json_object(result["choices"][0]["message"]["content"])
+        except Exception:
+            logger.exception("Error llamando a la API del LLM para analizar el historial.")
+            return None
+
+        if not data:
+            return None
+        text = data.get("text")
+        return text if isinstance(text, str) and text.strip() else None
+
     async def rephrase_chat_message(
         self,
         org: Organization,
@@ -719,12 +810,16 @@ class OpenRouterClient:
         org: Organization,
         user_text: str,
         topics: Dict[str, str],
+        periods: Optional[List[str]] = None,
         usage_ctx: Optional[UsageContext] = None,
-    ) -> Optional[str]:
+    ) -> Tuple[Optional[str], Optional[str]]:
         """Segunda oportunidad para una pregunta del chat que los regex de
         `campaign_chat/questions.py` no reconocieron (un typo, un giro
-        inesperado). Devuelve la etiqueta del tema, o `None` si es realmente
-        fuera de alcance.
+        inesperado). Devuelve `(tema, periodo)`, ambos del catálogo cerrado que
+        se le pasa, o `(None, None)` si la pregunta es fuera de alcance.
+
+        El período es una ETIQUETA de un enum, nunca un entero: así el modelo
+        no puede acercarse a proponer una cifra (regla AI-1).
 
         El modelo NO responde la pregunta: solo elige una etiqueta del catálogo
         cerrado que se le pasa. La respuesta la sigue armando el código con
@@ -737,7 +832,7 @@ class OpenRouterClient:
         siempre y sigue funcionando.
         """
         if settings.MOCK_SERVICES or not self.api_key or not topics:
-            return None
+            return None, None
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -747,15 +842,21 @@ class OpenRouterClient:
         }
 
         catalogo = "\n".join(f"- {clave}: {desc}" for clave, desc in topics.items())
+        periodos = periods or []
         system_prompt = (
             "Clasificás preguntas que un cliente hace sobre SUS campañas de Meta Ads.\n"
-            'Tu única salida es un JSON: {"topic": "ETIQUETA"} o {"topic": null}.\n\n'
+            'Tu única salida es un JSON: {"topic": "ETIQUETA", "period": "ETIQUETA o null"}.\n\n'
             "Elegí del catálogo la etiqueta que mejor responda la pregunta. Si la pregunta "
             "no es sobre sus campañas, su gasto, sus resultados, su configuración de destino "
-            "ni sobre este asistente, devolvé null. Ante la duda, null.\n"
-            "NUNCA respondas la pregunta ni incluyas cifras: tu salida es solo la etiqueta.\n\n"
-            f"Catálogo:\n{catalogo}\n\n"
-            f"{_PROMPT_INJECTION_GUARD}"
+            "ni sobre este asistente, devolvé topic null. Ante la duda, null.\n"
+            "NUNCA respondas la pregunta ni incluyas cifras: tu salida son solo etiquetas.\n\n"
+            f"Catálogo de temas:\n{catalogo}\n\n"
+            + (
+                "Períodos válidos (elegí uno SOLO si la pregunta menciona un lapso; si no, "
+                f"period va en null): {', '.join(periodos)}\n\n"
+                if periodos else ""
+            )
+            + f"{_PROMPT_INJECTION_GUARD}"
         )
         user_prompt = (
             f"Pregunta del cliente: {_delimit_untrusted(user_text)}\n"
@@ -787,19 +888,24 @@ class OpenRouterClient:
                         "OpenRouter API (clasificación de pregunta) devolvió error %s: %s",
                         response.status_code, response.text,
                     )
-                    return None
+                    return None, None
                 result = response.json()
                 await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para clasificar una pregunta.")
-            return None
+            return None, None
 
         if not data:
-            return None
+            return None, None
+        # Los dos catálogos son cerrados: cualquier etiqueta inventada se
+        # descarta. Un período inválido no invalida el tema — se responde con la
+        # ventana por defecto, que es mejor que no responder.
         topic = data.get("topic")
-        # El catálogo es cerrado: cualquier etiqueta inventada se descarta.
-        return topic if isinstance(topic, str) and topic in topics else None
+        topic = topic if isinstance(topic, str) and topic in topics else None
+        period = data.get("period")
+        period = period if isinstance(period, str) and period in periodos else None
+        return topic, period
 
     @staticmethod
     def _parse_copy_json(content: str) -> Optional[Dict[str, Any]]:

@@ -21,21 +21,23 @@ La clasificación es por regex sobre el texto sin tildes y en minúsculas: son
 preguntas básicas y repetitivas, no hace falta un modelo para entenderlas.
 """
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
+from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat.slots import strip_accents
-from app.services.kpi_period import get_kpis_with_deltas
+from app.services.kpi_period import days_of_history, get_kpis_with_deltas
 from app.services.report_cache import get_report
 
-# Ventana de análisis de las respuestas. 7 días es lo que ya usan la lista de
-# campañas y el dashboard — la respuesta del chat tiene que coincidir con lo
-# que el usuario ve en pantalla, no contradecirlo.
-ANSWER_WINDOW_DAYS = 7
+# Ventana por defecto cuando la pregunta no menciona ningún período. 7 días es
+# lo que ya usan la lista de campañas y el dashboard — la respuesta del chat
+# tiene que coincidir con lo que el usuario ve en pantalla, no contradecirlo.
+# Cuando la pregunta sí menciona un período (`period.parse_period`), manda ese.
+ANSWER_WINDOW_DAYS = DEFAULT_WINDOW_DAYS
 
 # De dónde sale cada cifra, y por qué son DOS fuentes:
 #
@@ -215,12 +217,12 @@ def _campaigns_with_results(report: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 # --- Respuestas con datos reales ---
 
-def _answer_spend(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
+def _answer_spend(period: Period, kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
     actual = kpis.get("current") or {}
     delta = (kpis.get("deltas_pct") or {}).get("spend")
-    linea = f"En los últimos {ANSWER_WINDOW_DAYS} días llevás {_money(actual.get('spend'))} de inversión."
+    linea = f"En {period.label} llevás {_money(actual.get('spend'))} de inversión."
     if delta is not None:
-        linea += f" Eso es {_pct(delta)} respecto de los {ANSWER_WINDOW_DAYS} días anteriores."
+        linea += f" Eso es {_pct(delta)} respecto del período anterior."
     cuenta = (report or {}).get("account") or {}
     cap = cuenta.get("spend_cap") or 0
     if cap > 0:
@@ -229,29 +231,29 @@ def _answer_spend(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str
     return linea
 
 
-def _answer_leads(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
+def _answer_leads(period: Period, kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
     actual = kpis.get("current") or {}
     conv = actual.get("conversations", 0)
     delta = (kpis.get("deltas_pct") or {}).get("conversations")
-    linea = f"En los últimos {ANSWER_WINDOW_DAYS} días trajiste {conv} conversaciones por WhatsApp."
+    linea = f"En {period.label} trajiste {conv} conversaciones por WhatsApp."
     if delta is not None:
-        linea += f" ({_pct(delta)} vs. los {ANSWER_WINDOW_DAYS} días anteriores.)"
+        linea += f" ({_pct(delta)} vs. el período anterior.)"
     if conv:
         linea += f"\n\nTe salieron a {_money(actual.get('cost_per_conv'))} cada una en promedio."
     return linea
 
 
-def _answer_cpl(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
+def _answer_cpl(period: Period, kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
     actual = kpis.get("current") or {}
     conv = actual.get("conversations", 0)
     if not conv:
         return (
-            f"Todavía no hay conversaciones en los últimos {ANSWER_WINDOW_DAYS} días, así que no "
-            "hay un costo por lead que calcular."
+            f"Todavía no hay conversaciones en {period.label}, así que no hay un costo por lead "
+            "que calcular."
         )
     linea = (
-        f"Tu costo por conversación promedio es {_money(actual.get('cost_per_conv'))} en los "
-        f"últimos {ANSWER_WINDOW_DAYS} días."
+        f"Tu costo por conversación promedio es {_money(actual.get('cost_per_conv'))} "
+        f"en {period.label}."
     )
     objetivo = ((report or {}).get("kpis") or {}).get("target_cpl")
     if objetivo:
@@ -259,11 +261,11 @@ def _answer_cpl(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
     return linea
 
 
-def _answer_summary(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
+def _answer_summary(period: Period, kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
     actual = kpis.get("current") or {}
     conv = actual.get("conversations", 0)
     partes = [
-        f"En los últimos {ANSWER_WINDOW_DAYS} días: {_money(actual.get('spend'))} invertidos, "
+        f"En {period.label}: {_money(actual.get('spend'))} invertidos, "
         f"{conv} conversaciones"
         + (f" a {_money(actual.get('cost_per_conv'))} cada una." if conv else ".")
     ]
@@ -273,7 +275,7 @@ def _answer_summary(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> s
     return "\n".join(partes)
 
 
-def _answer_budget_advice(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
+def _answer_budget_advice(period: Period, kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
     actual = kpis.get("current") or {}
     if not actual.get("conversations"):
         return (
@@ -288,10 +290,10 @@ def _answer_budget_advice(kpis: Dict[str, Any], report: Optional[Dict[str, Any]]
     )
 
 
-def _answer_best_campaign(report: Dict[str, Any]) -> str:
+def _answer_best_campaign(period: Period, report: Dict[str, Any]) -> str:
     winners = _campaigns_with_results(report)
     if not winners:
-        return f"Ninguna campaña trajo conversaciones en los últimos {ANSWER_WINDOW_DAYS} días todavía."
+        return f"Ninguna campaña trajo conversaciones en {period.label} todavía."
     best = winners[0]
     return (
         f"La que mejor te está rindiendo es **{best['name']}**: "
@@ -300,7 +302,7 @@ def _answer_best_campaign(report: Dict[str, Any]) -> str:
     )
 
 
-def _answer_worst_campaign(report: Dict[str, Any]) -> str:
+def _answer_worst_campaign(period: Period, report: Dict[str, Any]) -> str:
     campaigns = report.get("campaigns") or []
     if not campaigns:
         return NO_DATA_TEXT
@@ -321,21 +323,21 @@ def _answer_worst_campaign(report: Dict[str, Any]) -> str:
     )
 
 
-def _answer_ctr(report: Dict[str, Any]) -> str:
+def _answer_ctr(period: Period, report: Dict[str, Any]) -> str:
     kpis = report.get("kpis") or {}
     return (
-        f"Tu CTR promedio es {kpis.get('avg_ctr', 0):.2f}% en los últimos {ANSWER_WINDOW_DAYS} días, "
+        f"Tu CTR promedio es {kpis.get('avg_ctr', 0):.2f}% en {period.label}, "
         f"sobre un alcance de {kpis.get('total_reach', 0):,} personas.".replace(",", ".")
     )
 
 
-def _answer_campaigns_overview(report: Dict[str, Any]) -> str:
+def _answer_campaigns_overview(period: Period, report: Dict[str, Any]) -> str:
     campaigns = report.get("campaigns") or []
     if not campaigns:
         return NO_DATA_TEXT
     activas = [c for c in campaigns if c.get("status") == "ACTIVE"]
     lineas = [
-        f"Tenés {len(campaigns)} campañas con datos en los últimos {ANSWER_WINDOW_DAYS} días "
+        f"Tenés {len(campaigns)} campañas con datos en {period.label} "
         f"({len(activas)} activas en Meta):"
     ]
     for c in campaigns[:5]:
@@ -349,7 +351,7 @@ def _answer_campaigns_overview(report: Dict[str, Any]) -> str:
     return "\n".join(lineas)
 
 
-def _answer_alerts(report: Dict[str, Any]) -> str:
+def _answer_alerts(period: Period, report: Dict[str, Any]) -> str:
     alerts = report.get("alerts") or {}
     red = alerts.get("red") or []
     if not red:
@@ -359,7 +361,7 @@ def _answer_alerts(report: Dict[str, Any]) -> str:
     return "\n".join(lineas)
 
 
-def _answer_recommendations(report: Dict[str, Any]) -> str:
+def _answer_recommendations(period: Period, report: Dict[str, Any]) -> str:
     recs = report.get("recommendations") or []
     if not recs:
         return (
@@ -369,7 +371,7 @@ def _answer_recommendations(report: Dict[str, Any]) -> str:
     return "\n".join(["Con lo que veo en tu cuenta:"] + [f"• {r}" for r in recs[:4]])
 
 
-def _answer_audience(report: Dict[str, Any]) -> str:
+def _answer_audience(period: Period, report: Dict[str, Any]) -> str:
     seg = report.get("segmentation") or {}
     partes = []
     for clave, etiqueta in (("age", "Edad"), ("device", "Dispositivo"), ("region", "Zona")):
@@ -427,32 +429,72 @@ _REPORT_ANSWERS = {
 }
 
 
+# Qué se le pasa al LLM como datos crudos cuando redacta la respuesta. Es un
+# recorte del reporte: lo que los builders ya miraban, nada nuevo.
+_FACT_KEYS_FROM_REPORT = ("kpis", "campaigns", "alerts", "recommendations", "segmentation", "account")
+
+
+def _build_facts(period: Period, kpis: Optional[Dict[str, Any]], report: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Las cifras reales que respaldan la respuesta.
+
+    Sirve para dos cosas: dárselas al LLM para que redacte, y ser la lista
+    blanca contra la que se valida lo que escribió (`numbers_are_grounded`).
+    Todo número que no esté acá no puede aparecer en la respuesta.
+    """
+    facts: Dict[str, Any] = {"ventana": period.label, "dias_analizados": period.days}
+    if kpis:
+        facts["kpis_del_periodo"] = kpis
+    if report:
+        facts.update({k: report[k] for k in _FACT_KEYS_FROM_REPORT if report.get(k)})
+    return facts
+
+
 async def answer_question(
-    db: AsyncSession, organization_id: str, ad_account: AdAccount, topic: str, slots: Dict[str, Any]
-) -> str:
-    """Responde un tema ya clasificado. Nunca llama al LLM: o es texto fijo del
-    producto, o son cifras reales (las mismas que ve el usuario en pantalla)."""
+    db: AsyncSession,
+    organization_id: str,
+    ad_account: AdAccount,
+    topic: str,
+    slots: Dict[str, Any],
+    period: Optional[Period] = None,
+) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Responde un tema ya clasificado.
+
+    Devuelve `(texto, facts)`. El texto es la respuesta armada por el código
+    con cifras reales — siempre válida por sí sola. `facts` son esas mismas
+    cifras en crudo: si hay LLM disponible, el motor le pide que redacte a
+    partir de ellas y valida que no haya inventado ningún número. Cuando es
+    `None` (textos de producto como "cómo funciona" o la página de destino) no
+    hay nada que analizar y el texto se usa tal cual.
+
+    La ventana se recorta a lo que realmente hay sincronizado: preguntar por 90
+    días con 10 días de datos responde sobre 10 y lo aclara.
+    """
     if topic == "HOW_IT_WORKS":
-        return HOW_IT_WORKS_TEXT
+        return HOW_IT_WORKS_TEXT, None
     if topic == "WHY_PAUSED":
-        return WHY_PAUSED_TEXT
+        return WHY_PAUSED_TEXT, None
     if topic == "DESTINATION":
-        return await _answer_destination(db, organization_id, slots)
+        return await _answer_destination(db, organization_id, slots), None
 
     if topic not in _KPI_ANSWERS and topic not in _REPORT_ANSWERS:
-        return OUT_OF_SCOPE_TEXT
+        return OUT_OF_SCOPE_TEXT, None
+
+    periodo = clamp_to_available(
+        period or Period(ANSWER_WINDOW_DAYS, f"los últimos {ANSWER_WINDOW_DAYS} días"),
+        await days_of_history(db, ad_account.id),
+    )
 
     report = None
     if topic in _NEEDS_REPORT:
-        report = await get_report(db, ad_account, window_days=ANSWER_WINDOW_DAYS)
+        report = await get_report(db, ad_account, window_days=periodo.days)
 
     if topic in _KPI_ANSWERS:
-        kpis = await get_kpis_with_deltas(db, ad_account.id, window_days=ANSWER_WINDOW_DAYS)
+        kpis = await get_kpis_with_deltas(db, ad_account.id, window_days=periodo.days)
         actual = kpis.get("current") or {}
         if not actual.get("spend") and not actual.get("conversations"):
-            return NO_DATA_TEXT
-        return _KPI_ANSWERS[topic](kpis, report)
+            return NO_DATA_TEXT, None
+        return _KPI_ANSWERS[topic](periodo, kpis, report), _build_facts(periodo, kpis, report)
 
     if not report or not (report.get("campaigns") or report.get("kpis")):
-        return NO_DATA_TEXT
-    return _REPORT_ANSWERS[topic](report)
+        return NO_DATA_TEXT, None
+    return _REPORT_ANSWERS[topic](periodo, report), _build_facts(periodo, None, report)

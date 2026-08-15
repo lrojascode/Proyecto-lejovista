@@ -288,6 +288,12 @@ def _mock_report(mocker):
             "app.services.campaign_chat.questions.get_report",
             autospec=True, return_value=report,
         )
+        # La ventana se recorta a los días realmente sincronizados; con datos
+        # de sobra el período pedido pasa intacto.
+        mocker.patch(
+            "app.services.campaign_chat.questions.days_of_history",
+            autospec=True, return_value=365,
+        )
         return mocker.patch(
             "app.services.campaign_chat.questions.get_kpis_with_deltas",
             autospec=True, return_value=kpis if kpis is not None else _fake_kpis(),
@@ -295,10 +301,17 @@ def _mock_report(mocker):
     return _apply
 
 
+async def _answer(*args, **kwargs) -> str:
+    """`answer_question` devuelve `(texto, facts)`; estos tests miran el texto.
+    Los `facts` tienen su propia batería en test_campaign_chat_analysis.py."""
+    text, _ = await questions.answer_question(*args, **kwargs)
+    return text
+
+
 @pytest.mark.asyncio
 async def test_answer_spend_uses_real_kpis(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "SPEND", {})
+    out = await _answer(None, "org", _acc(), "SPEND", {})
     assert "S/. 300.00" in out
     assert "+10.0%" in out
     assert "S/. 600.00" in out  # tope 1000 - gastado 400 = restante
@@ -307,7 +320,7 @@ async def test_answer_spend_uses_real_kpis(_mock_report):
 @pytest.mark.asyncio
 async def test_answer_leads_computes_average_cost(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "LEADS", {})
+    out = await _answer(None, "org", _acc(), "LEADS", {})
     assert "20 conversaciones" in out
     assert "S/. 15.00" in out  # 300 / 20
 
@@ -315,28 +328,28 @@ async def test_answer_leads_computes_average_cost(_mock_report):
 @pytest.mark.asyncio
 async def test_answer_cpl_reports_average_and_target(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "CPL", {})
+    out = await _answer(None, "org", _acc(), "CPL", {})
     assert "S/. 15.00" in out and "objetivo" in out
 
 
 @pytest.mark.asyncio
 async def test_answer_cpl_without_conversations_says_so(_mock_report):
     _mock_report(_fake_report(), kpis=_fake_kpis(spend=50.0, conversations=0, cost_per_conv=50.0))
-    out = await questions.answer_question(None, "org", _acc(), "CPL", {})
+    out = await _answer(None, "org", _acc(), "CPL", {})
     assert "no hay un costo por lead" in out.lower()
 
 
 @pytest.mark.asyncio
 async def test_answer_best_campaign_picks_the_first_with_results(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "BEST_CAMPAIGN", {})
+    out = await _answer(None, "org", _acc(), "BEST_CAMPAIGN", {})
     assert "CAMP_BUENA" in out and "12 conversaciones" in out
 
 
 @pytest.mark.asyncio
 async def test_answer_worst_campaign_prefers_spend_without_results(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "WORST_CAMPAIGN", {})
+    out = await _answer(None, "org", _acc(), "WORST_CAMPAIGN", {})
     assert "CAMP_SIN_RESULTADOS" in out
     assert "no trajo ninguna conversación" in out
 
@@ -344,7 +357,7 @@ async def test_answer_worst_campaign_prefers_spend_without_results(_mock_report)
 @pytest.mark.asyncio
 async def test_answer_campaigns_overview_counts_active(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "CAMPAIGNS_OVERVIEW", {})
+    out = await _answer(None, "org", _acc(), "CAMPAIGNS_OVERVIEW", {})
     assert "3 campañas" in out and "2 activas" in out
     assert "CAMP_BUENA" in out
 
@@ -352,37 +365,37 @@ async def test_answer_campaigns_overview_counts_active(_mock_report):
 @pytest.mark.asyncio
 async def test_answer_alerts_lists_red_ones(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "ALERTS", {})
+    out = await _answer(None, "org", _acc(), "ALERTS", {})
     assert "CAMP_SIN_RESULTADOS" in out and "gastó sin conversaciones" in out
 
 
 @pytest.mark.asyncio
 async def test_answer_alerts_when_everything_is_fine(_mock_report):
     _mock_report(_fake_report(alerts={"red": [], "green": []}))
-    out = await questions.answer_question(None, "org", _acc(), "ALERTS", {})
+    out = await _answer(None, "org", _acc(), "ALERTS", {})
     assert "nada preocupante" in out
 
 
 @pytest.mark.asyncio
 async def test_answer_recommendations_and_summary(_mock_report):
     _mock_report(_fake_report())
-    recs = await questions.answer_question(None, "org", _acc(), "RECOMMENDATIONS", {})
+    recs = await _answer(None, "org", _acc(), "RECOMMENDATIONS", {})
     assert "Excluir instagram_positions" in recs
-    resumen = await questions.answer_question(None, "org", _acc(), "SUMMARY", {})
+    resumen = await _answer(None, "org", _acc(), "SUMMARY", {})
     assert "S/. 300.00" in resumen and "CAMP_BUENA" in resumen
 
 
 @pytest.mark.asyncio
 async def test_answer_budget_advice_is_20x_the_best_cost(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "BUDGET_ADVICE", {})
+    out = await _answer(None, "org", _acc(), "BUDGET_ADVICE", {})
     assert "S/. 12.50" in out and "S/. 250.00" in out  # 12.50 * 20
 
 
 @pytest.mark.asyncio
 async def test_answer_audience_picks_cheapest_segment(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "AUDIENCE", {})
+    out = await _answer(None, "org", _acc(), "AUDIENCE", {})
     assert "25-34" in out and "mobile" in out
     assert "45-54" not in out  # más caro, no se recomienda
 
@@ -390,20 +403,20 @@ async def test_answer_audience_picks_cheapest_segment(_mock_report):
 @pytest.mark.asyncio
 async def test_answer_ctr(_mock_report):
     _mock_report(_fake_report())
-    out = await questions.answer_question(None, "org", _acc(), "CTR", {})
+    out = await _answer(None, "org", _acc(), "CTR", {})
     assert "1.85%" in out
 
 
 @pytest.mark.asyncio
 async def test_empty_report_says_no_data(_mock_report):
     _mock_report({"campaigns": [], "kpis": {}}, kpis=_fake_kpis(spend=0, conversations=0, cost_per_conv=0))
-    out = await questions.answer_question(None, "org", _acc(), "SPEND", {})
+    out = await _answer(None, "org", _acc(), "SPEND", {})
     assert out == questions.NO_DATA_TEXT
 
 
 @pytest.mark.asyncio
 async def test_unknown_topic_falls_back_to_out_of_scope(_mock_report):
-    out = await questions.answer_question(None, "org", _acc(), "NO_EXISTE", {})
+    out = await _answer(None, "org", _acc(), "NO_EXISTE", {})
     assert out == questions.OUT_OF_SCOPE_TEXT
 
 

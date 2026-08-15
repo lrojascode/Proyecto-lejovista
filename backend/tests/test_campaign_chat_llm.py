@@ -195,11 +195,12 @@ async def test_question_topic_is_classified(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
         response=_topic_response(json.dumps({"topic": "CAMPAIGNS_OVERVIEW"}))))
 
-    topic = await OpenRouterClient().classify_chat_question(
+    topic, period = await OpenRouterClient().classify_chat_question(
         _org(), "cual es la capana activa ahora?", _TOPICS,
         usage_ctx=UsageContext(feature="campaign_chat", organization_id="org-1", ad_account_id="acc-1"),
     )
     assert topic == "CAMPAIGNS_OVERVIEW"
+    assert period is None  # la pregunta no menciona ningún lapso
 
 
 @pytest.mark.asyncio
@@ -210,7 +211,7 @@ async def test_invented_topic_is_discarded(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
         response=_topic_response(json.dumps({"topic": "PRECIO_DEL_DOLAR"}))))
 
-    assert await OpenRouterClient().classify_chat_question(_org(), "cuanto esta el dolar?", _TOPICS) is None
+    assert await OpenRouterClient().classify_chat_question(_org(), "cuanto esta el dolar?", _TOPICS) == (None, None)
 
 
 @pytest.mark.asyncio
@@ -219,7 +220,7 @@ async def test_null_topic_means_out_of_scope(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
         response=_topic_response(json.dumps({"topic": None}))))
 
-    assert await OpenRouterClient().classify_chat_question(_org(), "quien gano el mundial?", _TOPICS) is None
+    assert await OpenRouterClient().classify_chat_question(_org(), "quien gano el mundial?", _TOPICS) == (None, None)
 
 
 @pytest.mark.asyncio
@@ -227,14 +228,14 @@ async def test_classify_returns_none_under_mock_services(monkeypatch):
     """Es el camino de CI: sin LLM, el chat cae al rechazo estático de siempre."""
     from app.config import settings
     monkeypatch.setattr(settings, "MOCK_SERVICES", True)
-    assert await OpenRouterClient().classify_chat_question(_org(), "cual es la capana activa?", _TOPICS) is None
+    assert await OpenRouterClient().classify_chat_question(_org(), "cual es la capana activa?", _TOPICS) == (None, None)
 
 
 @pytest.mark.asyncio
 async def test_classify_survives_http_error(monkeypatch):
     _key_env(monkeypatch)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(response=_FakeResponse(500, "boom")))
-    assert await OpenRouterClient().classify_chat_question(_org(), "algo", _TOPICS) is None
+    assert await OpenRouterClient().classify_chat_question(_org(), "algo", _TOPICS) == (None, None)
 
 
 # --- Reescritura conversacional (CH-7) ---
@@ -270,3 +271,22 @@ async def test_rephrase_survives_garbage_json(monkeypatch):
     _key_env(monkeypatch)
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(response=_topic_response("no soy json")))
     assert await OpenRouterClient().rephrase_chat_message(_org(), "Gastaste S/. 100.", "hola") is None
+
+
+@pytest.mark.asyncio
+async def test_period_is_taken_only_from_the_closed_enum(monkeypatch):
+    """El modelo elige una ETIQUETA de período, nunca un entero. Una que no
+    esté en el enum se descarta sin invalidar el tema: se responde con la
+    ventana por defecto, que es mejor que no responder."""
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({"topic": "SPEND", "period": "30d"}))))
+    assert await OpenRouterClient().classify_chat_question(
+        _org(), "cuanto gaste este mes?", _TOPICS, periods=["7d", "30d"],
+    ) == ("SPEND", "30d")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({"topic": "SPEND", "period": "37 dias"}))))
+    assert await OpenRouterClient().classify_chat_question(
+        _org(), "cuanto gaste?", _TOPICS, periods=["7d", "30d"],
+    ) == ("SPEND", None)
