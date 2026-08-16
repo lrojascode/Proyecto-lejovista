@@ -1,3 +1,5 @@
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { ChatTextMessage, ChatMediaMessage } from "@/lib/types";
 
 export function TextBubble({
@@ -11,7 +13,17 @@ export function TextBubble({
   return (
     <div className={`chat-bubble-row ${isUser ? "user" : "assistant"}`}>
       <div>
-        <div className={`chat-bubble ${isUser ? "user" : "assistant"}`}>{message.text}</div>
+        {/* El asistente escribe markdown (**negrita** para el dato clave,
+            viñetas para listar campañas). Sin renderizarlo, el nombre de una
+            campaña salía en pantalla como **ALT_MSJ_LEADS_JUN290**. El texto
+            del usuario NO se interpreta: es entrada suya, se muestra tal cual. */}
+        <div className={`chat-bubble ${isUser ? "user" : "assistant"}`}>
+          {isUser ? message.text : (
+            <div className="chat-markdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
+            </div>
+          )}
+        </div>
         {!isUser && message.quick_replies && message.quick_replies.length > 0 && (
           <div className="chat-quick-replies">
             {message.quick_replies.map((qr) => (

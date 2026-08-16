@@ -8,8 +8,12 @@ import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import type { ChatSessionResponse } from "@/lib/types";
 import { MessageList } from "@/components/campaign-chat/MessageList";
 import { Composer } from "@/components/campaign-chat/Composer";
+import { TypingIndicator } from "@/components/campaign-chat/TypingIndicator";
 
-const SESSION_STORAGE_KEY = "campaign_chat_session_id";
+// La clave lleva el id de la cuenta: una sesión tiene su `ad_account_id`
+// congelado, así que reusar la de otra cuenta hacía que las preguntas se
+// respondieran con los datos de la cuenta anterior sin que nada lo indicara.
+const sessionKeyFor = (adAccountId: string | null) => `campaign_chat_session:${adAccountId || "none"}`;
 const POLL_INTERVAL_MS = 2500;
 // La Saga tarda ~3 min (4 pasos con countdown=40s entre sí, ver
 // campaigns/new/page.tsx) — mismo margen de ~5 min que el formulario.
@@ -30,6 +34,11 @@ export default function CampaignChatPage() {
   const [uploading, setUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [mediaPreviewUrls, setMediaPreviewUrls] = useState<Record<string, string>>({});
+  // Burbuja optimista: el servidor devuelve la transcripción entera, así que
+  // sin esto el mensaje recién aparecía al responder y el intervalo quedaba en
+  // blanco — se sentía como que el chat se había tragado lo que escribiste.
+  const [pendingUserText, setPendingUserText] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const pollAttemptsRef = useRef(0);
@@ -37,32 +46,45 @@ export default function CampaignChatPage() {
 
   const activeAccount = accounts.find((a) => a.id === activeAdAccountId) || null;
 
-  const startSession = async () => {
+  const startSession = async (forceNew = false) => {
     setInitializing(true);
     setGuardError(null);
+    setErrorMessage("");
+    const storageKey = sessionKeyFor(activeAdAccountId);
     try {
-      const existingId = sessionStorage.getItem(SESSION_STORAGE_KEY);
+      const existingId = forceNew ? null : sessionStorage.getItem(storageKey);
       if (existingId) {
         try {
           const existing = await api.getCampaignChatSession(existingId);
-          if (existing.status === "OPEN") {
+          // Doble cerrojo: la clave ya es por cuenta, pero se vuelve a
+          // comprobar contra el servidor. Una sesión de otra cuenta responde
+          // con los datos de esa otra cuenta.
+          if (existing.status === "OPEN" && existing.ad_account_id === activeAdAccountId) {
             setSession(existing);
             setInitializing(false);
             return;
           }
         } catch {
-          // La sesión guardada ya no existe o es de otra cuenta — se descarta.
+          // La sesión guardada ya no existe — se descarta.
         }
-        sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        sessionStorage.removeItem(storageKey);
       }
       const created = await api.startCampaignChat(activeAdAccountId || undefined);
-      sessionStorage.setItem(SESSION_STORAGE_KEY, created.id);
+      sessionStorage.setItem(storageKey, created.id);
       setSession(created);
     } catch (e: any) {
       setGuardError(e.message || "No se pudo iniciar el chat.");
     } finally {
       setInitializing(false);
     }
+  };
+
+  const startFreshSession = () => {
+    sessionStorage.removeItem(sessionKeyFor(activeAdAccountId));
+    setSession(null);
+    setMediaPreviewUrls({});
+    setPendingUserText(null);
+    startSession(true);
   };
 
   useEffect(() => {
@@ -76,7 +98,9 @@ export default function CampaignChatPage() {
     if (el && typeof el.scrollTo === "function") {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [session?.messages.length]);
+    // También al aparecer la burbuja optimista y el indicador: si no, el
+    // "está escribiendo" queda fuera de la vista justo cuando importa.
+  }, [session?.messages.length, pendingUserText, busy, uploading]);
 
   // Polling durante la creación (~3 min), cortocircuitado por el WS.
   useEffect(() => {
@@ -120,14 +144,25 @@ export default function CampaignChatPage() {
     if (!session) return;
     setBusy(true);
     setErrorMessage("");
+    setPendingUserText(text);
     try {
       const updated = await api.sendCampaignChatMessage(session.id, { clientTurnId: newTurnId(), text });
       setSession(updated);
     } catch (e: any) {
       setErrorMessage(e.message || "No se pudo enviar el mensaje.");
+      // Devolver el texto al compositor: perderlo obliga a reescribirlo entero.
+      setDraft(text);
     } finally {
+      setPendingUserText(null);
       setBusy(false);
     }
+  };
+
+  const submitDraft = () => {
+    const text = draft.trim();
+    if (!text || inputDisabled) return;
+    setDraft("");
+    handleSendText(text);
   };
 
   const handleSendFile = async (file: File) => {
@@ -180,12 +215,6 @@ export default function CampaignChatPage() {
     }
   };
 
-  const handleCreateAnother = () => {
-    sessionStorage.removeItem(SESSION_STORAGE_KEY);
-    setSession(null);
-    setMediaPreviewUrls({});
-    startSession();
-  };
 
   if (accountsLoading || initializing) {
     return <div style={{ color: "var(--text-secondary)" }}>Preparando el chat...</div>;
@@ -215,21 +244,37 @@ export default function CampaignChatPage() {
             Contame qué querés promocionar y armamos la campaña juntos.
           </p>
         </div>
-        <Link href="/campaigns/new" className="btn-secondary">Usar el formulario</Link>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button type="button" className="btn-secondary" onClick={startFreshSession}>
+            Nuevo chat
+          </button>
+          <Link href="/campaigns/new" className="btn-secondary">Usar el formulario</Link>
+        </div>
       </div>
 
       <div className="glass-card chat-shell">
         <div className="chat-transcript" ref={transcriptRef}>
-          <MessageList
-            messages={session.messages}
-            mediaPreviewUrls={mediaPreviewUrls}
-            onDecision={handleDecision}
-            onQuickReply={handleSendText}
-            onErrorAction={handleErrorAction}
-            onCreateAnother={handleCreateAnother}
-            externalAccountId={activeAccount?.external_account_id}
-            decisionsDisabled={busy || isClosed}
-          />
+          {/* `margin-top: auto` empuja la conversación al fondo: una charla
+              corta arranca abajo, como cualquier chat, en vez de dejar un
+              hueco enorme debajo del último mensaje. */}
+          <div className="chat-transcript-inner">
+            <MessageList
+              messages={session.messages}
+              mediaPreviewUrls={mediaPreviewUrls}
+              onDecision={handleDecision}
+              onQuickReply={handleSendText}
+              onErrorAction={handleErrorAction}
+              onCreateAnother={startFreshSession}
+              externalAccountId={activeAccount?.external_account_id}
+              decisionsDisabled={busy || isClosed}
+            />
+            {pendingUserText && (
+              <div className="chat-bubble-row user">
+                <div className="chat-bubble user chat-bubble-pending">{pendingUserText}</div>
+              </div>
+            )}
+            {(busy || uploading) && <TypingIndicator />}
+          </div>
         </div>
 
         {errorMessage && (
@@ -238,7 +283,9 @@ export default function CampaignChatPage() {
 
         {!isClosed && (
           <Composer
-            onSendText={handleSendText}
+            value={draft}
+            onChange={setDraft}
+            onSubmit={submitDraft}
             onSendFile={handleSendFile}
             disabled={inputDisabled}
             uploading={uploading}
@@ -248,7 +295,7 @@ export default function CampaignChatPage() {
 
         {isClosed && session.status === "CLOSED_CANCELLED" && (
           <div style={{ padding: "16px 8px", textAlign: "center" }}>
-            <button type="button" className="btn-primary" onClick={handleCreateAnother}>
+            <button type="button" className="btn-primary" onClick={startFreshSession}>
               Empezar una campaña nueva
             </button>
           </div>

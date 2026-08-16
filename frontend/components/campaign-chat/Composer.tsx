@@ -1,28 +1,26 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { SpinnerIcon } from "@/components/icons";
 
+// El texto lo maneja la página, no este componente: si el envío falla hay que
+// poder devolvérselo al usuario, y con el estado acá adentro se perdía.
 export function Composer({
-  onSendText,
+  value,
+  onChange,
+  onSubmit,
   onSendFile,
   disabled,
   uploading,
   placeholder = "Escribí tu mensaje...",
 }: {
-  onSendText: (text: string) => void;
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
   onSendFile: (file: File) => void;
   disabled?: boolean;
   uploading?: boolean;
   placeholder?: string;
 }) {
-  const [text, setText] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const submit = () => {
-    const trimmed = text.trim();
-    if (!trimmed || disabled) return;
-    onSendText(trimmed);
-    setText("");
-  };
 
   return (
     <div className="chat-composer">
@@ -49,18 +47,18 @@ export function Composer({
       <textarea
         className="form-input"
         placeholder={placeholder}
-        value={text}
+        value={value}
         disabled={disabled}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            submit();
+            if (!disabled) onSubmit();
           }
         }}
         rows={1}
       />
-      <button type="button" className="btn-primary" disabled={disabled || !text.trim()} onClick={submit}>
+      <button type="button" className="btn-primary" disabled={disabled || !value.trim()} onClick={onSubmit}>
         Enviar
       </button>
     </div>

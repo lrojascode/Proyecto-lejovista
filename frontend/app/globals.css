@@ -581,7 +581,16 @@ select:focus-visible {
   padding: var(--spacing-16) var(--spacing-8);
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-16);
+}
+
+/* `margin-top: auto` ancla la conversación al fondo: una charla corta empieza
+   abajo, como cualquier chat, en vez de quedar pegada arriba con un vacío
+   enorme debajo. Cuando crece, el scroll funciona igual que siempre. */
+.chat-transcript-inner {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-12);
 }
 
 .chat-bubble-row {
@@ -598,12 +607,89 @@ select:focus-visible {
 }
 
 .chat-bubble {
-  max-width: 640px;
+  /* Ancho de lectura, no de pantalla: una respuesta larga cruzando un monitor
+     entero se vuelve incómoda de leer. */
+  max-width: min(65ch, 640px);
   border-radius: var(--radius-cards);
   padding: 12px 16px;
   font-size: var(--text-body-sm);
   line-height: var(--leading-body-sm);
   white-space: pre-wrap;
+}
+
+/* El markdown ya trae sus propios márgenes; acá se apagan para que la burbuja
+   no crezca de más, y se ajusta el ritmo entre párrafos y viñetas. */
+.chat-markdown {
+  white-space: normal;
+}
+
+.chat-markdown > :first-child { margin-top: 0; }
+.chat-markdown > :last-child { margin-bottom: 0; }
+
+.chat-markdown p {
+  margin: 0 0 var(--spacing-8);
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: var(--spacing-8) 0;
+  padding-left: 1.15rem;
+}
+
+.chat-markdown li {
+  margin-bottom: 4px;
+}
+
+.chat-markdown strong {
+  color: var(--color-paper);
+  font-weight: var(--font-weight-w590);
+}
+
+.chat-markdown code {
+  font-size: 0.9em;
+  background: var(--color-obsidian);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.chat-markdown a {
+  color: var(--color-signal-teal);
+  text-decoration: underline;
+}
+
+/* Mensaje enviado que todavía no confirmó el servidor. */
+.chat-bubble-pending {
+  opacity: 0.6;
+}
+
+.chat-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 14px 16px;
+}
+
+.chat-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-fog);
+  animation: chat-typing-bounce 1.2s infinite ease-in-out;
+}
+
+.chat-typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing-dot:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes chat-typing-bounce {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-typing-dot {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 .chat-bubble.assistant {

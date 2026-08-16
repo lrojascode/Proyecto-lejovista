@@ -145,3 +145,108 @@ describe('Campaign chat page', () => {
     expect(screen.getByRole('link', { name: /Ir a Configuración/i })).toHaveAttribute('href', '/settings')
   })
 })
+
+describe('Campaign chat — sesión por cuenta y chat nuevo', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    Storage.prototype.getItem = jest.fn(() => null)
+    Storage.prototype.setItem = jest.fn()
+    Storage.prototype.removeItem = jest.fn()
+  })
+
+  it('descarta la sesión guardada si es de otra cuenta', async () => {
+    // El bug: la sesión tiene su ad_account_id congelado, así que reusar la de
+    // otra cuenta hacía que las preguntas se respondieran con datos ajenos.
+    Storage.prototype.getItem = jest.fn(() => 'session-de-otra-cuenta')
+    ;(api.getCampaignChatSession as jest.Mock).mockResolvedValueOnce(
+      baseSession({ id: 'session-de-otra-cuenta', ad_account_id: 'acc-VIEJA' })
+    )
+    ;(api.startCampaignChat as jest.Mock).mockResolvedValueOnce(baseSession())
+
+    render(<CampaignChatPage />)
+
+    await waitFor(() => expect(api.startCampaignChat).toHaveBeenCalledWith('acc-1'))
+  })
+
+  it('reusa la sesión guardada cuando sí es de la cuenta activa', async () => {
+    Storage.prototype.getItem = jest.fn(() => 'session-1')
+    ;(api.getCampaignChatSession as jest.Mock).mockResolvedValueOnce(baseSession())
+
+    render(<CampaignChatPage />)
+
+    await waitFor(() => expect(screen.getByText(/¿Qué querés promocionar\?/i)).toBeInTheDocument())
+    expect(api.startCampaignChat).not.toHaveBeenCalled()
+  })
+
+  it('"Nuevo chat" descarta lo guardado y abre una sesión limpia', async () => {
+    ;(api.startCampaignChat as jest.Mock)
+      .mockResolvedValueOnce(baseSession())
+      .mockResolvedValueOnce(baseSession({ id: 'session-2' }))
+
+    render(<CampaignChatPage />)
+    await waitFor(() => screen.getByText(/¿Qué querés promocionar\?/i))
+
+    fireEvent.click(screen.getByRole('button', { name: /Nuevo chat/i }))
+
+    await waitFor(() => expect(api.startCampaignChat).toHaveBeenCalledTimes(2))
+    expect(Storage.prototype.removeItem).toHaveBeenCalled()
+  })
+})
+
+describe('Campaign chat — señales al enviar', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    Storage.prototype.getItem = jest.fn(() => null)
+    Storage.prototype.setItem = jest.fn()
+    Storage.prototype.removeItem = jest.fn()
+  })
+
+  it('muestra el mensaje y el "escribiendo" ANTES de que responda el servidor', async () => {
+    ;(api.startCampaignChat as jest.Mock).mockResolvedValueOnce(baseSession())
+    let resolver: (v: any) => void = () => {}
+    ;(api.sendCampaignChatMessage as jest.Mock).mockReturnValueOnce(
+      new Promise((resolve) => { resolver = resolve })
+    )
+
+    render(<CampaignChatPage />)
+    await waitFor(() => screen.getByText(/¿Qué querés promocionar\?/i))
+
+    fireEvent.change(screen.getByPlaceholderText(/Escribí tu mensaje/i), {
+      target: { value: 'quiero vender termas' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+
+    // El servidor todavía no respondió y el usuario ya ve su mensaje.
+    await waitFor(() => expect(screen.getByText('quiero vender termas')).toBeInTheDocument())
+    expect(screen.getByLabelText('Escribiendo')).toBeInTheDocument()
+
+    resolver(baseSession({ messages: [textMsg('¡Hola! ¿Qué querés promocionar?'), textMsg('Subí la foto')] }))
+    await waitFor(() => expect(screen.queryByLabelText('Escribiendo')).not.toBeInTheDocument())
+  })
+
+  it('devuelve el texto al compositor si el envío falla', async () => {
+    ;(api.startCampaignChat as jest.Mock).mockResolvedValueOnce(baseSession())
+    ;(api.sendCampaignChatMessage as jest.Mock).mockRejectedValueOnce(new Error('Se cayó la red'))
+
+    render(<CampaignChatPage />)
+    await waitFor(() => screen.getByText(/¿Qué querés promocionar\?/i))
+
+    const input = screen.getByPlaceholderText(/Escribí tu mensaje/i)
+    fireEvent.change(input, { target: { value: 'texto que costó escribir' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+
+    await waitFor(() => expect(screen.getByText(/Se cayó la red/i)).toBeInTheDocument())
+    expect(input).toHaveValue('texto que costó escribir')
+  })
+
+  it('el texto del asistente pasa por el renderer de markdown y el del usuario no', async () => {
+    ;(api.startCampaignChat as jest.Mock).mockResolvedValueOnce(
+      baseSession({ messages: [textMsg('La mejor es **ALT_MSJ_LEADS**'), textMsg('hola', 'user')] })
+    )
+    render(<CampaignChatPage />)
+
+    await waitFor(() => screen.getByText(/ALT_MSJ_LEADS/))
+    // Una sola burbuja renderiza markdown: la del asistente.
+    expect(screen.getAllByTestId('markdown')).toHaveLength(1)
+  })
+})
