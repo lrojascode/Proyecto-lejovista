@@ -51,6 +51,33 @@ Si algo no cuadra, se descarta la reescritura **entera** y se usa el texto canó
 
 **Alcance y costo.** Como mucho **un** mensaje reescrito por turno, tope `MAX_REPHRASED_TURNS=30` contra `turn_count` — deliberadamente **no** contra `llm_calls`, porque ese presupuesto es para *entender* al usuario (funcional) y esto es cosmético: quedarse sin comprensión a mitad de la conversación por haber gastado el cupo en redacción sería el peor intercambio posible. No se reescriben: el saludo, `BUILDING_TEXT` (relleno justo antes del paso más lento), las tarjetas estructuradas, ni los textos de error/tope/guarda, donde la precisión importa más que el tono. Sin API key o con `MOCK_SERVICES` no hay reescritura y el chat responde con los textos fijos — es lo que corre en CI.
 
+> Esta rigidez es para el **flujo de creación**, donde cada palabra empuja a una acción irreversible. Para las preguntas sobre el pasado el LLM tiene mucho más margen — ver §3c.
+
+## 3c. Análisis del historial: el LLM redacta (CH-8)
+
+En las preguntas sobre lo que ya pasó, el modelo **compone** en vez de maquillar: `answer_question` devuelve `(texto_plantilla, facts)` y `_analyze()` le pasa las cifras en crudo a `compose_chat_answer`. Puede elegir qué destacar, comparar campañas y explicar qué significa un número — que es lo que hace que se lea como un analista y no como un formulario.
+
+**Lo que lo hace seguro no es el prompt sino `rephrase.numbers_are_grounded`:**
+
+```python
+numeric_tokens(respuesta) <= numeric_tokens(facts)
+```
+
+**Subconjunto, no igualdad.** Ahí está exactamente la libertad: el modelo omite lo que no viene al caso y ordena el resto a su gusto. Lo que no puede es escribir un número que no esté en los datos — y eso **incluye los que calcule él**. Si le damos gasto y conversaciones y escribe el costo por conversación, esa división es una cifra nueva y tumba la respuesta entera, aunque el resultado sea correcto: no salió de una query. Puede decir "casi el doble" con palabras; no puede decir "2.7".
+
+Cuando algo falla —sin API key, `MOCK_SERVICES`, error HTTP, o la guarda rechaza— se muestra la plantilla del código, que siempre es una respuesta válida por sí sola.
+
+### Ventana de análisis (`period.py`)
+
+Antes toda respuesta hablaba de 7 días fijos. Ahora `parse_period` traduce lo que escribió la persona: "hoy", "esta semana", "el mes pasado", "los últimos 45 días", "desde que empecé".
+
+- **El número sale del texto del usuario** (un dígito literal) o de un catálogo cerrado de frases. El LLM solo puede elegir una **etiqueta** de `PERIOD_ENUM` (`7d`/`30d`/`90d`/`180d`/`all`), nunca proponer un entero — misma disciplina que `strip_numeric_slots_without_digit_evidence`. Si el texto trae un dígito, ese gana sobre la etiqueta del modelo.
+- **Techo:** `SNAPSHOT_RETENTION_DAYS` (180). Más atrás los snapshots están en las tablas de archivo, que ni `ReportBuilder` ni `kpi_period` consultan.
+- **Piso honesto:** `kpi_period.days_of_history` recorta la ventana a lo que hay sincronizado. Pedir 90 días con 10 de datos responde sobre 10 **y lo dice** (`"los últimos 10 días (es todo lo que tengo sincronizado)"`), en vez de dar por ceros 80 días que nunca se midieron.
+- Sin período mencionado se usan 7 días, que es lo que muestra el dashboard.
+
+`report_cache.get_report` ya cachea por `(cuenta, ventana)`, así que varias ventanas conviven sin invalidarse entre sí. Ojo: una primera consulta de 180 días recorre ~25× más snapshots que una de 7.
+
 ## 3b. Preguntas sobre la marca (CH-6, `questions.py`)
 
 El chat también responde preguntas sobre los datos reales de la cuenta, en cualquier momento de la conversación y sin perder el lugar: el estado y los slots no se tocan, y después de responder se vuelve a plantear lo que estaba pendiente.

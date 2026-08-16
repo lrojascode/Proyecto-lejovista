@@ -121,6 +121,16 @@ Tres modos de despliegue soportados:
 - Distinción explícita entre **estado real de Meta** (`metaStatusBadge`: Activa/Pausada/Archivada/Eliminada) y **evaluación de rendimiento** de la IA (GANADORA/CARA/…), que antes se confundían en la columna "Estado".
 - **`components/StatusBadge.tsx`** (UX-1, resuelto): componente único sobre `metaStatusBadge`/`badgeIcon`, usado tanto en `campaigns/page.tsx` como en `(dashboard)/page.tsx` — antes el dashboard pintaba el `status` crudo en inglés con una regla de color distinta (`ACTIVE`→verde, resto→ámbar) a la de la lista de campañas.
 
+### 8b. Chat de campañas (`components/campaign-chat/`)
+
+`ChatBubble` · `MessageList` · `Composer` · `TypingIndicator` · `ReviewCard` · `RiskCard` · `ProgressCard` · `ResultCard` · `ErrorCard`. Bloque `.chat-*` en `globals.css`, sobre los tokens y clases que ya existen (`.glass-card`, `.btn-*`, `.badge*`) — sin librería de UI, como el resto del repo. Detalles que no son obvios:
+
+- **El texto del compositor vive en la página, no en `Composer`.** Si el envío falla hay que devolvérselo al usuario, y la página es la única que sabe si salió bien. Con el estado adentro del componente, un error de red te borraba lo que habías escrito.
+- **Burbuja optimista + `TypingIndicator`.** El servidor devuelve la transcripción **entera** en cada turno, así que sin esto el mensaje propio aparecía recién con la respuesta y el intervalo quedaba en blanco. La burbuja pendiente va atenuada (`.chat-bubble-pending`) hasta que confirma.
+- **La sesión se guarda en `sessionStorage` con clave por cuenta** (`campaign_chat_session:<adAccountId>`) y además se compara `ad_account_id` contra la respuesta del servidor. La sesión tiene la cuenta congelada: reusar la de otra cuenta hacía que las preguntas se respondieran con datos ajenos, en silencio.
+- **Markdown solo en los mensajes del asistente** (`react-markdown` + `remark-gfm`, ya usados en `/reporte`). El texto del usuario se muestra tal cual. En Jest esas librerías están **mockeadas** (`__mocks__/react-markdown.tsx`): son ESM puro y `next/jest` solo permite *agregar* a `transformIgnorePatterns`, nunca quitar el `/node_modules/` que antepone — la alternativa era meter ~25 paquetes en `transpilePackages` y afectar el build de producción.
+- **`.chat-transcript-inner { margin-top: auto }`** ancla la conversación al fondo: una charla corta empieza abajo como cualquier chat, en vez de quedar pegada arriba con un vacío enorme.
+
 ## 9. Tipos compartidos (`lib/types.ts`) — generados desde OpenAPI (M-4)
 
 (M-4, resuelto) Ya no es un espejo manual. `frontend/lib/generated-api-types.ts` se genera con `npm run generate-types` (usa `openapi-typescript` contra `GET /openapi.json` del backend corriendo — configurable con `BACKEND_URL`) y contiene el schema completo, tal como lo declara el backend. `frontend/lib/types.ts` es una capa fina de **alias** sobre ese archivo (`export type CampaignSnapshot = components["schemas"]["CampaignSnapshotResponse"]`, etc.) — mantiene los nombres cortos que ya usan `lib/api.ts` y las páginas, sin que el resto del código tenga que cambiar.
