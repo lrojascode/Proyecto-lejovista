@@ -141,6 +141,22 @@ Montado en `main.py` **antes** que el router de `/campaigns` (prefijo `/campaign
 - **Polling + WS**: mismo patrón que `campaigns/new/page.tsx` — `POST /advance` cada 2.5s (tope 120 intentos ≈ 5 min), cortocircuitado por el evento WS `campaign_creation` con `job_id === draft_id`.
 - **`RISK_STYLES`** se extrajo de `campaigns/new/page.tsx` a `lib/badge.ts` para que el formulario y el chat pinten el mismo color por nivel de riesgo sin mantener dos copias.
 
-## 9. Verificado manualmente (2026-08-13)
+## 9. Remediación Post-Auditoría (2026-08)
+
+Tras la auditoría exhaustiva del sistema conversacional y de sincronización, se incorporaron las siguientes garantías y mejoras:
+
+1. **Aislamiento y Allowlist de Writeback (H1)**: Protección en `lejovista.compose.yml`, `config.py` y `main.py` impidiendo que `ENABLE_META_WRITEBACK=True` opere de forma irrestricta contra cuentas reales de clientes sin un allowlist explícito (`WRITEBACK_ACCOUNT_ALLOWLIST`), alertando con `CRITICAL` en el log de inicio.
+2. **Grounding Jerárquico de Porcentajes y Números Negativos (H5)**: `GroundingSet._classify_path_unit` inspecciona la ruta de ancestros (`deltas_pct`, `_pct`, `variacion`) priorizando `PERCENT` sobre `MONEY`, y `GroundingSet.add` admite valores absolutos de deltas negativos para validar expresiones de caída ("bajó 5.3%").
+3. **Invariante Facts-Grounding y Límite Predictivo (H7)**: Ensamblado atómico ordenado por `BLOCK_PRIORITY` (`_safe_add_block`) garantizando que los datos pasados al LLM y los registrados en `GroundingSet` provienen de la misma estructura pre-computada sin truncamientos silenciosos.
+4. **Conexión Unificada de Facts (H2)**: Integración directa de `facts.py:resolve_facts` en el motor conversacional (`engine._answer_and_resume`), centralizando la aritmética determinista y sincronizando explicaciones estáticas.
+5. **Desacople de Métricas y Bloque Reach (H4)**: Creación del bloque `reach` (alcance, impresiones, frecuencia, CPM), desacople del `spend_cap` de la consulta general de `SPEND` (solo se incluye en `SPEND_CAP` o presupuestos), y desambiguación de regex para preguntas de alcance ("a cuánta gente le llegué").
+6. **Planificador Analítico Abierto (H3)**: Conexión de `OpenRouterClient.plan_chat_request` (`ChatPlan`) en `_try_llm_plan` para consultas multi-bloque o compuestas sin depender de un catálogo cerrado, preservando AI-1 (cero cifras del modelo).
+7. **Presupuestos de LLM Diferenciados por Modo (H6)**:
+   - `MAX_UNDERSTANDING_CALLS`: `BUILD = 12`, `ASK = 40`.
+   - `MAX_ANALYSIS_TURNS`: `BUILD = 30`, `ASK = 60`.
+   - Persistencia de historial acotada a `MAX_MESSAGES_PERSISTED = 200` para proteger rendimiento de PostgreSQL.
+8. **Respaldo de Sincronización en Frontend (H8)**: Polling de respaldo cada 2.5s vía `api.getSyncStatus()` en el dashboard si el WebSocket se desconecta o no emite, con timeout de seguridad a los 3 minutos.
+
+## 10. Verificado manualmente (2026-08-13)
 
 Flujo completo contra el stack local de Docker Compose con `MOCK_SERVICES=true`: sesión → objetivo en texto libre ("quiero vender más cables eléctricos para constructoras en Lima", producto normalizado a "Cables Electricos Constructoras Lima") → foto subida → tarjeta de revisión con evidencia real del histórico sincronizado (mock) → Aceptar → tarjeta de riesgo BAJO con preflight → Aceptar → Saga dispatchada → `CampaignDraft` creado y polling/advance funcionando en vivo. Ver capturas en la sesión de trabajo.
