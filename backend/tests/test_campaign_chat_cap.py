@@ -45,7 +45,7 @@ async def test_session_creation_warns_early_when_cap_already_reached(
     headers, org_id, ad_account_id = await _signup_with_ad_account_and_page(
         async_client, db_session, "chat-cap-early"
     )
-    await _seed_recent_drafts(db_session, org_id, MAX_CAMPAIGNS_PER_SESSION)
+    await _seed_recent_drafts(db_session, org_id, 15)
 
     res = await async_client.post(
         "/api/v1/campaigns/chat/sessions", json={"ad_account_id": ad_account_id}, headers=headers,
@@ -63,7 +63,7 @@ async def test_confirm_blocks_with_readable_error_when_cap_reached_mid_conversat
     )
     # El tope se alcanza DESPUÉS de haber empezado la conversación (otra
     # sesión/el formulario crearon campañas mientras tanto).
-    await _seed_recent_drafts(db_session, org_id, MAX_CAMPAIGNS_PER_SESSION)
+    await _seed_recent_drafts(db_session, org_id, 15)
 
     accept_review = await async_client.post(
         f"/api/v1/campaigns/chat/sessions/{session_id}/decision",
@@ -84,6 +84,37 @@ async def test_confirm_blocks_with_readable_error_when_cap_reached_mid_conversat
     assert error_msg["code"] == "CAP_REACHED"
     # La sesión sigue abierta: el usuario puede reintentar más tarde.
     assert session["status"] == "OPEN"
+
+
+@pytest.mark.asyncio
+async def test_cap_custom_tenant_override(
+    async_client: AsyncClient, db_session: AsyncSession, _writes_are_real
+):
+    """Verifica que un override de organización (max_campaigns_per_window=3)
+    modifique el límite de esa organización sin afectar a las demás."""
+    from app.models.organization import Organization
+
+    headers, org_id, ad_account_id = await _signup_with_ad_account_and_page(
+        async_client, db_session, "chat-cap-custom"
+    )
+    org = await db_session.get(Organization, org_id)
+    org.campaign_rules_overrides = {"max_campaigns_per_window": 3}
+    await db_session.commit()
+
+    # Con 2 drafts -> permitido abrir sesión
+    await _seed_recent_drafts(db_session, org_id, 2)
+    res_ok = await async_client.post(
+        "/api/v1/campaigns/chat/sessions", json={"ad_account_id": ad_account_id}, headers=headers,
+    )
+    assert res_ok.status_code == 201
+
+    # Con 3 drafts -> bloqueado por alcanzar el tope de 3
+    await _seed_recent_drafts(db_session, org_id, 1)
+    res_block = await async_client.post(
+        "/api/v1/campaigns/chat/sessions", json={"ad_account_id": ad_account_id}, headers=headers,
+    )
+    assert res_block.status_code == 400
+    assert "3 campañas" in res_block.json()["detail"]
 
 
 # --- Las campañas simuladas no cuentan contra el tope (14-ago-2026).

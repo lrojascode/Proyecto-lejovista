@@ -94,9 +94,13 @@ async def create_session(
         raise ChatGuardError("AdAccount no encontrada para esta organización.")
 
     if await cap_reached(db, current_user.organization_id, ad_account):
+        org = await db.get(Organization, current_user.organization_id)
+        rules = get_campaign_rules_for_org(org)
+        limit = rules.get("max_campaigns_per_window", 15)
+        window_hours = rules.get("campaign_window_hours", 24)
         raise ChatGuardError(
-            f"Ya llegaste al máximo de {MAX_CAMPAIGNS_PER_SESSION} campañas nuevas en las últimas "
-            f"{CAMPAIGN_SESSION_WINDOW_HOURS}h (protección para que Meta no bloquee tu cuenta por "
+            f"Ya llegaste al máximo de {limit} campañas nuevas en las últimas "
+            f"{window_hours}h (protección para que Meta no bloquee tu cuenta por "
             "crear demasiadas seguidas). Probá de nuevo más tarde."
         )
 
@@ -444,17 +448,21 @@ async def _handle_accept_risk(
 
     ad_account = await db.get(AdAccount, session.ad_account_id)
     if await cap_reached(db, current_user.organization_id, ad_account):
+        org = await db.get(Organization, current_user.organization_id)
+        rules = get_campaign_rules_for_org(org)
+        limit = rules.get("max_campaigns_per_window", 15)
+        window_hours = rules.get("campaign_window_hours", 24)
         messages.append(cards.build_error_message(
-            "CAP_REACHED", cards.CAP_REACHED_TEXT, retry_after_hours=CAMPAIGN_SESSION_WINDOW_HOURS,
+            "CAP_REACHED", cards.cap_reached_text(limit, window_hours), retry_after_hours=window_hours,
         ))
         return
 
     request = _build_create_request(session)
     try:
         result = await start_campaign_creation(db, current_user, ad_account, request)
-    except CampaignCapReachedError:
+    except CampaignCapReachedError as e:
         messages.append(cards.build_error_message(
-            "CAP_REACHED", cards.CAP_REACHED_TEXT, retry_after_hours=CAMPAIGN_SESSION_WINDOW_HOURS,
+            "CAP_REACHED", cards.cap_reached_text(e.limit, e.window_hours), retry_after_hours=e.window_hours,
         ))
         return
     except HTTPException as e:

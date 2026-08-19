@@ -18,7 +18,9 @@ TENANT_CAMPAIGN_RULES: Dict[str, Any] = {
     "objective": "OUTCOME_LEADS",
     "optimization_goal": "CONVERSATIONS",
     "destination_type": "WHATSAPP",
-    "bid_strategy": "LOWEST_COST_WITHOUT_CAP"
+    "bid_strategy": "LOWEST_COST_WITHOUT_CAP",
+    "max_campaigns_per_window": 15,
+    "campaign_window_hours": 24,
 }
 
 

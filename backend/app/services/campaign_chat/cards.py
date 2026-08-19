@@ -28,10 +28,13 @@ CREATING_TEXT = (
     "¡Vamos! Esto tarda unos 3 minutos porque cada paso espera un poco para no generar "
     "alertas en tu cuenta de Meta. Podés cerrar esta ventana, la campaña te va a estar esperando."
 )
-CAP_REACHED_TEXT = (
-    "Ya llegaste al máximo de campañas nuevas permitidas en las últimas 24 horas "
-    "(protección para que Meta no bloquee tu cuenta por crear demasiadas seguidas)."
-)
+def cap_reached_text(limit: int = 15, window_hours: int = 24) -> str:
+    return (
+        f"Ya llegaste al máximo de {limit} campañas nuevas permitidas en las últimas {window_hours} horas "
+        "(protección para que Meta no bloquee tu cuenta por crear demasiadas seguidas)."
+    )
+
+CAP_REACHED_TEXT = cap_reached_text(15, 24)
 PREFLIGHT_FAILED_TEXT = "Meta encontró un problema al validar estos datos antes de crear la campaña:"
 SAGA_FAILED_TEXT = "Algo falló al crear la campaña en Meta:"
 GUARD_NO_PAGE_TEXT = (

@@ -23,14 +23,17 @@ from app.workers.creation_tasks import (
     task_upload_image,
 )
 
+from app.models.organization import Organization
+from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
+
 logger = logging.getLogger(__name__)
 
 # Anti-bloqueo (playbook §2): tope de campañas nuevas por ventana de tiempo,
-# scopeado por organización (no hay un concepto explícito de "sesión"). Vive
-# acá (no en el router) porque tanto `POST /campaigns/` como el chat de
-# creación necesitan la misma cifra para el mismo chequeo.
-MAX_CAMPAIGNS_PER_SESSION = 5
-CAMPAIGN_SESSION_WINDOW_HOURS = 24
+# configurable por organización vía overrides de reglas (default: 15 / 24h).
+DEFAULT_MAX_CAMPAIGNS_PER_WINDOW = 15
+DEFAULT_CAMPAIGN_WINDOW_HOURS = 24
+MAX_CAMPAIGNS_PER_SESSION = DEFAULT_MAX_CAMPAIGNS_PER_WINDOW
+CAMPAIGN_SESSION_WINDOW_HOURS = DEFAULT_CAMPAIGN_WINDOW_HOURS
 
 
 class CampaignCapReachedError(Exception):
@@ -70,7 +73,7 @@ def _draft_reached_meta(draft: CampaignDraft) -> bool:
     return not campaign_id.startswith(MOCK_ID_PREFIX)
 
 
-async def count_recent_drafts(db: AsyncSession, organization_id: str) -> int:
+async def count_recent_drafts(db: AsyncSession, organization_id: str, window_hours: int = 24) -> int:
     """Cuántas campañas que REALMENTE llegaron a Meta se crearon en la ventana
     anti-bloqueo vigente.
 
@@ -85,7 +88,7 @@ async def count_recent_drafts(db: AsyncSession, organization_id: str) -> int:
     entrar a una clave anidada difiere entre Postgres y el SQLite de los tests;
     la ventana es de 24h por organización, así que son unas pocas filas.
     """
-    window_start = datetime.datetime.utcnow() - datetime.timedelta(hours=CAMPAIGN_SESSION_WINDOW_HOURS)
+    window_start = datetime.datetime.utcnow() - datetime.timedelta(hours=window_hours)
     q = select(CampaignDraft).where(
         CampaignDraft.organization_id == organization_id,
         CampaignDraft.created_at >= window_start,
@@ -107,7 +110,11 @@ async def cap_reached(db: AsyncSession, organization_id: str, ad_account: AdAcco
     """
     if settings.simulate_meta_writes_for(ad_account.id, ad_account.external_account_id):
         return False
-    return await count_recent_drafts(db, organization_id) >= MAX_CAMPAIGNS_PER_SESSION
+    org = await db.get(Organization, organization_id)
+    rules = get_campaign_rules_for_org(org)
+    max_limit = rules.get("max_campaigns_per_window", DEFAULT_MAX_CAMPAIGNS_PER_WINDOW)
+    window_hours = rules.get("campaign_window_hours", DEFAULT_CAMPAIGN_WINDOW_HOURS)
+    return await count_recent_drafts(db, organization_id, window_hours=window_hours) >= max_limit
 
 
 async def start_campaign_creation(
@@ -127,7 +134,11 @@ async def start_campaign_creation(
     tenant_id = current_user.organization_id
 
     if await cap_reached(db, tenant_id, ad_account):
-        raise CampaignCapReachedError(MAX_CAMPAIGNS_PER_SESSION, CAMPAIGN_SESSION_WINDOW_HOURS)
+        org = await db.get(Organization, tenant_id)
+        rules = get_campaign_rules_for_org(org)
+        max_limit = rules.get("max_campaigns_per_window", DEFAULT_MAX_CAMPAIGNS_PER_WINDOW)
+        window_hours = rules.get("campaign_window_hours", DEFAULT_CAMPAIGN_WINDOW_HOURS)
+        raise CampaignCapReachedError(max_limit, window_hours)
 
     # Se normaliza ANTES de validar: la regex de `product_name` no admite
     # tildes ni ñ, y hacer que un peruano escriba "diseno" en un campo que dice
