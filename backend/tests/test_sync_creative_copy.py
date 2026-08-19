@@ -59,7 +59,9 @@ class _CreativeCopyFakeLimiter:
 async def test_sync_real_ads_captures_creative_copy(db_session: AsyncSession):
     org, acc = await _make_org_and_account(db_session)
 
-    await MetaAdsSyncService(db_session)._sync_real_ads(acc, "valid-token", _CreativeCopyFakeLimiter(), "last_30d")
+    await MetaAdsSyncService(db_session)._sync_real_ads(
+        acc, "valid-token", _CreativeCopyFakeLimiter(), {"date_preset": "last_30d"}
+    )
     await db_session.flush()
 
     snap = (await db_session.execute(

@@ -6,8 +6,10 @@ from app.models.ad_account import AdAccount
 from app.models.ai_action import AIAction
 from app.workers.tasks import (
     schedule_all_syncs,
+    schedule_pending_history_backfills,
     schedule_all_analyses,
     sync_ad_account,
+    backfill_ad_account_history,
     run_ai_analysis,
     execute_action_task,
     archive_old_snapshots_task,
@@ -136,6 +138,64 @@ async def test_sync_ad_account_task(setup_worker_data, mocker):
     mock_run_sync.assert_called_once()
     mock_debounced.assert_called_once_with(org_id)
 
+
+@pytest.mark.asyncio
+async def test_full_sync_schedules_separate_history_backfill(setup_worker_data, mocker):
+    org_id, acc_id, _ = setup_worker_data
+    mocker.patch(
+        "app.services.meta_ads.sync.MetaAdsSyncService.run_sync",
+        autospec=True,
+        return_value=type(
+            "MockJob", (),
+            {"id": "job-full", "status": "COMPLETED", "records_synced": 5},
+        )(),
+    )
+    mocker.patch("app.workers.tasks._schedule_org_analysis_debounced")
+    mock_backfill = mocker.patch(
+        "app.workers.tasks.backfill_ad_account_history.apply_async"
+    )
+
+    run_in_thread(sync_ad_account, acc_id, "FULL")
+
+    mock_backfill.assert_called_once_with(
+        args=(org_id, acc_id), countdown=60
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_task_is_scoped_and_uses_backfill_sync_type(setup_worker_data, mocker):
+    org_id, acc_id, _ = setup_worker_data
+    mock_run_sync = mocker.patch(
+        "app.services.meta_ads.sync.MetaAdsSyncService.run_sync",
+        autospec=True,
+        return_value=type(
+            "MockJob", (),
+            {"id": "job-backfill", "status": "COMPLETED", "records_synced": 450},
+        )(),
+    )
+    mocker.patch("app.workers.tasks._schedule_org_analysis_debounced")
+
+    result = run_in_thread(backfill_ad_account_history, org_id, acc_id)
+
+    assert result == "COMPLETED"
+    assert mock_run_sync.call_args.args[2] == "BACKFILL"
+
+
+@pytest.mark.asyncio
+async def test_schedule_pending_backfills_can_target_one_account(setup_worker_data, mocker):
+    org_id, acc_id, _ = setup_worker_data
+    mock_apply = mocker.patch(
+        "app.workers.tasks.backfill_ad_account_history.apply_async"
+    )
+
+    count = run_in_thread(schedule_pending_history_backfills, org_id, acc_id)
+
+    assert count == 1
+    mock_apply.assert_called_once()
+    _, kwargs = mock_apply.call_args
+    assert kwargs["args"] == (org_id, acc_id)
+    assert 0 <= kwargs["countdown"] <= 1800
+
 @pytest.mark.asyncio
 async def test_run_ai_analysis_task(setup_worker_data, mocker):
     org_id, acc_id, action_id = setup_worker_data
@@ -183,6 +243,8 @@ def test_celery_task_routes_assign_dedicated_queues():
     from app.workers.celery_app import celery_app
     routes = celery_app.conf.task_routes
     assert routes["app.workers.tasks.sync_ad_account"]["queue"] == "sync"
+    assert routes["app.workers.tasks.backfill_ad_account_history"]["queue"] == "sync"
+    assert routes["app.workers.tasks.schedule_pending_history_backfills"]["queue"] == "sync"
     assert routes["app.workers.tasks.schedule_all_syncs"]["queue"] == "sync"
     assert routes["app.workers.tasks.run_ai_analysis"]["queue"] == "ai"
     assert routes["app.workers.tasks.execute_action_task"]["queue"] == "ai"

@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import json
 import random
 import logging
 from collections import defaultdict
@@ -20,6 +21,8 @@ from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
 
 logger = logging.getLogger("lejovista.sync")
+
+SYNC_TYPE_BACKFILL = "BACKFILL"
 
 class MetaAdsSyncService:
     def __init__(self, db: AsyncSession):
@@ -99,7 +102,11 @@ class MetaAdsSyncService:
 
     async def _sync_mock_data(self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter) -> int:
         """
-        Genera datos mockeados realistas para 3 campañas de ejemplo con 30 días de historia.
+        Genera datos mockeados realistas para 3 campañas de ejemplo.
+
+        FULL conserva la ventana corta de 30 días e INCREMENTAL solo refresca
+        ayer/hoy. BACKFILL llena la ventana de retención completa para que el
+        stack local ejercite exactamente el flujo histórico de producción.
         Esto permite poblar la base de datos local para pruebas de análisis y optimización.
         """
         # Simulamos llamadas API ficticias en el rate limiter para registrar auditoría local
@@ -112,7 +119,7 @@ class MetaAdsSyncService:
         ad_account.status = "ACTIVE"
         self.db.add(ad_account)
         
-        # 15 queries en full, 4 en incremental
+        # 15 queries en full, 4 en incremental/backfill mock.
         num_queries = 15 if sync_type == "FULL" else 4
         for i in range(2, num_queries + 1):
             await limiter.call_api(f"act_{ad_account.external_account_id}/insights", {"query_num": i})
@@ -156,8 +163,12 @@ class MetaAdsSyncService:
         ]
 
         # Determinar el rango de días a sincronizar
-        # En FULL creamos 30 días. En INCREMENTAL sólo ayer y hoy.
-        days_to_sync = 30 if sync_type == "FULL" else 2
+        # En FULL creamos 30 días. En INCREMENTAL sólo ayer y hoy. El
+        # BACKFILL llega hasta el mismo techo que aplica snapshot_archiver.
+        if sync_type == SYNC_TYPE_BACKFILL:
+            days_to_sync = settings.SNAPSHOT_RETENTION_DAYS
+        else:
+            days_to_sync = 30 if sync_type == "FULL" else 2
         today = datetime.date.today()
         
         records_created = 0
@@ -216,8 +227,12 @@ class MetaAdsSyncService:
                 cpl = spend / conversions if conversions > 0 else spend
                 ctr = (clicks / impressions) * 100.0 if impressions > 0 else 0.0
 
-                # Crear breakdowns ficticios
-                if c.get("reels_better"):
+                # Los breakdowns históricos multiplicarían por cinco el costo
+                # real y no los consumen ni Capa 2 ni el chat. El mock refleja
+                # esa decisión: en BACKFILL solo llena campaña/adset/anuncio.
+                if sync_type == SYNC_TYPE_BACKFILL:
+                    placements = {}
+                elif c.get("reels_better"):
                     placements = {
                         "facebook_reels": {"spend": spend * 0.6, "conversions": int(conversions * 0.8), "cpl": (spend * 0.6) / max(1, int(conversions * 0.8))},
                         "instagram_feed": {"spend": spend * 0.2, "conversions": int(conversions * 0.1), "cpl": (spend * 0.2) / max(1, int(conversions * 0.1))},
@@ -232,7 +247,7 @@ class MetaAdsSyncService:
                         "facebook_reels": {"spend": spend * 0.2, "conversions": int(conversions * 0.3), "cpl": (spend * 0.2) / max(1, int(conversions * 0.3))}
                     }
 
-                demographics = {
+                demographics = {} if sync_type == SYNC_TYPE_BACKFILL else {
                     "25-34": {"spend": spend * 0.4, "conversions": int(conversions * 0.5)},
                     "35-44": {"spend": spend * 0.3, "conversions": int(conversions * 0.3)},
                     "45-54": {"spend": spend * 0.2, "conversions": int(conversions * 0.15)},
@@ -240,7 +255,7 @@ class MetaAdsSyncService:
                 }
 
                 # P-2: breakdowns de género, dispositivo y geografía.
-                extra = {
+                extra = {} if sync_type == SYNC_TYPE_BACKFILL else {
                     "gender": {
                         "male": {"spend": spend * 0.55, "conversions": int(conversions * 0.55)},
                         "female": {"spend": spend * 0.45, "conversions": int(conversions * 0.45)},
@@ -316,9 +331,11 @@ class MetaAdsSyncService:
                         creative_cta_type=c.get("creative_cta_type"),
                     ))
 
-        # --- Inventario de creativos y audiencias (una vez por cuenta) ---
-        await self._ensure_mock_inventory(ad_account)
-        await self._sync_mock_spend_history(ad_account)
+        # El BACKFILL es deliberadamente una tarea de historia diaria, no otro
+        # FULL: no repite inventario, páginas ni el histórico mensual de gasto.
+        if sync_type != SYNC_TYPE_BACKFILL:
+            await self._ensure_mock_inventory(ad_account)
+            await self._sync_mock_spend_history(ad_account)
 
         await self.db.flush()
         return records_created
@@ -429,7 +446,7 @@ class MetaAdsSyncService:
         # 1. Campañas + insights de campaña (P-1): dos lecturas independientes —
         # los insights no necesitan `campaigns_map` para pedirse, solo para
         # combinarse después — se piden en paralelo en vez de una tras otra.
-        date_preset = "last_30d" if sync_type == "FULL" else "yesterday"
+        insights_period = self._insights_period_params(sync_type)
 
         campaigns_res, campaigns_insights = await asyncio.gather(
             limiter.call_api_paginated(
@@ -444,13 +461,13 @@ class MetaAdsSyncService:
                 f"{ad_account.external_account_id}/insights",
                 {
                     "level": "campaign",
-                    "date_preset": date_preset,
                     "fields": "campaign_id,campaign_name,spend,impressions,reach,clicks,actions,frequency",
                     "time_increment": 1,  # datos diarios
                     # Sin `limit`, Meta devuelve su página default de 25 filas: con
                     # ~30 días × ~10 campañas eso truncaba a los 25 días más viejos.
                     # Subimos el tamaño de página y además paginamos (call_api_paginated).
                     "limit": 500,
+                    **insights_period,
                 },
                 access_token=token
             ),
@@ -520,11 +537,12 @@ class MetaAdsSyncService:
 
         # 3. Adsets, anuncios e inventario (P-2.2)
         adset_budget_by_campaign = await self._sync_real_adsets(
-            ad_account, token, limiter, date_preset
+            ad_account, token, limiter, insights_period
         )
-        await self._sync_real_ads(ad_account, token, limiter, date_preset)
-        await self._sync_real_inventory(ad_account, token, limiter)
-        await self._sync_real_pages(ad_account, token, limiter)
+        await self._sync_real_ads(ad_account, token, limiter, insights_period)
+        if sync_type != SYNC_TYPE_BACKFILL:
+            await self._sync_real_inventory(ad_account, token, limiter)
+            await self._sync_real_pages(ad_account, token, limiter)
 
         # Bug 5: en cuentas ABO el presupuesto vive a nivel adset, así que el
         # campaign-level daily_budget/lifetime_budget viene null/0. Cuando es 0,
@@ -538,14 +556,38 @@ class MetaAdsSyncService:
                     snap.budget = adset_sum
 
         # 4. Desgloses por placement/edad/género/dispositivo/geografía (P-2.7).
-        await self._sync_real_breakdowns(ad_account, token, limiter, date_preset)
+        # No se backfillean: cinco dimensiones × 180 días son el grueso del
+        # costo y no alimentan ni Capa 2 ni las preguntas históricas del chat.
+        if sync_type != SYNC_TYPE_BACKFILL:
+            await self._sync_real_breakdowns(ad_account, token, limiter, insights_period)
 
         # 5. Histórico de inversión mensual (backfill una vez, luego solo mes en curso).
-        await self._sync_spend_history(ad_account, token, limiter)
+        if sync_type != SYNC_TYPE_BACKFILL:
+            await self._sync_spend_history(ad_account, token, limiter)
 
         return records_synced
 
     # ------------------------------------------------------------------ helpers
+
+    @staticmethod
+    def _insights_period_params(sync_type: str) -> Dict[str, Any]:
+        """Parámetros de ventana para los insights diarios.
+
+        BACKFILL acota la consulta en Meta, no después de descargarla: pedir
+        ``maximum`` y tirar lo anterior a la retención gastaría llamadas y
+        memoria sin ningún beneficio. Meta espera ``time_range`` como JSON.
+        """
+        if sync_type != SYNC_TYPE_BACKFILL:
+            return {"date_preset": "last_30d" if sync_type == "FULL" else "yesterday"}
+
+        today = datetime.date.today()
+        oldest = today - datetime.timedelta(days=settings.SNAPSHOT_RETENTION_DAYS - 1)
+        return {
+            "time_range": json.dumps(
+                {"since": oldest.isoformat(), "until": today.isoformat()},
+                separators=(",", ":"),
+            )
+        }
 
     def _maybe_mark_expired(self, ad_account, res):
         """Si Meta responde OAuthException (code 190), marca la cuenta y su credencial
@@ -625,7 +667,7 @@ class MetaAdsSyncService:
     def _has_error(res) -> bool:
         return not isinstance(res, dict) or "error" in res or "ERROR" in res
 
-    async def _sync_real_adsets(self, ad_account, token, limiter, date_preset) -> Dict[str, float]:
+    async def _sync_real_adsets(self, ad_account, token, limiter, insights_period) -> Dict[str, float]:
         """Sincroniza adsets y devuelve, por campaña, la suma del daily_budget de
         sus adsets ACTIVOS (para el fallback de presupuesto de campaña, Bug 5)."""
         # Estructura (targeting + presupuesto + estado por adset)
@@ -645,9 +687,9 @@ class MetaAdsSyncService:
             ),
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
-                {"level": "adset", "date_preset": date_preset,
+                {"level": "adset",
                  "fields": "adset_id,adset_name,campaign_id,spend,impressions,reach,clicks,actions,frequency",
-                 "time_increment": 1, "limit": 500},
+                 "time_increment": 1, "limit": 500, **insights_period},
                 access_token=token,
             ),
         )
@@ -702,7 +744,7 @@ class MetaAdsSyncService:
 
         return dict(adset_budget_by_campaign)
 
-    async def _sync_real_ads(self, ad_account, token, limiter, date_preset):
+    async def _sync_real_ads(self, ad_account, token, limiter, insights_period):
         # Mapa ad_id -> {creative_id, title, body, cta_type}. El copy real
         # (title/body/call_to_action_type) del anuncio ganador nunca se
         # capturaba — solo la imagen (MetaCreative) — así que la IA no podía
@@ -717,9 +759,9 @@ class MetaAdsSyncService:
             ),
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
-                {"level": "ad", "date_preset": date_preset,
+                {"level": "ad",
                  "fields": "ad_id,ad_name,adset_id,campaign_id,spend,impressions,reach,clicks,actions",
-                 "time_increment": 1, "limit": 500},
+                 "time_increment": 1, "limit": 500, **insights_period},
                 access_token=token,
             ),
         )
@@ -1039,7 +1081,7 @@ class MetaAdsSyncService:
         ("region", "region", lambda r: r.get("region") or ""),
     ]
 
-    async def _sync_real_breakdowns(self, ad_account, token, limiter, date_preset):
+    async def _sync_real_breakdowns(self, ad_account, token, limiter, insights_period):
         """Trae los desgloses (placement, edad, género, dispositivo, geografía) desde
         Meta y los fusiona en los snapshots de campaña ya creados en este sync. Cada
         dimensión es un request independiente; si Meta rechaza uno (permiso o combinación
@@ -1055,8 +1097,9 @@ class MetaAdsSyncService:
         results = await asyncio.gather(*(
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
-                {"level": "campaign", "date_preset": date_preset, "time_increment": 1,
-                 "fields": "campaign_id,spend,actions", "breakdowns": bd_param, "limit": 500},
+                {"level": "campaign", "time_increment": 1,
+                 "fields": "campaign_id,spend,actions", "breakdowns": bd_param, "limit": 500,
+                 **insights_period},
                 access_token=token,
             )
             for bd_param, _bucket, _key_of in self._BREAKDOWN_SPECS

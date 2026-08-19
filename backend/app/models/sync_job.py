@@ -16,7 +16,7 @@ class SyncJob(Base):
     organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id", ondelete="CASCADE"))
     
     status: Mapped[str] = mapped_column(String, default="PENDING")  # PENDING, RUNNING, COMPLETED, FAILED
-    sync_type: Mapped[str] = mapped_column(String)  # FULL, INCREMENTAL, WEEKLY
+    sync_type: Mapped[str] = mapped_column(String)  # FULL, INCREMENTAL, BACKFILL, WEEKLY
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     error_message: Mapped[str] = mapped_column(String, nullable=True)

@@ -47,6 +47,7 @@ sequenceDiagram
         W->>M: breakdowns (placement/edad/género/device/región)
         W->>M: inventario (adimages, customaudiences, páginas+WhatsApp)
         W->>M: histórico mensual de gasto (backfill único)
+        W-->>W: tras FULL, encola BACKFILL diario separado (180 días)
         W->>DB: upsert idempotente de snapshots
     end
     W->>DB: SyncJob COMPLETED

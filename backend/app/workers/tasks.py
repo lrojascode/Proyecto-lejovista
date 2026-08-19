@@ -5,9 +5,10 @@ from celery.utils.log import get_task_logger
 from app.workers.celery_app import celery_app
 from app.database import async_session, engine
 from app.models.ad_account import AdAccount
+from app.models.sync_job import SyncJob
 from app.models.organization import Organization
 from app.models.ai_action import AIAction
-from app.services.meta_ads.sync import MetaAdsSyncService
+from app.services.meta_ads.sync import MetaAdsSyncService, SYNC_TYPE_BACKFILL
 from app.services.meta_ads.exceptions import TransientMetaError
 from app.services.ai.engine import AIEngine
 from app.services.ai.executor import AIExecutor
@@ -33,6 +34,11 @@ ANALYSIS_DEBOUNCE_TTL = 360         # el lock vive un poco más que el countdown
 # muchas campañas) pero acotado para que un worker muerto no deje la cuenta
 # bloqueada indefinidamente.
 SYNC_LOCK_TTL = 900  # 15 min
+
+# El FULL inicial termina antes de encolar el backfill, pero el lock se libera
+# en el finally exterior. Un countdown corto evita que ambos trabajos compitan
+# por esos últimos instantes y separa el volumen histórico del sync interactivo.
+BACKFILL_AFTER_FULL_COUNTDOWN = 60
 
 
 def _schedule_org_analysis_debounced(org_id: str) -> bool:
@@ -131,6 +137,34 @@ def _release_sync_lock(ad_account_id: str) -> None:
         pass
 
 
+async def _has_completed_history_backfill(
+    db, organization_id: str, ad_account_id: str
+) -> bool:
+    """Marca persistente del backfill sin columna ni migración nueva."""
+    completed = (await db.execute(
+        select(SyncJob.id).where(
+            SyncJob.organization_id == organization_id,
+            SyncJob.ad_account_id == ad_account_id,
+            SyncJob.sync_type == SYNC_TYPE_BACKFILL,
+            SyncJob.status == "COMPLETED",
+        ).limit(1)
+    )).scalar_one_or_none()
+    return completed is not None
+
+
+async def _schedule_history_backfill_after_full(db, ad_account: AdAccount) -> bool:
+    """Encola una sola vez el backfill diario tras un FULL exitoso."""
+    if await _has_completed_history_backfill(
+        db, ad_account.organization_id, ad_account.id
+    ):
+        return False
+    backfill_ad_account_history.apply_async(
+        args=(ad_account.organization_id, ad_account.id),
+        countdown=BACKFILL_AFTER_FULL_COUNTDOWN,
+    )
+    return True
+
+
 def run_async(coro):
     """Ejecuta una corrutina en un event loop nuevo y limpio por tarea.
 
@@ -165,6 +199,48 @@ def schedule_all_syncs(sync_type: str = "INCREMENTAL"):
             logger.info(f"Programadas sincronizaciones (escalonadas) para {len(accounts)} cuentas.")
 
     run_async(_impl())
+
+
+@celery_app.task(name="app.workers.tasks.schedule_pending_history_backfills")
+def schedule_pending_history_backfills(
+    organization_id: str | None = None, ad_account_id: str | None = None
+):
+    """Encola backfills pendientes, escalonados dentro de la ventana del Beat.
+
+    No forma parte de Beat: es una herramienta operativa explícita. Permite
+    ejecutar primero una sola cuenta y, tras verificarla, el resto de las
+    cuentas activas. Cada query conserva el scope de organización cuando se
+    proporciona.
+    """
+    async def _impl():
+        async with async_session() as db:
+            completed = select(SyncJob.id).where(
+                SyncJob.organization_id == AdAccount.organization_id,
+                SyncJob.ad_account_id == AdAccount.id,
+                SyncJob.sync_type == SYNC_TYPE_BACKFILL,
+                SyncJob.status == "COMPLETED",
+            ).exists()
+            q = select(AdAccount).where(
+                AdAccount.status == "ACTIVE",
+                ~completed,
+            )
+            if organization_id:
+                q = q.where(AdAccount.organization_id == organization_id)
+            if ad_account_id:
+                q = q.where(AdAccount.id == ad_account_id)
+
+            accounts = (await db.execute(q)).scalars().all()
+            for acc in accounts:
+                backfill_ad_account_history.apply_async(
+                    args=(acc.organization_id, acc.id),
+                    countdown=random.randint(0, BEAT_STAGGER_WINDOW_SECONDS),
+                )
+            logger.info(
+                "Programados %d backfills históricos pendientes.", len(accounts)
+            )
+            return len(accounts)
+
+    return run_async(_impl())
 
 @celery_app.task(name="app.workers.tasks.refresh_org_pages")
 def refresh_org_pages(org_id: str):
@@ -272,6 +348,8 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
                     await invalidate_report_cache(acc.id)
                 except Exception:
                     logger.exception("No se pudo invalidar el cache de reporte tras el sync")
+                if sync_type == "FULL":
+                    await _schedule_history_backfill_after_full(db, acc)
                 _schedule_org_analysis_debounced(acc.organization_id)
 
     try:
@@ -279,6 +357,70 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
     finally:
         # Siempre liberar: si se propaga un TransientMetaError, Celery reintenta
         # y ese reintento necesita poder tomar el lock de nuevo.
+        _release_sync_lock(ad_account_id)
+
+
+@celery_app.task(
+    bind=True,
+    name="app.workers.tasks.backfill_ad_account_history",
+    autoretry_for=(TransientMetaError,),
+    retry_backoff=True,
+    retry_backoff_max=600,
+    retry_jitter=True,
+    max_retries=5,
+    acks_late=True,
+)
+def backfill_ad_account_history(
+    self, organization_id: str, ad_account_id: str
+):
+    """Backfill diario idempotente y separado del sync habitual.
+
+    Solo lee Meta. Usa el mismo lock por cuenta que FULL/INCREMENTAL y consulta
+    por organización para que un id de otra tenant no pueda cruzar datos.
+    """
+    if not _acquire_sync_lock(ad_account_id):
+        raise self.retry(countdown=60, max_retries=10)
+
+    async def _impl():
+        async with async_session() as db:
+            acc = (await db.execute(
+                select(AdAccount).where(
+                    AdAccount.id == ad_account_id,
+                    AdAccount.organization_id == organization_id,
+                    AdAccount.status == "ACTIVE",
+                )
+            )).scalar_one_or_none()
+            if not acc:
+                logger.error(
+                    "Cuenta activa %s no encontrada en org %s para backfill.",
+                    ad_account_id, organization_id,
+                )
+                return "NOT_FOUND"
+
+            if await _has_completed_history_backfill(
+                db, organization_id, ad_account_id
+            ):
+                logger.info("Backfill histórico ya completado para %s; se omite.", ad_account_id)
+                return "ALREADY_COMPLETED"
+
+            logger.info("Iniciando backfill histórico para %s.", ad_account_id)
+            job = await MetaAdsSyncService(db).run_sync(acc, SYNC_TYPE_BACKFILL)
+            if job.status == "COMPLETED":
+                try:
+                    from app.services.report_cache import invalidate as invalidate_report_cache
+                    await invalidate_report_cache(acc.id)
+                except Exception:
+                    logger.exception("No se pudo invalidar el cache tras el backfill")
+                _schedule_org_analysis_debounced(organization_id)
+            logger.info(
+                "Backfill histórico finalizado para %s: %s (%s registros).",
+                ad_account_id, job.status, job.records_synced,
+            )
+            return job.status
+
+    try:
+        return run_async(_impl())
+    finally:
         _release_sync_lock(ad_account_id)
 
 @celery_app.task(name="app.workers.tasks.run_ai_analysis")

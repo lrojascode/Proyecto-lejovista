@@ -30,6 +30,8 @@ _TASK_ROUTES = {
     # Sincronización con Meta (lecturas: cuentas, campañas, adsets, breakdowns...).
     "app.workers.tasks.schedule_all_syncs": {"queue": "sync"},
     "app.workers.tasks.sync_ad_account": {"queue": "sync"},
+    "app.workers.tasks.schedule_pending_history_backfills": {"queue": "sync"},
+    "app.workers.tasks.backfill_ad_account_history": {"queue": "sync"},
     # Motor de IA (análisis + ejecución de acciones aprobadas contra Meta).
     "app.workers.tasks.schedule_all_analyses": {"queue": "ai"},
     "app.workers.tasks.run_ai_analysis": {"queue": "ai"},

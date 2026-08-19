@@ -73,7 +73,7 @@ Estado de la Saga de creación. Campos: `created_by_user_id`, `name`, `payload` 
 ## 6. Operación y auditoría
 
 ### `SyncJob` (`sync_jobs`)
-Registro de cada sincronización: `sync_type` (`FULL`/`INCREMENTAL`/`WEEKLY`), `status` (`PENDING`/`RUNNING`/`COMPLETED`/`FAILED`), `started_at`, `completed_at`, `error_message`, `records_synced`, `payload_json` (JSONB, Master Brief). El `/health/deep` consulta el último `COMPLETED`.
+Registro de cada sincronización: `sync_type` (`FULL`/`INCREMENTAL`/`BACKFILL`/`WEEKLY`), `status` (`PENDING`/`RUNNING`/`COMPLETED`/`FAILED`), `started_at`, `completed_at`, `error_message`, `records_synced`, `payload_json` (JSONB, Master Brief). Un `BACKFILL` completado marca que la cuenta ya cargó su ventana diaria de retención. El `/health/deep` consulta el último `COMPLETED`.
 
 ### `APICallLog` (`api_call_logs`)
 Auditoría HTTP a Meta: `method`, `endpoint`, `params` (token enmascarado), `status_code`, `response_preview`, `timestamp`.
