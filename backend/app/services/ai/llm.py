@@ -1016,7 +1016,7 @@ class OpenRouterClient:
         """
         api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
         if settings.MOCK_SERVICES or not api_key:
-            return ChatPlan(blocks=["kpis"])
+            return ChatPlan(blocks=[])
 
         headers = {
             "Authorization": f"Bearer {api_key}",
@@ -1032,7 +1032,7 @@ class OpenRouterClient:
             "Tu salida es estrictamente un JSON estructurado:\n"
             '{"blocks": ["kpis", "ranking", ...], "period_key": "7d|30d|90d|all|null", '
             '"period_b_key": "7d|30d|90d|all|null", "focus_campaign": "NOMBRE o null", "wants_creation": false, "topic": "ETIQUETA o null"}\n\n'
-            "Bloques disponibles: kpis, ranking, breakdowns, timeseries, alerts, recommendations, account, destination, creative, product.\n"
+            "Bloques disponibles: kpis, reach, ranking, breakdowns, timeseries, alerts, recommendations, account, destination, creative, product.\n"
             f"{camp_block}"
             "REGLA AI-1: NUNCA devuelvas cifras ni cálculos. Solo etiquetas de bloques y períodos.\n"
             f"{_PROMPT_INJECTION_GUARD}"
@@ -1057,18 +1057,18 @@ class OpenRouterClient:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(base_url, json=payload, headers=headers)
                 if res.status_code != 200:
-                    return ChatPlan(blocks=["kpis"])
+                    return ChatPlan(blocks=[])
                 result = res.json()
                 await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error en plan_chat_request")
-            return ChatPlan(blocks=["kpis"])
+            return ChatPlan(blocks=[])
 
         if not data:
-            return ChatPlan(blocks=["kpis"])
+            return ChatPlan(blocks=[])
 
-        valid_blocks = {"kpis", "ranking", "breakdowns", "timeseries", "alerts", "recommendations", "account", "destination", "creative", "product"}
+        valid_blocks = {"kpis", "reach", "ranking", "breakdowns", "timeseries", "alerts", "recommendations", "account", "destination", "creative", "product"}
         blocks = [b for b in data.get("blocks", []) if b in valid_blocks] or ["kpis"]
         period = data.get("period_key") if data.get("period_key") in ("7d", "30d", "90d", "180d", "all") else None
         period_b = data.get("period_b_key") if data.get("period_b_key") in ("7d", "30d", "90d", "180d", "all") else None

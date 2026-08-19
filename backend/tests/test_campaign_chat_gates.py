@@ -162,13 +162,12 @@ async def _ask(async_client: AsyncClient, headers, session_id: str, text: str) -
 async def test_unrecognized_question_is_answered_when_the_llm_finds_the_topic(
     async_client: AsyncClient, db_session: AsyncSession, monkeypatch
 ):
-    from app.services.ai.llm import OpenRouterClient
+    from app.services.ai.llm import ChatPlan, OpenRouterClient
 
-    async def fake_classify(self, org, text, topics, periods=None, usage_ctx=None):
-        assert "DESTINATION" in topics  # se le pasa el catálogo cerrado
-        return "DESTINATION", None
+    async def fake_plan(self, org, text, available_campaigns=None, usage_ctx=None):
+        return ChatPlan(blocks=["destination"], topic="DESTINATION")
 
-    monkeypatch.setattr(OpenRouterClient, "classify_chat_question", fake_classify)
+    monkeypatch.setattr(OpenRouterClient, "plan_chat_request", fake_plan)
 
     headers, session_id = await _open_session(async_client, db_session, "chat-2nd-chance")
     transcript = await _ask(async_client, headers, session_id, "¿esto sirve para instagram tambien?")

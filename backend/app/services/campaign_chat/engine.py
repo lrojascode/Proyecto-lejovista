@@ -24,7 +24,7 @@ from app.models.meta_page import MetaPage
 from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
-from app.services.ai.llm import OpenRouterClient
+from app.services.ai.llm import ChatPlan, OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.services.campaign_chat import cards, extraction, facts as facts_module, questions, rephrase
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
@@ -558,16 +558,14 @@ async def _try_llm_extraction(
     return extraction.ExtractionResult(intent=intent, slots=slots)
 
 
-async def _try_llm_question_topic(
+async def _try_llm_plan(
     db: AsyncSession, current_user: User, session: CampaignChatSession, text: str
-) -> Tuple[Optional[str], Optional[Period]]:
-    """Segunda oportunidad para una pregunta que los regex no reconocieron.
+) -> Tuple[Optional[ChatPlan], Optional[Period]]:
+    """Segunda oportunidad para una pregunta que los regex no reconocieron (H3).
 
-    Rechazar de una es lo barato pero lo equivocado: el sistema TIENE los datos
-    en la base y un typo ("¿cuál es la capana activa?") no debería costarle al
-    usuario una respuesta. El LLM acá solo elige una etiqueta de un catálogo
-    cerrado — la respuesta la arma `questions.answer_question` con las cifras
-    reales, así que sigue sin poder inventar un número (AI-1).
+    Le pide al LLM un plan analítico abierto (bloques + períodos) llamando a
+    `plan_chat_request`. Preserva AI-1: cero cifras en la respuesta del modelo,
+    solo etiquetas de bloques.
     """
     if (session.llm_calls or 0) >= MAX_LLM_TURNS_PER_SESSION:
         return None, None
@@ -578,17 +576,24 @@ async def _try_llm_question_topic(
         ad_account_id=session.ad_account_id,
     )
     try:
-        topic, period_key = await OpenRouterClient(organization=org).classify_chat_question(
-            org, text, questions.TOPIC_DESCRIPTIONS,
-            periods=list(PERIOD_ENUM), usage_ctx=usage_ctx,
+        plan = await OpenRouterClient(organization=org).plan_chat_request(
+            org, text, usage_ctx=usage_ctx,
         )
     except Exception:
-        logger.exception("Fallo clasificando la pregunta del chat (sesión %s)", session.id)
+        logger.exception("Fallo planificando la pregunta del chat con LLM (sesión %s)", session.id)
         return None, None
     session.llm_calls = (session.llm_calls or 0) + 1
-    # El período determinista del texto manda sobre el del LLM: si la persona
-    # escribió "30 días", ese dígito literal es mejor evidencia que una etiqueta.
-    return topic, parse_period(text) or period_from_enum(period_key)
+    if not plan or not plan.blocks:
+        return None, None
+
+    # El período determinista del texto manda sobre el del LLM
+    period = parse_period(text)
+    if not period and plan.period_key:
+        period = period_from_enum(plan.period_key) or Period(
+            int(plan.period_key.replace("d", "")) if plan.period_key.endswith("d") and plan.period_key[:-1].isdigit() else 30,
+            f"los últimos {plan.period_key}"
+        )
+    return plan, period
 
 
 async def _say(
@@ -668,11 +673,11 @@ async def _handle_off_topic(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
     text: str, messages: List[Dict[str, Any]],
 ) -> None:
-    """Pregunta sin tema reconocido: se le pregunta al LLM antes de rechazarla."""
-    topic, period = await _try_llm_question_topic(db, current_user, session, text)
-    if topic:
+    """Pregunta sin tema reconocido por regex: se le pide un plan analítico abierto al LLM (H3)."""
+    plan, period = await _try_llm_plan(db, current_user, session, text)
+    if plan and plan.blocks:
         await _answer_and_resume(
-            db, current_user, session, topic, messages, user_text=text, period=period,
+            db, current_user, session, plan, messages, user_text=text, period=period,
         )
         return
     messages.append(await _say(db, current_user, session, questions.OUT_OF_SCOPE_TEXT, text))
@@ -691,7 +696,7 @@ def _slots_from_result(result: extraction.ExtractionResult, *, is_gate: bool) ->
 
 async def _answer_and_resume(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
-    topic: str, messages: List[Dict[str, Any]], user_text: str = "",
+    topic_or_plan: Any, messages: List[Dict[str, Any]], user_text: str = "",
     period: Optional[Period] = None,
 ) -> None:
     """Responde una pregunta sobre la marca SIN mover el estado ni tocar los
@@ -699,9 +704,10 @@ async def _answer_and_resume(
     a mitad del armado no debe hacerte perder el lugar (CH-6)."""
     ad_account = await db.get(AdAccount, session.ad_account_id)
     facts = None
+    topic = getattr(topic_or_plan, "topic", topic_or_plan) or "SUMMARY"
     try:
         facts, answer = await facts_module.resolve_facts(
-            db, current_user.organization_id, ad_account, topic, session.slots_json or {},
+            db, current_user.organization_id, ad_account, topic_or_plan, session.slots_json or {},
             window_days=period.days if period else None,
         )
     except Exception:

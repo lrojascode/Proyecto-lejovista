@@ -311,3 +311,21 @@ async def test_plan_chat_request_returns_valid_blocks(monkeypatch):
     assert plan.period_key == "30d"
     assert plan.period_b_key == "90d"
     assert plan.wants_creation is False
+
+
+@pytest.mark.asyncio
+async def test_plan_chat_request_multi_block_kpis_and_reach(monkeypatch):
+    """H3: Consulta combinada 'Total invertido y Personas alcanzadas de los últimos 90 días'."""
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({
+            "blocks": ["kpis", "reach"],
+            "period_key": "90d",
+            "wants_creation": False,
+        }))
+    ))
+    plan = await OpenRouterClient().plan_chat_request(
+        _org(), "Total invertido y Personas alcanzadas de los últimos 90 días",
+    )
+    assert plan.blocks == ["kpis", "reach"]
+    assert plan.period_key == "90d"
