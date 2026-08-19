@@ -95,7 +95,7 @@ _TOPIC_PATTERNS: List[tuple] = [
         r"cuanto me queda|cuanto saldo", re.IGNORECASE)),
     ("SPEND", re.compile(
         r"cuanto (gaste|gastamos|llevo gastado|he gastado|invert)|\bgasto\b|\bgastos\b|"
-        r"\binversion\b|cuanto va|cuanto llevo", re.IGNORECASE)),
+        r"\binversion\b|\binvertid[oa]s?\b|total gastad[oa]s?|cuanto va|cuanto llevo", re.IGNORECASE)),
     ("REACH", re.compile(
         r"\balcance\b|personas alcanzadas|cuanta gente|a cuanta gente|a cuantas personas|"
         r"impresiones|frecuencia|a cuantos llegue|a cuanta gente le llegue", re.IGNORECASE)),
@@ -158,6 +158,21 @@ def looks_like_question(text: str) -> bool:
     return bool(_QUESTION_SHAPE_RE.search(strip_accents(text or "")))
 
 
+def classify_question_topics(text: str, max_topics: int = 3) -> List[str]:
+    """TODOS los temas cuyo regex matchea, en orden de prioridad de _TOPIC_PATTERNS.
+    `classify_question` se conserva devolviendo el primero (compatibilidad).
+    Tope de `max_topics` (por defecto 3) para evitar inflar el paquete de facts.
+    """
+    ascii_text = strip_accents(text or "").lower()
+    matched: List[str] = []
+    for topic, pattern in _TOPIC_PATTERNS:
+        if pattern.search(ascii_text):
+            matched.append(topic)
+            if len(matched) >= max_topics:
+                break
+    return matched
+
+
 def classify_question(text: str) -> Optional[str]:
     """Devuelve el tema soportado, o `None` si ningún regex lo reconoció.
 
@@ -166,11 +181,8 @@ def classify_question(text: str) -> Optional[str]:
     Un typo —"¿cuál es la capana activa?"— no debería costar una respuesta que
     el sistema sí sabe dar.
     """
-    ascii_text = strip_accents(text or "").lower()
-    for topic, pattern in _TOPIC_PATTERNS:
-        if pattern.search(ascii_text):
-            return topic
-    return None
+    topics = classify_question_topics(text, max_topics=1)
+    return topics[0] if topics else None
 
 
 # --- Respuestas estáticas (producto, no datos) ---

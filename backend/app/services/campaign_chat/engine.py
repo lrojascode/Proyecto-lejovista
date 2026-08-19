@@ -11,6 +11,7 @@ construye su propio `CampaignDraft` ni su propio chain de Celery.
 """
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -29,7 +30,9 @@ from app.services.ai.token_tracking import UsageContext
 from app.services.campaign_chat import cards, extraction, facts as facts_module, questions, rephrase
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
 from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
-from app.services.campaign_chat.slots import sanitize_product_name
+from app.services.campaign_chat.slots import sanitize_product_name, strip_accents
+
+_COORDINATION_RE = re.compile(r"\b(y|ademas|además|tambien|también|y tambien|y también|junto con)\b", re.IGNORECASE)
 from app.services.campaign_creation import (
     CAMPAIGN_SESSION_WINDOW_HOURS,
     MAX_CAMPAIGNS_PER_SESSION,
@@ -711,7 +714,10 @@ async def _answer_and_resume(
     a mitad del armado no debe hacerte perder el lugar (CH-6)."""
     ad_account = await db.get(AdAccount, session.ad_account_id)
     facts = None
-    topic = getattr(topic_or_plan, "topic", topic_or_plan) or "SUMMARY"
+    if isinstance(topic_or_plan, list):
+        topic = " / ".join(topic_or_plan)
+    else:
+        topic = getattr(topic_or_plan, "topic", topic_or_plan) or "SUMMARY"
     try:
         facts, answer = await facts_module.resolve_facts(
             db, current_user.organization_id, ad_account, topic_or_plan, session.slots_json or {},
@@ -786,12 +792,31 @@ async def _handle_text(
     # un token (CH-6). Si ningún regex la reconoce, recién ahí entra el LLM a
     # elegir el tema — antes se rechazaba de una, y eso descartaba preguntas
     # que el sistema sabía responder con datos que ya tenía en la base.
-    if result.intent == "question" and result.question_topic:
-        await _answer_and_resume(
-            db, current_user, session, result.question_topic, messages,
-            user_text=text, period=result.question_period,
-        )
-        return
+    if result.intent == "question":
+        topics = result.question_topics or ([result.question_topic] if result.question_topic else [])
+        if len(topics) >= 2:
+            # Pregunta compuesta con múltiples temas detectados por regex: 0 tokens
+            await _answer_and_resume(
+                db, current_user, session, topics, messages,
+                user_text=text, period=result.question_period,
+            )
+            return
+        elif len(topics) == 1:
+            # Si hay coordinación explícita (e.g. "y", "además"), evaluamos si el LLM
+            # puede planificar una segunda intención abierta no cubierta por regex
+            if _COORDINATION_RE.search(strip_accents(text)):
+                plan, period = await _try_llm_plan(db, current_user, session, text)
+                if plan and plan.blocks and len(plan.blocks) > 1:
+                    await _answer_and_resume(
+                        db, current_user, session, plan, messages,
+                        user_text=text, period=period or result.question_period,
+                    )
+                    return
+            await _answer_and_resume(
+                db, current_user, session, topics[0], messages,
+                user_text=text, period=result.question_period,
+            )
+            return
     if result.intent == "off_topic":
         await _handle_off_topic(db, current_user, session, text, messages)
         return
@@ -900,13 +925,13 @@ async def process_decision(
     elif decision == "change":
         is_gate = session.state in GATE_STATES
         result = extraction.extract_message(text or "", state=session.state, is_gate=True)
-        # Preguntar algo en el campo "Cambiar algo" se responde como pregunta,
-        # sin tocar la propuesta ni volver a dibujar la tarjeta (CH-6).
-        if result.intent == "question" and result.question_topic:
-            await _answer_and_resume(
-                db, current_user, session, result.question_topic, messages,
-                user_text=text or "", period=result.question_period,
-            )
+        if result.intent == "question":
+            topics = result.question_topics or ([result.question_topic] if result.question_topic else [])
+            if topics:
+                await _answer_and_resume(
+                    db, current_user, session, topics if len(topics) > 1 else topics[0], messages,
+                    user_text=text or "", period=result.question_period,
+                )
         elif result.intent == "off_topic":
             await _handle_off_topic(db, current_user, session, text or "", messages)
         else:

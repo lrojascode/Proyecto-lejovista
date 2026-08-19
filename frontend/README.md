@@ -29,8 +29,9 @@ To learn more about Next.js, take a look at the following resources:
 
 You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-## Deploy on Vercel
+## Configuración de Linter (ESLint)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+En `eslint.config.mjs` se configuraron las siguientes reglas con nivel `warn` / `off`:
+- `@typescript-eslint/no-explicit-any` (`off`): Permite flexibilidad en payloads dinámicos de Meta Ads Graph API y respuestas de WebSocket.
+- `react-hooks/set-state-in-effect` (`warn`): Permite efectos de suscripción y polling de respaldo (e.g. `getSyncStatus`, sincronización de cuentas) que actualizan el estado de la UI de forma controlada sin bloquear el build.
+- `@typescript-eslint/no-unused-vars` (`warn`): Emite advertencia para variables no usadas sin bloquear CI.

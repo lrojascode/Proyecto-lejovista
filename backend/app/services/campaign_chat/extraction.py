@@ -9,10 +9,10 @@ el mensaje del usuario.
 """
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from app.services.campaign_chat.period import Period, parse_period
-from app.services.campaign_chat.questions import classify_question, looks_like_question
+from app.services.campaign_chat.questions import classify_question, classify_question_topics, looks_like_question
 from app.services.campaign_chat.slots import normalize_whatsapp, sanitize_product_name, strip_accents
 
 MAX_GOAL_TEXT_CHARS = 500
@@ -171,6 +171,7 @@ class ExtractionResult:
     slots: Dict[str, Any] = field(default_factory=dict)
     # Solo con intent="question": el tema soportado que resolvió `questions.py`.
     question_topic: Optional[str] = None
+    question_topics: List[str] = field(default_factory=list)
     # Período mencionado en la pregunta ("este mes", "los últimos 30 días").
     # `None` = no mencionó ninguno y se usa la ventana por defecto.
     question_period: Optional[Period] = None
@@ -201,9 +202,14 @@ def extract_message(text: str, *, state: str, is_gate: bool) -> ExtractionResult
     # como el objetivo de la campaña. Un tema reconocido acá se responde con
     # datos reales sin gastar un token; `off_topic` NO es la palabra final —
     # el motor le da una segunda pasada al LLM antes de rechazar.
-    topic = classify_question(raw)
-    if topic:
-        return ExtractionResult(intent="question", question_topic=topic, question_period=parse_period(raw))
+    topics = classify_question_topics(raw)
+    if topics:
+        return ExtractionResult(
+            intent="question",
+            question_topic=topics[0],
+            question_topics=topics,
+            question_period=parse_period(raw),
+        )
     if looks_like_question(raw):
         # Una pregunta que no es de la marca se rechaza... salvo que sea la
         # forma cortés de decir el objetivo ("¿me ayudás a vender zapatillas?"),

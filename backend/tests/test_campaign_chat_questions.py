@@ -478,3 +478,104 @@ async def test_h4_spend_without_spend_cap_is_clean(_mock_report):
     assert "S/. 300.00" in out
     assert "tope" not in out.lower()
     assert "restante" not in out.lower()
+
+
+def test_h4bis_pregunta_compuesta_clasifica_multiples_temas():
+    """H4-bis: Pregunta compuesta literal del 18-ago-2026 debe clasificar gasto Y alcance."""
+    q = "¿cuál es el Total invertido y Personas alcanzadas de los últimos 90 días?"
+    topics = questions.classify_question_topics(q)
+    assert set(topics) >= {"SPEND", "REACH"}
+
+    q2 = "cuanto gaste y a cuantas personas llegue"
+    topics2 = questions.classify_question_topics(q2)
+    assert set(topics2) >= {"SPEND", "REACH"}
+
+    q3 = "total invertido y alcance"
+    topics3 = questions.classify_question_topics(q3)
+    assert set(topics3) >= {"SPEND", "REACH"}
+
+    q4 = "gasto, leads y CTR del mes pasado"
+    topics4 = questions.classify_question_topics(q4)
+    assert set(topics4) >= {"SPEND", "LEADS", "CTR"}
+
+
+@pytest.mark.asyncio
+async def test_h4bis_pregunta_compuesta_devuelve_las_dos_metricas(mocker):
+    """H4-bis: La pregunta compuesta debe resolver hechos y narración canónica con ambas métricas."""
+    from app.models.ad_account import AdAccount
+    from app.services.campaign_chat.facts import resolve_facts
+
+    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=90)
+    mocker.patch(
+        "app.services.campaign_chat.facts.get_kpis_with_deltas",
+        return_value={
+            "current": {"spend": 6466.0, "conversations": 120, "cost_per_conv": 53.88},
+            "previous": {"spend": 5000.0, "conversations": 100, "cost_per_conv": 50.0},
+            "deltas_pct": {"spend": 29.3, "conversations": 20.0, "cost_per_conv": 7.76},
+        },
+    )
+    mocker.patch(
+        "app.services.campaign_chat.facts.get_report",
+        return_value={
+            "kpis": {"total_spend": 6466.0, "total_reach": 45000, "total_impressions": 90000, "avg_ctr": 2.5},
+            "campaigns": [],
+        },
+    )
+
+    acc = AdAccount(id="acc_h4bis", name="Cuenta H4bis", spend_cap=0.0, amount_spent=6466.0, status="ACTIVE")
+    q = "¿cuál es el Total invertido y Personas alcanzadas de los últimos 90 días?"
+    topics = questions.classify_question_topics(q)
+    facts, canonical = await resolve_facts(None, "org_1", acc, topics, window_days=90)
+
+    # 1. Trae gasto (kpis) Y alcance (reach)
+    assert "kpis_del_periodo" in facts
+    assert facts["kpis_del_periodo"]["spend"] == 6466.0
+    assert "alcance" in facts
+    assert facts["alcance"]["total_personas"] == 45000
+
+    # 2. NO cuela el spend_cap
+    assert "account" not in facts
+
+    # 3. La narración canónica (sin LLM) contiene AMBAS métricas
+    assert "6466.00" in canonical or "6.466,00" in canonical or "6.466" in canonical
+    assert "45.000 personas" in canonical or "45000 personas" in canonical
+
+
+@pytest.mark.asyncio
+async def test_h4bis_chat_session_compound_question_endpoint(
+    async_client: AsyncClient, db_session: AsyncSession, mocker
+):
+    """H4-bis: Mensaje compuesto a través del endpoint HTTP responde con ambas métricas en modo MOCK."""
+    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=90)
+    mocker.patch(
+        "app.services.campaign_chat.facts.get_kpis_with_deltas",
+        return_value={
+            "current": {"spend": 6466.0, "conversations": 120, "cost_per_conv": 53.88},
+            "previous": {"spend": 5000.0, "conversations": 100, "cost_per_conv": 50.0},
+            "deltas_pct": {"spend": 29.3, "conversations": 20.0, "cost_per_conv": 7.76},
+        },
+    )
+    mocker.patch(
+        "app.services.campaign_chat.facts.get_report",
+        return_value={
+            "kpis": {"total_spend": 6466.0, "total_reach": 45000, "total_impressions": 90000, "avg_ctr": 2.5},
+            "campaigns": [],
+        },
+    )
+
+    headers, org_id, session_id, _ = await _create_session_at_review(
+        async_client, db_session, "chat-compound-h4bis"
+    )
+
+    q = "¿cuál es el Total invertido y Personas alcanzadas de los últimos 90 días?"
+    res = await async_client.post(
+        f"/api/v1/campaigns/chat/sessions/{session_id}/messages",
+        json={"client_turn_id": _turn_id(), "text": q},
+        headers=headers,
+    )
+    assert res.status_code == 200
+    messages = res.json()["messages"]
+    answer_text = messages[-2]["text"]
+    assert "6466" in answer_text or "6.466" in answer_text
+    assert "45.000" in answer_text or "45000" in answer_text
+    assert "tope" not in answer_text.lower()
