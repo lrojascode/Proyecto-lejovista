@@ -12,6 +12,8 @@ import {
   GridIcon, TargetIcon, DocIcon, SparkleIcon, BoltIcon, GearIcon, MenuIcon, CloseIcon, GaugeIcon,
 } from "@/components/icons";
 
+import type { TenantBrand } from "@/lib/types";
+
 // Selector global de cuenta publicitaria. Oculto si la organización tiene 0 o 1
 // cuenta (caso común hoy) — solo se muestra cuando hay que elegir de verdad.
 function AdAccountSelector() {
@@ -65,6 +67,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [userName, setUserName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
   const [orgId, setOrgId] = useState("");
+  const [brand, setBrand] = useState<TenantBrand | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pathname = usePathname();
 
@@ -74,14 +77,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [pathname]);
 
   useEffect(() => {
-    // (S-2) El access token vive en memoria (lib/api.ts) y no sobrevive a un
-    // reload por su cuenta. Si ya lo tenemos (venimos de login/signup en esta
-    // misma pestaña, sin reload de por medio) basta con confirmarlo contra
-    // /auth/me — forzar un refresh aquí sería redundante y, peor, descartaría
-    // una sesión recién obtenida si la cookie de refresh no acompañara la
-    // request (p. ej. cruzando de un subdominio de tenant a otro host de API
-    // en desarrollo local). Sin token en memoria (reload real / pestaña
-    // nueva), sí hace falta renovar desde la cookie httpOnly del refresh.
     let cancelled = false;
     const afterAuth = (user: { full_name: string; organization_id?: string | null } | null) => {
       if (cancelled) return;
@@ -91,10 +86,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       }
       setUserName(user.full_name);
       setOrgId(user.organization_id || "");
-      // Capturar subdominio (solo si es un subdominio real de BASE_DOMAIN;
-      // en modo single-host o cualquier otro host esto da null y se usa
-      // el nombre de fallback, puramente cosmético).
-      setOrgSlug(getTenantSlugFromHostname(window.location.hostname) || "cliente1");
+      const detectedSlug = getTenantSlugFromHostname(window.location.hostname) || "";
+      setOrgSlug(detectedSlug || "cliente1");
+      api.getTenantBrand(detectedSlug).then((b) => {
+        if (!cancelled) setBrand(b);
+      }).catch(() => {});
       setLoading(false);
     };
 
@@ -157,8 +153,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <aside className={`sidebar ${isSidebarOpen ? "open" : ""}`}>
           <div>
             <div style={{ marginBottom: "32px", padding: "0 10px" }}>
+              {brand?.logo_url ? (
+                <div style={{ marginBottom: "8px" }}>
+                  <img
+                    src={brand.logo_url}
+                    alt={brand.display_name || brand.name}
+                    style={{ maxHeight: "32px", maxWidth: "160px", objectFit: "contain" }}
+                  />
+                </div>
+              ) : null}
               <h1 style={{ fontSize: "18px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.011em" }}>
-                LejoVista
+                {brand?.display_name || brand?.name || "LejoVista"}
               </h1>
               <span className="mono" style={{ color: "var(--color-ash)" }}>
                 tenant: {orgSlug}

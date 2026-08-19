@@ -9,7 +9,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
-from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse
+from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse, TenantBrandResponse
 from app.schemas.response_schemas import MessageResponse
 from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
@@ -240,3 +240,39 @@ async def logout(request: Request, response: Response):
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     return enrich_user(current_user)
+
+
+@router.get("/tenant-brand", response_model=TenantBrandResponse)
+async def get_tenant_brand(
+    request: Request,
+    slug: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Devuelve la información de marca (nombre, logo, color) del tenant activo
+    resuelto por subdominio (X-Tenant-Slug) o query param. Si no hay tenant resuelto
+    o no existe, devuelve la marca neutra de LejoVista (nunca la de otro cliente)."""
+    tenant_slug = slug or request.headers.get("X-Tenant-Slug")
+    if not tenant_slug or tenant_slug in RESERVED_ORG_SLUGS:
+        return TenantBrandResponse(
+            name="LejoVista",
+            display_name="LejoVista",
+            logo_url=None,
+            accent_color=None,
+        )
+
+    q = select(Organization).where(Organization.slug == tenant_slug)
+    org = (await db.execute(q)).scalar_one_or_none()
+    if not org:
+        return TenantBrandResponse(
+            name="LejoVista",
+            display_name="LejoVista",
+            logo_url=None,
+            accent_color=None,
+        )
+
+    return TenantBrandResponse(
+        name=org.name,
+        display_name=org.display_name or org.name,
+        logo_url=org.logo_url,
+        accent_color=org.accent_color,
+    )

@@ -7,7 +7,8 @@ import { api } from '../lib/api'
 jest.mock('../lib/api', () => ({
   api: {
     login: jest.fn(),
-    signup: jest.fn()
+    signup: jest.fn(),
+    getTenantBrand: jest.fn().mockResolvedValue({ name: "LejoVista", display_name: "LejoVista", logo_url: null, accent_color: null }),
   }
 }))
 

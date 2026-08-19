@@ -1,6 +1,8 @@
 import datetime
+import hashlib
+import os
 import secrets
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from app.config import settings
@@ -67,6 +69,7 @@ async def get_my_organization(
     return org
 
 @router.put("/my", response_model=OrganizationResponse)
+@router.patch("/my", response_model=OrganizationResponse)
 async def update_my_organization(
     org_update: OrganizationUpdate,
     current_user: User = Depends(require_role("ADMIN")),
@@ -88,6 +91,59 @@ async def update_my_organization(
     await db.commit()
     await db.refresh(org)
     return org
+
+
+_ALLOWED_LOGO_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/svg+xml": ".svg",
+}
+_MAX_LOGO_BYTES = 5 * 1024 * 1024  # 5MB
+
+
+@router.post("/my/logo")
+async def upload_org_logo(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sube el logo de la organización (PNG, JPG, WebP, SVG)."""
+    ext = _ALLOWED_LOGO_TYPES.get(file.content_type)
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Formato de logo no soportado. Usa PNG, JPG, WebP o SVG.",
+        )
+
+    contents = await file.read()
+    if len(contents) > _MAX_LOGO_BYTES:
+        raise HTTPException(
+            status_code=400, detail="El logo supera el límite de 5MB."
+        )
+
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    logos_dir = os.path.join(settings.MEDIA_ROOT, "logos")
+    os.makedirs(logos_dir, exist_ok=True)
+
+    content_hash = hashlib.sha256(contents).hexdigest()[:12]
+    filename = f"{org.id}_{content_hash}{ext}"
+    filepath = os.path.join(logos_dir, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    logo_url = f"/media/logos/{filename}"
+    org.logo_url = logo_url
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+
+    return {"logo_url": logo_url}
 
 @router.post("/my/llm-key/test", response_model=LLMKeyTestResponse)
 async def test_llm_key(

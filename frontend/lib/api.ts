@@ -4,7 +4,7 @@ import type {
   CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
-  OrgMember, Invitation, InvitationDetails,
+  OrgMember, Invitation, InvitationDetails, TenantBrand,
 } from "./types";
 
 // (S-2) El access token vive SOLO en memoria del módulo, nunca en
@@ -243,7 +243,17 @@ export const api = {
 
   // --- ORGANIZATIONS & ACCOUNTS ---
   getOrg: () => apiRequest<Organization>("/api/v1/organizations/my", "GET"),
-  updateOrg: (data: any) => apiRequest<Organization>("/api/v1/organizations/my", "PUT", data),
+  updateOrg: (data: any) => apiRequest<Organization>("/api/v1/organizations/my", "PATCH", data),
+  uploadOrgLogo: (file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiUploadRequest<{ logo_url: string }>("/api/v1/organizations/my/logo", formData);
+  },
+  getTenantBrand: (slug?: string) =>
+    apiRequest<TenantBrand>(
+      slug ? `/api/v1/auth/tenant-brand?slug=${encodeURIComponent(slug)}` : "/api/v1/auth/tenant-brand",
+      "GET"
+    ),
   getAiModels: (provider?: string) =>
     apiRequest<AiModelsResponse>(
       provider ? `/api/v1/organizations/ai-models?provider=${encodeURIComponent(provider)}` : "/api/v1/organizations/ai-models",

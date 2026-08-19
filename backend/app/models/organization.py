@@ -21,6 +21,10 @@ class Organization(Base):
     # Rubro del negocio (ver app/services/policy_catalog.py) — determina qué
     # recordatorios de políticas de Meta se muestran en el dashboard.
     industry: Mapped[str] = mapped_column(String, nullable=True)
+    # Marca por organización (Fase 6.2 / Roadmap 5)
+    display_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    logo_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    accent_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     # M-2: overrides parciales por tenant sobre TENANT_CAMPAIGN_RULES /
     # AIThresholds (ver app/tenant_rules/campaign_defaults.py y
     # app/services/ai/thresholds.py). Vacío = usa los defaults globales tal

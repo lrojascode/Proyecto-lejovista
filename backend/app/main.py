@@ -129,6 +129,12 @@ app.include_router(ai_usage_router, prefix="/api/v1")
 app.include_router(invitations_router, prefix="/api/v1")
 app.include_router(ws_router) # Not prefixed with api/v1 to keep ws://host/ws/
 
+# Servir archivos estáticos subidos (/media)
+import os
+from fastapi.staticfiles import StaticFiles
+os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
+app.mount("/media", StaticFiles(directory=settings.MEDIA_ROOT), name="media")
+
 @app.get("/")
 def read_root():
     return {

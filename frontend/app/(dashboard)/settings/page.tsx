@@ -20,6 +20,13 @@ export default function Settings() {
   const [industry, setIndustry] = useState("");
   const [industries, setIndustries] = useState<{ value: string; label: string }[]>([]);
 
+  // Marca por Organización (6.2)
+  const [displayName, setDisplayName] = useState("");
+  const [accentColor, setAccentColor] = useState("");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoMsg, setLogoMsg] = useState("");
+
   // LLM Custom Key States
   const [llmProvider, setLlmProvider] = useState<string>("");
   const [llmApiKey, setLlmApiKey] = useState("");
@@ -82,6 +89,9 @@ export default function Settings() {
       setArchivedAccounts(archivedList);
       setMaxBudget(orgData.max_budget);
       setIndustry(orgData.industry || "");
+      setDisplayName(orgData.display_name || "");
+      setAccentColor(orgData.accent_color || "");
+      setLogoUrl(orgData.logo_url || null);
       setLlmProvider(orgData.llm_provider || "");
       setLlmApiKey("");
       setLlmKeyTestMsg(null);
@@ -201,6 +211,8 @@ export default function Settings() {
         ai_model: aiModel,
         max_budget: maxBudget,
         industry: industry || null,
+        display_name: displayName.trim() || null,
+        accent_color: accentColor.trim() || null,
         llm_provider: llmProvider || null,
       };
       if (llmApiKey.trim()) {
@@ -214,6 +226,22 @@ export default function Settings() {
       await fetchData();
     } catch (err: any) {
       setMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingLogo(true);
+    setLogoMsg("");
+    try {
+      const res = await api.uploadOrgLogo(file);
+      setLogoUrl(res.logo_url);
+      setLogoMsg("Logo subido y actualizado con éxito.");
+    } catch (err: any) {
+      setLogoMsg(`Error: ${err.message || "No se pudo subir el logo."}`);
+    } finally {
+      setUploadingLogo(false);
     }
   };
 
@@ -570,6 +598,77 @@ export default function Settings() {
               <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
                 Determina qué recordatorios de políticas de Meta se muestran en el Dashboard.
               </span>
+            </div>
+
+            {/* Marca y Personalización (6.2) */}
+            <div style={{
+              background: "rgba(255, 255, 255, 0.02)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "8px",
+              padding: "1rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.85rem",
+            }}>
+              <label style={{ fontSize: "0.85rem", fontWeight: 510, color: "var(--color-paper)" }}>
+                Marca y Personalización
+              </label>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Nombre comercial / Para mostrar
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder={org?.name || "Ej: Acme Corp"}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Color de acento (HEX)
+                </label>
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <input
+                    type="color"
+                    value={accentColor || "#3b82f6"}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    style={{ width: "36px", height: "36px", padding: 0, border: "none", borderRadius: "4px", cursor: "pointer", background: "transparent" }}
+                  />
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={accentColor}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    placeholder="#3b82f6"
+                    style={{ maxWidth: "120px" }}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Logo de la empresa (PNG, JPG, WebP, SVG - máx 5MB)
+                </label>
+                {logoUrl && (
+                  <div style={{ marginBottom: "8px", display: "flex", alignItems: "center", gap: "10px" }}>
+                    <img src={logoUrl} alt="Logo" style={{ maxHeight: "36px", maxWidth: "120px", objectFit: "contain", borderRadius: "4px", background: "rgba(255,255,255,0.05)", padding: "4px" }} />
+                    <span style={{ fontSize: "11px", color: "var(--color-fog)" }}>Logo actual</span>
+                  </div>
+                )}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  onChange={handleLogoUpload}
+                  disabled={uploadingLogo}
+                  style={{ fontSize: "12px", color: "var(--color-fog)" }}
+                />
+                {uploadingLogo && <span style={{ fontSize: "11px", color: "var(--color-mint)", display: "block", marginTop: "4px" }}>Subiendo logo...</span>}
+                {logoMsg && <span style={{ fontSize: "11px", color: logoMsg.includes("Error") ? "var(--color-coral-red)" : "var(--color-mint)", display: "block", marginTop: "4px" }}>{logoMsg}</span>}
+              </div>
             </div>
 
             <button type="submit" className="btn-secondary" style={{ alignSelf: "flex-start" }}>

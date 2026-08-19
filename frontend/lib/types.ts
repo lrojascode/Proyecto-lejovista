@@ -18,9 +18,19 @@ export type TokenResponse = Schemas["TokenResponse"];
 
 // --- ORGANIZATION / AD ACCOUNT ---
 export type Organization = Schemas["OrganizationResponse"] & {
+  display_name?: string | null;
+  logo_url?: string | null;
+  accent_color?: string | null;
   llm_provider?: string | null;
   has_llm_api_key?: boolean;
   llm_api_key_preview?: string | null;
+};
+
+export type TenantBrand = {
+  name: string;
+  display_name?: string | null;
+  logo_url?: string | null;
+  accent_color?: string | null;
 };
 export type AdAccount = Schemas["AdAccountResponse"] & {
   last_sync_error_code?: number | null;

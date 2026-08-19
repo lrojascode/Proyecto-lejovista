@@ -5,9 +5,12 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { getTenantSlugFromHostname } from "@/lib/config";
 
+import type { TenantBrand } from "@/lib/types";
+
 export default function Login() {
   const router = useRouter();
   const [tenantSlug, setTenantSlug] = useState("");
+  const [brand, setBrand] = useState<TenantBrand | null>(null);
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,15 +20,17 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Detectar el tenant slug del subdominio en el navegador
+    // Detectar el tenant slug del subdominio en el navegador y cargar marca
     if (typeof window !== "undefined") {
       const slug = getTenantSlugFromHostname(window.location.hostname);
       if (slug) {
         setTenantSlug(slug);
         setOrgName(slug.charAt(0).toUpperCase() + slug.slice(1));
+        api.getTenantBrand(slug).then(setBrand).catch(() => {});
       } else {
         setTenantSlug("");
         setOrgName("");
+        api.getTenantBrand().then(setBrand).catch(() => {});
       }
     }
   }, []);
@@ -73,12 +78,21 @@ export default function Login() {
     }}>
       <div className="glass-card" style={{ maxWidth: "420px", width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: "2rem" }}>
+          {brand?.logo_url ? (
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: "12px" }}>
+              <img
+                src={brand.logo_url}
+                alt={brand.display_name || brand.name}
+                style={{ maxHeight: "48px", maxWidth: "180px", objectFit: "contain" }}
+              />
+            </div>
+          ) : null}
           <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em", marginBottom: "0.25rem" }}>
-            LejoVista
+            {brand?.display_name || brand?.name || "LejoVista"}
           </h2>
           {tenantSlug ? (
             <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>
-              Accediendo al espacio de <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{tenantSlug}</strong>
+              Accediendo al espacio de <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{brand?.display_name || brand?.name || tenantSlug}</strong>
             </p>
           ) : (
             <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>

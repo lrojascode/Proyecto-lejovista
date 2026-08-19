@@ -37,6 +37,9 @@ class OrganizationResponse(BaseModel):
     id: str
     slug: str
     name: str
+    display_name: Optional[str] = None
+    logo_url: Optional[str] = None
+    accent_color: Optional[str] = None
     ai_model: str
     llm_provider: Optional[str] = None
     has_llm_api_key: bool = False
@@ -50,11 +53,19 @@ class OrganizationResponse(BaseModel):
 
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = None
+    display_name: Optional[str] = None
+    accent_color: Optional[str] = None
     ai_model: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_api_key: Optional[str] = None
     max_budget: Optional[float] = None
     industry: Optional[str] = None
+
+class TenantBrandResponse(BaseModel):
+    name: str
+    display_name: Optional[str] = None
+    logo_url: Optional[str] = None
+    accent_color: Optional[str] = None
 
 class LLMKeyTestRequest(BaseModel):
     provider: str  # openai | gemini_direct | openrouter
