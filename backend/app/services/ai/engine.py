@@ -48,6 +48,16 @@ class AIEngine:
 
         for acc in ad_accounts:
             if acc.status != "ACTIVE":
+                # Cuentas no-ACTIVE (ej. EXPIRED/ARCHIVED): descartar insights viejos para no
+                # dejarlos congelados como alertas activas indefinidamente.
+                await self.db.execute(
+                    update(AIInsight)
+                    .where(
+                        AIInsight.ad_account_id == acc.id,
+                        AIInsight.is_dismissed == False,  # noqa: E712
+                    )
+                    .values(is_dismissed=True)
+                )
                 continue
 
             # 1. Capa 1: Reglas fijas

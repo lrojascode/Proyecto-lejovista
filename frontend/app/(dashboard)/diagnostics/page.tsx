@@ -27,6 +27,52 @@ export default function Diagnostics() {
   const [dismissingId, setDismissingId] = useState("");
   const [isTriggering, setIsTriggering] = useState(false);
   const [triggerMessage, setTriggerMessage] = useState("");
+  const [showInfo, setShowInfo] = useState(false);
+
+  const activeAlerts = insights.filter((ins) => ins.level !== "INFO");
+  const infoAlerts = insights.filter((ins) => ins.level === "INFO");
+
+  const renderInsightCard = (ins: AIInsight) => {
+    const badgeClass = ins.level === "CRITICAL" ? "badge-danger" : ins.level === "WARNING" ? "badge-warning" : "badge-neutral";
+    return (
+      <div 
+        key={ins.id}
+        style={{
+          padding: "1rem",
+          borderRadius: "12px",
+          background: "var(--color-carbon)",
+          boxShadow: ins.level === "CRITICAL" ? "rgba(235, 87, 87, 0.25) 0px 0px 0px 1px inset" : "var(--shadow-subtle)",
+          position: "relative"
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", alignItems: "center" }}>
+          <span className={`badge ${badgeClass}`}>
+            {badgeIcon(badgeClass)} {ins.level}
+          </span>
+          <button
+            onClick={() => handleDismiss(ins.id)}
+            disabled={dismissingId === ins.id}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--color-ash)",
+              cursor: "pointer",
+              fontSize: "12px"
+            }}
+          >
+            {dismissingId === ins.id ? "Descartando..." : "Descartar"}
+          </button>
+        </div>
+        <h4 style={{ fontSize: "14px", fontWeight: 510, marginBottom: "0.25rem", color: "var(--color-paper)" }}>{ins.title}</h4>
+        <p style={{ fontSize: "13px", color: "var(--color-fog)", lineHeight: "1.5" }}>{ins.description}</p>
+        {ins.suggested_action_type && (
+          <div className="mono" style={{ color: "var(--color-iris-violet)", marginTop: "0.5rem" }}>
+            ↳ Acción sugerida: {ins.suggested_action_type}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const fetchData = async () => {
     setError("");
@@ -158,49 +204,31 @@ export default function Diagnostics() {
         {/* Sidebar Insights */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem", overflowY: "auto", paddingRight: "0.5rem" }}>
           <h3 style={{ fontSize: "16px", fontWeight: 510, borderBottom: "1px solid var(--color-graphite)", paddingBottom: "0.5rem", color: "var(--color-paper)" }}>
-            Alertas Activas ({insights.length})
+            Alertas Activas ({activeAlerts.length})
           </h3>
-          {insights.length === 0 ? (
-            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No hay alertas individuales activas.</p>
+          {activeAlerts.length === 0 ? (
+            <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No hay alertas críticas ni advertencias activas.</p>
           ) : (
-            insights.map((ins) => (
-              <div 
-                key={ins.id}
-                style={{
-                  padding: "1rem",
-                  borderRadius: "12px",
-                  background: "var(--color-carbon)",
-                  boxShadow: ins.level === "CRITICAL" ? "rgba(235, 87, 87, 0.25) 0px 0px 0px 1px inset" : "var(--shadow-subtle)",
-                  position: "relative"
-                }}
+            activeAlerts.map((ins) => renderInsightCard(ins))
+          )}
+
+          {infoAlerts.length > 0 && (
+            <div style={{ marginTop: "0.5rem", borderTop: "1px solid var(--color-graphite)", paddingTop: "0.75rem" }}>
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => setShowInfo(!showInfo)}
+                style={{ width: "100%", justifyContent: "space-between", display: "flex", alignItems: "center" }}
               >
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", alignItems: "center" }}>
-                  <span className={`badge ${ins.level === "CRITICAL" ? "badge-danger" : "badge-warning"}`}>
-                    {badgeIcon(ins.level === "CRITICAL" ? "badge-danger" : "badge-warning")} {ins.level}
-                  </span>
-                  <button
-                    onClick={() => handleDismiss(ins.id)}
-                    disabled={dismissingId === ins.id}
-                    style={{
-                      background: "none",
-                      border: "none",
-                      color: "var(--color-ash)",
-                      cursor: "pointer",
-                      fontSize: "12px"
-                    }}
-                  >
-                    {dismissingId === ins.id ? "Descartando..." : "Descartar"}
-                  </button>
+                <span>Avisos informativos ({infoAlerts.length})</span>
+                <span>{showInfo ? "▲ Ocultar" : "▼ Ver"}</span>
+              </button>
+              {showInfo && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "0.75rem" }}>
+                  {infoAlerts.map((ins) => renderInsightCard(ins))}
                 </div>
-                <h4 style={{ fontSize: "14px", fontWeight: 510, marginBottom: "0.25rem", color: "var(--color-paper)" }}>{ins.title}</h4>
-                <p style={{ fontSize: "13px", color: "var(--color-fog)", lineHeight: "1.5" }}>{ins.description}</p>
-                {ins.suggested_action_type && (
-                  <div className="mono" style={{ color: "var(--color-iris-violet)", marginTop: "0.5rem" }}>
-                    ↳ Acción sugerida: {ins.suggested_action_type}
-                  </div>
-                )}
-              </div>
-            ))
+              )}
+            </div>
           )}
         </div>
 

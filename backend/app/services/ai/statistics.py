@@ -3,10 +3,13 @@ import math
 from typing import List, Dict, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.config import settings
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
 from app.services.ai.thresholds import get_thresholds_for_org
+
+INSUFFICIENT_HISTORY_TITLE = "Histórico insuficiente para análisis estadístico"
 
 class Capa2Statistics:
     def __init__(self, db: AsyncSession):
@@ -15,19 +18,19 @@ class Capa2Statistics:
     async def analyze(self, ad_account: AdAccount) -> List[AIInsight]:
         """
         Analiza estadísticas de Capa 2 (medias móviles, tendencias y anomalías por Z-score).
-        Requiere datos históricos (analizamos los últimos 14 a 30 días).
+        Requiere datos históricos (analizamos hasta SNAPSHOT_RETENTION_DAYS).
         """
         t = get_thresholds_for_org(getattr(ad_account, "organization", None))
         insights = []
         insufficient_history = []  # campañas sin días suficientes para estadística
 
         today = datetime.date.today()
-        thirty_days_ago = today - datetime.timedelta(days=30)
+        history_start = today - datetime.timedelta(days=settings.SNAPSHOT_RETENTION_DAYS)
         
         # Obtener historial de snapshots de la cuenta
         q = select(CampaignSnapshot).where(
             CampaignSnapshot.ad_account_id == ad_account.id,
-            CampaignSnapshot.date >= thirty_days_ago
+            CampaignSnapshot.date >= history_start
         ).order_by(CampaignSnapshot.date.desc())
         
         res = await self.db.execute(q)
@@ -44,9 +47,15 @@ class Capa2Statistics:
             campaign_history[s.campaign_id].append(s)
 
         for c_id, history in campaign_history.items():
-            # Necesitamos un mínimo de días para un análisis estadístico con sentido.
-            if len(history) < t.min_history_days:
-                insufficient_history.append((history[0].campaign_name, len(history)))
+            # Solo analizamos campañas activas en la última sincronización
+            if not history or history[0].status != "ACTIVE":
+                continue
+
+            # Antigüedad real de la campaña: (max(date) - min(date)).days + 1
+            dates = [s.date for s in history]
+            real_history_days = (max(dates) - min(dates)).days + 1
+            if real_history_days < t.min_history_days:
+                insufficient_history.append((history[0].campaign_name, real_history_days))
                 continue
 
             # Asumimos que history está ordenada desc (más reciente primero)
@@ -141,7 +150,7 @@ class Capa2Statistics:
                 organization_id=ad_account.organization_id,
                 level="INFO",
                 category="ACCOUNT",
-                title="Histórico insuficiente para análisis estadístico",
+                title=INSUFFICIENT_HISTORY_TITLE,
                 description=(
                     f"Las siguientes campañas tienen menos de {t.min_history_days} días de datos, "
                     f"por lo que el análisis de tendencias y anomalías (Capa 2) aún no se aplica: {nombres}. "

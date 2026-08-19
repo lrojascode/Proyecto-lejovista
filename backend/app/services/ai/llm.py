@@ -8,6 +8,7 @@ from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.services.ai.token_tracking import UsageContext, record_token_usage
 from app.services.ai.thresholds import classify_campaign, compute_target_cpl
+from app.services.ai.statistics import INSUFFICIENT_HISTORY_TITLE
 
 logger = logging.getLogger("lejovista.llm")
 
@@ -198,7 +199,7 @@ def _filter_insufficient_history(insights_summary: str) -> str:
     """C-3: el aviso informativo de "histórico insuficiente" (Capa 2) es ruido
     para el diagnóstico del LLM, no una alerta accionable — se filtra antes
     de mandarlo al prompt."""
-    lines = [l for l in insights_summary.split("\n") if "Histórico insuficiente" not in l]
+    lines = [l for l in insights_summary.split("\n") if INSUFFICIENT_HISTORY_TITLE not in l]
     text = "\n".join(l for l in lines if l.strip())
     return text or "Sin alertas relevantes en esta ventana."
 

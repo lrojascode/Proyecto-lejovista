@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, case
 from app.database import get_db
 from app.models.user import User
 from app.models.ai_insight import AIInsight
@@ -22,7 +22,7 @@ async def list_active_insights(
 ):
     """
     Retorna la lista de insights generados por la IA que no han sido descartados,
-    para la cuenta de anuncios activa.
+    para la cuenta de anuncios activa, ordenados por severidad (CRITICAL -> WARNING -> INFO).
     """
     conditions = [
         AIInsight.organization_id == current_user.organization_id,
@@ -30,7 +30,14 @@ async def list_active_insights(
     ]
     if ad_account_id is not None:
         conditions.append(AIInsight.ad_account_id == ad_account_id)
-    q = select(AIInsight).where(*conditions).order_by(AIInsight.created_at.desc())
+
+    severity_order = case(
+        (AIInsight.level == "CRITICAL", 1),
+        (AIInsight.level == "WARNING", 2),
+        (AIInsight.level == "INFO", 3),
+        else_=4,
+    )
+    q = select(AIInsight).where(*conditions).order_by(severity_order, AIInsight.created_at.desc())
 
     res = await db.execute(q)
     return res.scalars().all()

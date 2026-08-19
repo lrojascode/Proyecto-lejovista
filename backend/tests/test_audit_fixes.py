@@ -1268,3 +1268,66 @@ async def test_ad_account_header_rejects_foreign_account(async_client: AsyncClie
         "/api/v1/campaigns/recent", headers={**headers, "X-Ad-Account-Id": acc_b.id}
     )
     assert res.status_code == 403
+
+
+# --- 0.2: histórico insuficiente filtra inactivas, cuenta días reales y ordena por severidad ---
+@pytest.mark.asyncio
+async def test_capa2_ignores_paused_campaigns_for_insufficient_history(db_session: AsyncSession):
+    from app.services.ai.statistics import Capa2Statistics
+    org, acc = await _make_org_and_account(db_session, slug="c2-paused-org")
+    today = datetime.date.today()
+    for d in range(2):
+        db_session.add(CampaignSnapshot(
+            ad_account_id=acc.id, organization_id=org.id, campaign_id="c_paused",
+            campaign_name="Camp Paused", status="PAUSED", spend=10.0, conversions=2,
+            impressions=100, clicks=5, date=today - datetime.timedelta(days=d),
+        ))
+    await db_session.flush()
+    insights = await Capa2Statistics(db_session).analyze(acc)
+    assert not any(i.title.startswith("Histórico insuficiente") for i in insights)
+
+
+@pytest.mark.asyncio
+async def test_capa2_counts_calendar_span_not_row_count(db_session: AsyncSession):
+    from app.services.ai.statistics import Capa2Statistics
+    org, acc = await _make_org_and_account(db_session, slug="c2-span-org")
+    today = datetime.date.today()
+    for d in [0, 5, 9]:
+        db_session.add(CampaignSnapshot(
+            ad_account_id=acc.id, organization_id=org.id, campaign_id="c_intermittent",
+            campaign_name="Camp Intermittent", status="ACTIVE", spend=10.0, conversions=2,
+            impressions=100, clicks=5, date=today - datetime.timedelta(days=d),
+        ))
+    await db_session.flush()
+    insights = await Capa2Statistics(db_session).analyze(acc)
+    assert not any(i.title.startswith("Histórico insuficiente") for i in insights)
+
+
+@pytest.mark.asyncio
+async def test_insights_ordered_by_severity(async_client: AsyncClient, db_session: AsyncSession):
+    org, acc = await _make_org_and_account(db_session, slug="insight-order-org")
+    now = datetime.datetime.utcnow()
+    i_info = AIInsight(
+        id="ins-info", organization_id=org.id, ad_account_id=acc.id,
+        level="INFO", category="ACCOUNT", title="Info Alert", description="Info desc",
+        created_at=now - datetime.timedelta(minutes=1)
+    )
+    i_warn = AIInsight(
+        id="ins-warn", organization_id=org.id, ad_account_id=acc.id,
+        level="WARNING", category="PERFORMANCE", title="Warning Alert", description="Warn desc",
+        created_at=now - datetime.timedelta(minutes=2)
+    )
+    i_crit = AIInsight(
+        id="ins-crit", organization_id=org.id, ad_account_id=acc.id,
+        level="CRITICAL", category="PERFORMANCE", title="Critical Alert", description="Crit desc",
+        created_at=now - datetime.timedelta(minutes=3)
+    )
+    db_session.add_all([i_info, i_warn, i_crit])
+    await db_session.commit()
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "insightorder@example.com")
+    res = await async_client.get("/api/v1/insights", headers={**headers, "X-Ad-Account-Id": acc.id})
+    assert res.status_code == 200
+    levels = [item["level"] for item in res.json()]
+    assert levels == ["CRITICAL", "WARNING", "INFO"]
+
