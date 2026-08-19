@@ -46,17 +46,24 @@ from app.utils.security import has_role
 
 logger = logging.getLogger(__name__)
 
-# Tope de llamadas al LLM por sesión — el chat entero debe poder completarse
-# sin él (fallback determinista), así que esto es un techo de costo, no una
-# dependencia funcional.
-MAX_LLM_TURNS_PER_SESSION = 12
+# Topes de llamadas al LLM por sesión y por modo (H6)
+MAX_UNDERSTANDING_CALLS: Dict[str, int] = {"BUILD": 12, "ASK": 40}
+MAX_ANALYSIS_TURNS: Dict[str, int] = {"BUILD": 30, "ASK": 60}
+MAX_MESSAGES_PERSISTED = 200
 
-# Reescritura conversacional (CH-7): como mucho un mensaje reescrito por turno,
-# y solo mientras la sesión no se haya ido de largo. Va contra `turn_count` y
-# NO contra `llm_calls` a propósito: el presupuesto de `llm_calls` es para
-# entender al usuario, que es funcional; esto es cosmético y no debe poder
-# dejar al chat sin capacidad de comprensión a mitad de una conversación.
+# Compatibilidad hacia atrás
+MAX_LLM_TURNS_PER_SESSION = 12
 MAX_REPHRASED_TURNS = 30
+
+
+def _max_understanding_calls(session: CampaignChatSession) -> int:
+    mode = getattr(session, "mode", "BUILD") or "BUILD"
+    return MAX_UNDERSTANDING_CALLS.get(mode, 12)
+
+
+def _max_analysis_turns(session: CampaignChatSession) -> int:
+    mode = getattr(session, "mode", "BUILD") or "BUILD"
+    return MAX_ANALYSIS_TURNS.get(mode, 30)
 
 _SLOT_KEYS = {
     "goal_text", "product_name", "budget", "budget_type", "days",
@@ -214,7 +221,7 @@ async def advance_session(db: AsyncSession, current_user: User, session_id: str)
         return session
 
     messages.append(extra)
-    session.messages_json = messages
+    session.messages_json = messages[-MAX_MESSAGES_PERSISTED:]
     if extra["type"] == "result":
         session.status = "CLOSED_CREATED"
         session.state = "DONE"
@@ -531,7 +538,7 @@ def _handle_reject(session: CampaignChatSession, messages: List[Dict[str, Any]])
 async def _try_llm_extraction(
     db: AsyncSession, current_user: User, session: CampaignChatSession, text: str
 ) -> Optional[extraction.ExtractionResult]:
-    if (session.llm_calls or 0) >= MAX_LLM_TURNS_PER_SESSION:
+    if (session.llm_calls or 0) >= _max_understanding_calls(session):
         return None
 
     org = await db.get(Organization, current_user.organization_id)
@@ -567,7 +574,7 @@ async def _try_llm_plan(
     `plan_chat_request`. Preserva AI-1: cero cifras en la respuesta del modelo,
     solo etiquetas de bloques.
     """
-    if (session.llm_calls or 0) >= MAX_LLM_TURNS_PER_SESSION:
+    if (session.llm_calls or 0) >= _max_understanding_calls(session):
         return None, None
 
     org = await db.get(Organization, current_user.organization_id)
@@ -608,7 +615,7 @@ async def _say(
     que en el peor caso el usuario ve el texto de siempre — nunca una cifra
     que el modelo se haya inventado (AI-1).
     """
-    if (session.turn_count or 0) >= MAX_REPHRASED_TURNS:
+    if (session.turn_count or 0) >= _max_analysis_turns(session):
         return cards.text_message(text)
 
     org = await db.get(Organization, current_user.organization_id)
@@ -647,7 +654,7 @@ async def _analyze(
     de creación: ahí cada palabra empuja a una acción irreversible y la
     exigencia es igualdad exacta.
     """
-    if (session.turn_count or 0) >= MAX_REPHRASED_TURNS:
+    if (session.turn_count or 0) >= _max_analysis_turns(session):
         return cards.text_message(canonical)
 
     org = await db.get(Organization, current_user.organization_id)
@@ -868,7 +875,7 @@ async def process_message(
 
     session.turn_count = (session.turn_count or 0) + 1
     session.last_client_turn_id = client_turn_id
-    session.messages_json = messages
+    session.messages_json = messages[-MAX_MESSAGES_PERSISTED:]
     await db.commit()
     await db.refresh(session)
     return session
@@ -913,7 +920,7 @@ async def process_decision(
 
     session.turn_count = (session.turn_count or 0) + 1
     session.last_client_turn_id = client_turn_id
-    session.messages_json = messages
+    session.messages_json = messages[-MAX_MESSAGES_PERSISTED:]
     await db.commit()
     await db.refresh(session)
     return session
