@@ -74,6 +74,9 @@ class AdAccountCreate(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None
 
+class AdAccountReconnect(BaseModel):
+    access_token: str = Field(..., min_length=10, description="Nuevo Access Token de Meta Graph API")
+
 class AdAccountResponse(BaseModel):
     id: str
     platform: str

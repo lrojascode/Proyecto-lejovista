@@ -254,6 +254,8 @@ export const api = {
   getAdAccounts: (includeArchived: boolean = false) =>
     apiRequest<AdAccount[]>(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),
   connectAdAccount: (data: any) => apiRequest<AdAccount>("/api/v1/organizations/my/ad-accounts", "POST", data),
+  reconnectAdAccount: (id: string, accessToken: string) =>
+    apiRequest<AdAccount>(`/api/v1/organizations/my/ad-accounts/${id}/reconnect`, "POST", { access_token: accessToken }),
   archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),
   restoreAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/restore`, "POST"),
   deleteAdAccount: (id: string) => apiRequest<{ message: string }>(`/api/v1/organizations/my/ad-accounts/${id}`, "DELETE"),

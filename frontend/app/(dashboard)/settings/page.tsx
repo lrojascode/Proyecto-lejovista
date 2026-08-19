@@ -53,6 +53,12 @@ export default function Settings() {
   // Cuentas archivadas (0.4)
   const [archivedAccounts, setArchivedAccounts] = useState<AdAccount[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+
+  // Reconexión simplificada (4.4)
+  const [reconnectingAccount, setReconnectingAccount] = useState<AdAccount | null>(null);
+  const [reconnectToken, setReconnectToken] = useState("");
+  const [reconnectMsg, setReconnectMsg] = useState("");
+  const [reconnectLoading, setReconnectLoading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteInputName, setDeleteInputName] = useState("");
 
@@ -327,6 +333,27 @@ export default function Settings() {
     }
   };
 
+  const handleReconnectAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reconnectingAccount) return;
+    setReconnectLoading(true);
+    setReconnectMsg("");
+    try {
+      await api.reconnectAdAccount(reconnectingAccount.id, reconnectToken);
+      setReconnectMsg("Token reconectado exitosamente. Sincronización iniciada.");
+      setReconnectToken("");
+      setTimeout(() => {
+        setReconnectingAccount(null);
+        setReconnectMsg("");
+      }, 1500);
+      fetchData();
+    } catch (err: any) {
+      setReconnectMsg(`Error: ${err.message}`);
+    } finally {
+      setReconnectLoading(false);
+    }
+  };
+
   if (loading) {
     return <div style={{ color: "var(--text-secondary)" }}>Cargando configuración...</div>;
   }
@@ -575,6 +602,21 @@ export default function Settings() {
                           <span className="badge badge-warning">{badgeIcon("badge-warning")} Suspendida</span>
                         ) : (
                           <span className="badge badge-success">{badgeIcon("badge-success")} Activo</span>
+                        )}
+
+                        {(acc.status === "EXPIRED" || acc.last_sync_error_code === 190) && (
+                          <button
+                            type="button"
+                            className="btn-primary btn-sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setReconnectingAccount(acc);
+                              setReconnectToken("");
+                              setReconnectMsg("");
+                            }}
+                          >
+                            Reconectar
+                          </button>
                         )}
 
                         {confirmArchiveId === acc.id ? (
@@ -947,9 +989,117 @@ export default function Settings() {
             )}
           </div>
 
+          {/* Reconectar cuenta EXPIRED (4.4) */}
+          {reconnectingAccount && (
+            <div className="glass-card" style={{ border: "1px solid var(--color-coral-red)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                <h3 style={{ fontSize: "16px", fontWeight: 510, color: "var(--color-coral-red)" }}>
+                  Reconectar Token: {reconnectingAccount.name}
+                </h3>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => {
+                    setReconnectingAccount(null);
+                    setReconnectToken("");
+                    setReconnectMsg("");
+                  }}
+                >
+                  ✕ Cerrar
+                </button>
+              </div>
+
+              <p style={{ fontSize: "13px", color: "var(--color-fog)", marginBottom: "1rem" }}>
+                Pega un nuevo token de acceso para la cuenta <code>{reconnectingAccount.external_account_id}</code>. El token se canjeará a larga duración y se reactivará la sincronización.
+              </p>
+
+              {reconnectMsg && (
+                <div style={{
+                  background: reconnectMsg.includes("Error") ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 166, 68, 0.1)",
+                  border: `1px solid ${reconnectMsg.includes("Error") ? "rgba(235, 87, 87, 0.2)" : "rgba(39, 166, 68, 0.2)"}`,
+                  color: reconnectMsg.includes("Error") ? "var(--danger)" : "var(--success)",
+                  padding: "0.5rem 0.75rem",
+                  borderRadius: "6px",
+                  fontSize: "0.85rem",
+                  marginBottom: "1rem"
+                }}>
+                  {reconnectMsg}
+                </div>
+              )}
+
+              <form onSubmit={handleReconnectAccount} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                    Nuevo Access Token de Meta Graph API
+                  </label>
+                  <input
+                    type="password"
+                    className="form-input"
+                    required
+                    value={reconnectToken}
+                    onChange={(e) => setReconnectToken(e.target.value)}
+                    placeholder="EAAB..."
+                  />
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    onClick={() => {
+                      setReconnectingAccount(null);
+                      setReconnectToken("");
+                      setReconnectMsg("");
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary btn-sm"
+                    disabled={reconnectLoading || !reconnectToken.trim()}
+                  >
+                    {reconnectLoading ? "Verificando..." : "Guardar y Reactivar Cuenta"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
           {/* Connect new */}
           <div className="glass-card">
-            <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1.25rem" }}>Conectar Cuenta de Meta Ads</h3>
+            <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem" }}>Conectar Cuenta de Meta Ads</h3>
+            <p style={{ color: "var(--color-fog)", fontSize: "13px", marginBottom: "1rem" }}>
+              Conecta una cuenta publicitaria mediante su ID y token de acceso con permisos de gestión de anuncios.
+            </p>
+
+            {/* Guía de Scopes y Permisos (4.1) */}
+            <div style={{
+              background: "var(--color-obsidian)",
+              border: "1px solid var(--color-graphite)",
+              borderRadius: "8px",
+              padding: "12px",
+              marginBottom: "1.25rem",
+              fontSize: "12px",
+            }}>
+              <strong style={{ color: "var(--color-paper)", display: "block", marginBottom: "4px" }}>
+                💡 Permisos (Scopes) requeridos en Meta:
+              </strong>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "4px", margin: "6px 0" }}>
+                {[
+                  "ads_read", "ads_management", "business_management",
+                  "pages_show_list", "pages_read_engagement", "pages_manage_ads",
+                  "read_insights", "whatsapp_business_management"
+                ].map((scope) => (
+                  <code key={scope} style={{ background: "rgba(255,255,255,0.06)", padding: "2px 6px", borderRadius: "4px", color: "var(--color-signal-teal)" }}>
+                    {scope}
+                  </code>
+                ))}
+              </div>
+              <p style={{ color: "var(--color-fog)", marginTop: "6px", margin: 0 }}>
+                Genera tu token en <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer" style={{ color: "var(--color-signal-teal)", textDecoration: "underline" }}>Meta Graph API Explorer</a> o desde un Usuario del Sistema en Business Manager.
+              </p>
+            </div>
             
             {connMsg && (
               <div style={{
@@ -990,8 +1140,11 @@ export default function Settings() {
                     required
                     value={extId}
                     onChange={(e) => setExtId(e.target.value)}
-                    placeholder="123456789"
+                    placeholder="act_123456789012345"
                   />
+                  <span style={{ fontSize: "11px", color: "var(--color-fog)", marginTop: "2px", display: "block" }}>
+                    Si escribes solo los dígitos, le añadimos <code>act_</code> automáticamente.
+                  </span>
                 </div>
               </div>
 

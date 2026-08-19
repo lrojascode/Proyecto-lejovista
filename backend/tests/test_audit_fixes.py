@@ -1686,6 +1686,54 @@ async def test_sync_progress_tracking_and_diagnostics(
     assert acc.last_synced_at is not None
 
 
+@pytest.mark.asyncio
+async def test_meta_account_connection_normalization_and_reconnect(
+    async_client: AsyncClient, db_session: AsyncSession, mocker
+):
+    """
+    Fase 4: Verifica la normalización de act_XXX en conexión y el endpoint
+    de reconexión de cuentas EXPIRED.
+    """
+    mocker.patch("app.api.v1.organizations.sync_ad_account")
+    org, acc = await _make_org_and_account(db_session, slug="connect-org")
+    await db_session.commit()
+    headers = await _auth_headers_for_org(async_client, db_session, org, "admin@example.com")
+
+    # 1. Normalización de external_account_id sin act_
+    res = await async_client.post(
+        "/api/v1/organizations/my/ad-accounts",
+        headers=headers,
+        json={
+            "platform": "META",
+            "name": "Cuenta Normalizada",
+            "external_account_id": "9876543210",
+            "access_token": "EAA_test_token_123456789",
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["external_account_id"] == "act_9876543210"
+
+    # 2. Reconexión de cuenta
+    acc.status = "EXPIRED"
+    acc.last_sync_error_code = 190
+    acc.last_sync_error_detail = "Token expirado"
+    db_session.add(acc)
+    await db_session.commit()
+
+    recon_res = await async_client.post(
+        f"/api/v1/organizations/my/ad-accounts/{acc.id}/reconnect",
+        headers=headers,
+        json={"access_token": "EAA_new_fresh_token_99999"},
+    )
+    assert recon_res.status_code == 200
+    recon_data = recon_res.json()
+    assert recon_data["status"] == "ACTIVE"
+    assert recon_data["last_sync_error_code"] is None
+    assert recon_data["last_sync_error_detail"] is None
+
+
+
 
 
 

@@ -13,7 +13,7 @@ from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, LLMKeyTestRequest, LLMKeyTestResponse,
-    AdAccountCreate, AdAccountResponse,
+    AdAccountCreate, AdAccountReconnect, AdAccountResponse,
     AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
     WhatsAppNumberResponse, WhatsAppNumberCreate, WhatsAppNumberUpdate,
 )
@@ -434,6 +434,11 @@ async def connect_ad_account(
     current_user: User = Depends(require_role("ADMIN")),
     db: AsyncSession = Depends(get_db)
 ):
+    # 4.2: Normalizar external_account_id
+    clean_ext_id = acc_in.external_account_id.strip()
+    if acc_in.platform.upper() == "META" and not clean_ext_id.startswith("act_") and clean_ext_id.isdigit():
+        clean_ext_id = f"act_{clean_ext_id}"
+
     # 0. Los tokens pegados a mano suelen ser de corta duración (horas) — así se
     # cayó el pipeline el 12-jul (cuentas EXPIRED). Si hay app credentials reales
     # configuradas, se canjea por un long-lived (~60 días) antes de guardar; si el
@@ -442,11 +447,37 @@ async def connect_ad_account(
     if not token_to_store:
         token_to_store, token_expires_at = acc_in.access_token, None
 
+    # 4.3: Validar el token contra Graph API antes de guardar si no estamos en mock
+    from app.config import settings
+    if not settings.MOCK_SERVICES and acc_in.platform.upper() == "META":
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                test_res = await http_client.get(
+                    f"https://graph.facebook.com/v19.0/{clean_ext_id}",
+                    params={"fields": "id,name,account_status", "access_token": token_to_store},
+                )
+                data = test_res.json()
+                if test_res.status_code != 200 or "error" in data:
+                    err_msg = data.get("error", {}).get("message", "Token inválido o sin acceso a la cuenta")
+                    err_code = data.get("error", {}).get("code")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Meta Ads rechazó el token (Código {err_code}): {err_msg}. Verifica permisos (ads_read, ads_management) y acceso a {clean_ext_id}."
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se pudo verificar el token contra Meta Graph API: {e}"
+            )
+
     # 1. Comprobar si ya está conectado el mismo ad account para la misma organización
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
         AdAccount.platform == acc_in.platform,
-        AdAccount.external_account_id == acc_in.external_account_id
+        AdAccount.external_account_id == clean_ext_id
     )
     res = await db.execute(q)
     existing = res.scalar_one_or_none()
@@ -457,6 +488,8 @@ async def connect_ad_account(
         if acc_in.refresh_token:
             existing.set_refresh_token(acc_in.refresh_token)
         existing.status = "ACTIVE"
+        existing.last_sync_error_code = None
+        existing.last_sync_error_detail = None
         db.add(existing)
         ad_acc = existing
     else:
@@ -464,7 +497,7 @@ async def connect_ad_account(
         ad_acc = AdAccount(
             organization_id=current_user.organization_id,
             platform=acc_in.platform,
-            external_account_id=acc_in.external_account_id,
+            external_account_id=clean_ext_id,
             name=acc_in.name,
             status="ACTIVE"
         )
@@ -479,3 +512,57 @@ async def connect_ad_account(
     sync_ad_account.delay(ad_acc.id, "FULL")
     
     return ad_acc
+
+
+@router.post("/my/ad-accounts/{id}/reconnect", response_model=AdAccountResponse)
+async def reconnect_ad_account(
+    id: str,
+    payload: AdAccountReconnect,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    4.4: Reconexión simplificada de una cuenta EXPIRED con un nuevo token.
+    """
+    acc = await db.get(AdAccount, id)
+    if not acc or acc.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Cuenta de anuncios no encontrada.")
+
+    token_to_store, token_expires_at = await exchange_for_long_lived_token(payload.access_token)
+    if not token_to_store:
+        token_to_store, token_expires_at = payload.access_token, None
+
+    from app.config import settings
+    if not settings.MOCK_SERVICES and acc.platform.upper() == "META":
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http_client:
+                test_res = await http_client.get(
+                    f"https://graph.facebook.com/v19.0/{acc.external_account_id}",
+                    params={"fields": "id,name,account_status", "access_token": token_to_store},
+                )
+                data = test_res.json()
+                if test_res.status_code != 200 or "error" in data:
+                    err_msg = data.get("error", {}).get("message", "Token inválido o sin acceso a la cuenta")
+                    err_code = data.get("error", {}).get("code")
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Meta Ads rechazó el token (Código {err_code}): {err_msg}."
+                    )
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No se pudo verificar el token contra Meta Graph API: {e}"
+            )
+
+    acc.set_access_token(token_to_store, expires_at=token_expires_at)
+    acc.status = "ACTIVE"
+    acc.last_sync_error_code = None
+    acc.last_sync_error_detail = None
+    db.add(acc)
+    await db.commit()
+
+    sync_ad_account.delay(acc.id, "FULL")
+    return acc
