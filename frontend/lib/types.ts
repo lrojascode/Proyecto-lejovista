@@ -22,11 +22,33 @@ export type Organization = Schemas["OrganizationResponse"] & {
   has_llm_api_key?: boolean;
   llm_api_key_preview?: string | null;
 };
-export type AdAccount = Schemas["AdAccountResponse"];
+export type AdAccount = Schemas["AdAccountResponse"] & {
+  last_sync_error_code?: number | null;
+  last_sync_error_detail?: string | null;
+  last_synced_at?: string | null;
+};
 export type MetaPage = Schemas["MetaPageResponse"];
 export type WhatsAppNumber = Schemas["WhatsAppNumberResponse"];
 export type BusinessPolicies = Schemas["BusinessPoliciesResponse"];
 export type AiModelsResponse = Schemas["AiModelsResponse"];
+
+export type SyncStatusResponse = {
+  ad_account_id?: string;
+  status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED";
+  step?: number;
+  total_steps?: number;
+  step_name?: string;
+  message?: string;
+  counts?: Record<string, number>;
+  records_synced?: number;
+  summary?: Record<string, number>;
+  error_code?: number | null;
+  error_detail?: string | null;
+  last_synced_at?: string | null;
+  last_sync_error_code?: number | null;
+  last_sync_error_detail?: string | null;
+  updated_at?: string;
+};
 
 // --- CAMPAIGN SNAPSHOT (/campaigns/recent, /campaigns/{id}/history) ---
 export type CampaignSnapshot = Schemas["CampaignSnapshotResponse"];

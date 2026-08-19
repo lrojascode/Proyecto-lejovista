@@ -34,6 +34,9 @@ class AdAccount(Base):
     )
     spend_cap: Mapped[float] = mapped_column(Float, default=0.0)
     amount_spent: Mapped[float] = mapped_column(Float, default=0.0)
+    last_sync_error_code: Mapped[int] = mapped_column(nullable=True)
+    last_sync_error_detail: Mapped[str] = mapped_column(String, nullable=True)
+    last_synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones

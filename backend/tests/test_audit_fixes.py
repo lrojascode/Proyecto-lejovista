@@ -1629,6 +1629,64 @@ async def test_campaign_validator_rejects_conflicting_image_sources_and_planner_
     assert action.parameters["reused_creative"]["name"] == "Creativo Ganador 2026"
 
 
+@pytest.mark.asyncio
+async def test_sync_progress_tracking_and_diagnostics(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    """
+    3.1, 3.2, 3.3: Verifica el endpoint de estado de sync, el progreso reportado
+    y el registro de diagnósticos de error en AdAccount.
+    """
+    from app.services.meta_ads.sync_progress import SyncProgressTracker
+    from app.services.meta_ads.exceptions import extract_meta_error_diagnostic
+    from app.services.meta_ads.sync import MetaAdsSyncService
+
+    org, acc = await _make_org_and_account(db_session, slug="sync-org")
+    await db_session.commit()
+    headers = await _auth_headers_for_org(async_client, db_session, org, "syncuser@example.com")
+
+    # 1. SyncProgressTracker report_progress y get_sync_status
+    SyncProgressTracker.report_progress(
+        org.id, acc.id, step=3, total_steps=5, step_name="adsets", message="Sincronizando adsets..."
+    )
+    status_res = await async_client.get(
+        f"/api/v1/campaigns/sync-status?ad_account_id={acc.id}",
+        headers=headers,
+    )
+    assert status_res.status_code == 200
+    status_data = status_res.json()
+    assert status_data["status"] in ("RUNNING", "IDLE")
+
+    # 2. Diagnóstico de errores de Meta
+    code_190, msg_190 = extract_meta_error_diagnostic({"error": {"code": 190, "message": "Error validating access token: Session has expired"}})
+    assert code_190 == 190
+    assert "expirado" in msg_190
+
+    code_17, msg_17 = extract_meta_error_diagnostic({"error": {"code": 17, "message": "User request limit reached"}})
+    assert code_17 == 17
+    assert "rate limit" in msg_17
+
+    code_200, msg_200 = extract_meta_error_diagnostic({"error": {"code": 200, "message": "Permissions error: ads_read"}})
+    assert code_200 == 200
+    assert "permiso" in msg_200
+
+    # 3. Sync exitoso limpia errores y actualiza last_synced_at
+    acc.last_sync_error_code = 190
+    acc.last_sync_error_detail = "Token expirado"
+    db_session.add(acc)
+    await db_session.commit()
+
+    service = MetaAdsSyncService(db_session)
+    job = await service.run_sync(acc, "INCREMENTAL")
+    assert job.status == "COMPLETED"
+
+    await db_session.refresh(acc)
+    assert acc.last_sync_error_code is None
+    assert acc.last_sync_error_detail is None
+    assert acc.last_synced_at is not None
+
+
+
 
 
 

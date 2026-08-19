@@ -3,7 +3,7 @@ import type {
   TokenResponse, User, Organization, AdAccount, MetaPage, WhatsAppNumber, BusinessPolicies, AiModelsResponse,
   CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
-  ChatSessionResponse, ChatSessionSummary,
+  ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
 } from "./types";
 
 // (S-2) El access token vive SOLO en memoria del módulo, nunca en
@@ -261,7 +261,9 @@ export const api = {
   // --- CAMPAIGNS ---
   getRecentCampaigns: () => apiRequest<CampaignSnapshot[]>("/api/v1/campaigns/recent", "GET"),
   getCampaignHistory: (campaignId: string) => apiRequest<CampaignSnapshot[]>(`/api/v1/campaigns/${campaignId}/history`, "GET"),
-  triggerSync: () => apiRequest("/api/v1/campaigns/sync-trigger", "POST"),
+  triggerSync: () => apiRequest<{ status: string; task_id?: string; message: string }>("/api/v1/campaigns/sync-trigger", "POST"),
+  getSyncStatus: (adAccountId?: string) =>
+    apiRequest<SyncStatusResponse>(`/api/v1/campaigns/sync-status${adAccountId ? `?ad_account_id=${encodeURIComponent(adAccountId)}` : ""}`, "GET"),
   getApiCallHistory: (limit: number = 10) => apiRequest<ApiCallHistoryEntry[]>(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
   getMyPages: () => apiRequest<MetaPage[]>("/api/v1/organizations/my/pages", "GET"),
   setPageWhatsApp: (pageId: string, whatsappNumber: string) =>

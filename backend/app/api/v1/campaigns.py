@@ -192,10 +192,58 @@ async def trigger_manual_sync(
     # Se consume solo si de verdad hay algo que sincronizar (ver hallazgo 3.1 del HANDOFF).
     await enforce_cooldown("sync", current_user.organization_id, cooldown_seconds=60)
 
+    task_ids = []
     for acc in accounts:
-        sync_ad_account.delay(acc.id, "INCREMENTAL")
-        
-    return {"message": f"Sincronización manual programada para {len(accounts)} cuentas de anuncios."}
+        task = sync_ad_account.delay(acc.id, "INCREMENTAL")
+        task_ids.append(task.id)
+
+    return {
+        "status": "queued",
+        "task_id": task_ids[0] if task_ids else None,
+        "task_ids": task_ids,
+        "accounts_queued": len(accounts),
+        "message": f"Sincronización encolada para {len(accounts)} cuenta(s) — revisando Meta en segundo plano.",
+    }
+
+
+@router.get("/sync-status")
+async def get_sync_status(
+    ad_account_id: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    3.1: Consulta el estado y progreso en vivo de la sincronización de una cuenta
+    (o de la primera cuenta activa de la organización).
+    """
+    from app.services.meta_ads.sync_progress import SyncProgressTracker
+
+    if not ad_account_id:
+        acc = (await db.execute(
+            select(AdAccount).where(
+                AdAccount.organization_id == current_user.organization_id,
+                AdAccount.status == "ACTIVE",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if not acc:
+            return {"status": "IDLE", "message": "No hay cuentas activas"}
+        ad_account_id = acc.id
+    else:
+        acc = await db.get(AdAccount, ad_account_id)
+        if not acc or acc.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=404, detail="Cuenta de anuncios no encontrada.")
+
+    status_data = SyncProgressTracker.get_sync_status(ad_account_id)
+    if status_data:
+        return status_data
+
+    return {
+        "ad_account_id": ad_account_id,
+        "status": "IDLE",
+        "last_synced_at": acc.last_synced_at.isoformat() if acc.last_synced_at else None,
+        "last_sync_error_code": acc.last_sync_error_code,
+        "last_sync_error_detail": acc.last_sync_error_detail,
+    }
 
 
 @router.get("/suggestion", response_model=SuggestionResponse)

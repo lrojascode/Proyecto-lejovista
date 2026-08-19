@@ -18,7 +18,8 @@ from app.models.meta_page import MetaPage
 from app.models.sync_job import SyncJob
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
-from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
+from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error, extract_meta_error_diagnostic
+from app.services.meta_ads.sync_progress import SyncProgressTracker
 
 logger = logging.getLogger("lejovista.sync")
 
@@ -48,6 +49,16 @@ class MetaAdsSyncService:
         acc_id = ad_account.id
         org_id = ad_account.organization_id
 
+        from app.services.meta_ads.sync_progress import SyncProgressTracker
+        SyncProgressTracker.report_progress(
+            organization_id=org_id,
+            ad_account_id=acc_id,
+            step=1,
+            total_steps=5,
+            step_name="account",
+            message="Verificando cuenta en Meta...",
+        )
+
         try:
             limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
 
@@ -59,6 +70,13 @@ class MetaAdsSyncService:
             job.status = "COMPLETED"
             job.records_synced = records_synced
             job.completed_at = datetime.datetime.utcnow()
+
+            # 3.3: limpiar errores anteriores y registrar fecha de sync
+            ad_account.last_sync_error_code = None
+            ad_account.last_sync_error_detail = None
+            ad_account.last_synced_at = datetime.datetime.utcnow()
+            self.db.add(ad_account)
+
             # El commit final va DENTRO del try a propósito: buena parte de las
             # escrituras del sync quedan pendientes en la sesión y solo se vuelcan
             # aquí, así que es un punto de fallo real (p. ej. IntegrityError por
@@ -66,6 +84,13 @@ class MetaAdsSyncService:
             # del try, ese error escapaba sin marcar el job y lo dejaba en RUNNING
             # para siempre.
             await self.db.commit()
+
+            # 3.2: reportar completado
+            SyncProgressTracker.report_completed(
+                organization_id=org_id,
+                ad_account_id=acc_id,
+                records_synced=records_synced,
+            )
             return job
         except Exception as e:
             logger.exception(f"Error en la sincronización {sync_type} de cuenta {acc_id}")
@@ -77,15 +102,36 @@ class MetaAdsSyncService:
             except Exception:
                 logger.exception("No se pudo revertir la sesión tras el fallo de sync")
 
+            from app.services.meta_ads.exceptions import extract_meta_error_diagnostic
+            err_code, err_detail = extract_meta_error_diagnostic(e)
+
             job = await self.db.get(SyncJob, job_id)
             if job is not None:
                 job.status = "FAILED"
                 job.error_message = str(e)
                 job.completed_at = datetime.datetime.utcnow()
-                try:
-                    await self.db.commit()
-                except Exception:
-                    logger.exception("No se pudo marcar el SyncJob %s como FAILED", job_id)
+
+            # 3.3: registrar diagnóstico de error en AdAccount
+            acc = await self.db.get(AdAccount, acc_id)
+            if acc is not None:
+                acc.last_sync_error_code = err_code
+                acc.last_sync_error_detail = err_detail
+                if err_code == 190:
+                    acc.status = "EXPIRED"
+                self.db.add(acc)
+
+            try:
+                await self.db.commit()
+            except Exception:
+                logger.exception("No se pudo marcar el SyncJob %s como FAILED", job_id)
+
+            SyncProgressTracker.report_failed(
+                organization_id=org_id,
+                ad_account_id=acc_id,
+                error_message=str(e),
+                error_code=err_code,
+                error_detail=err_detail,
+            )
 
             classified = classify_meta_error(e)
             if isinstance(classified, TransientMetaError):
@@ -123,6 +169,11 @@ class MetaAdsSyncService:
         num_queries = 15 if sync_type == "FULL" else 4
         for i in range(2, num_queries + 1):
             await limiter.call_api(f"act_{ad_account.external_account_id}/insights", {"query_num": i})
+
+        from app.services.meta_ads.sync_progress import SyncProgressTracker
+        SyncProgressTracker.report_progress(
+            ad_account.organization_id, ad_account.id, 2, 5, "campaigns", "Sincronizando campañas e insights..."
+        )
 
         # Definir campañas mockeadas
         campaign_definitions = [
@@ -331,9 +382,19 @@ class MetaAdsSyncService:
                         creative_cta_type=c.get("creative_cta_type"),
                     ))
 
+        SyncProgressTracker.report_progress(
+            ad_account.organization_id, ad_account.id, 3, 5, "adsets", "Sincronizando conjuntos de anuncios y audiencias..."
+        )
+        SyncProgressTracker.report_progress(
+            ad_account.organization_id, ad_account.id, 4, 5, "ads", "Sincronizando anuncios y métricas..."
+        )
+
         # El BACKFILL es deliberadamente una tarea de historia diaria, no otro
         # FULL: no repite inventario, páginas ni el histórico mensual de gasto.
         if sync_type != SYNC_TYPE_BACKFILL:
+            SyncProgressTracker.report_progress(
+                ad_account.organization_id, ad_account.id, 5, 5, "creatives", "Sincronizando creativos e inventario..."
+            )
             await self._ensure_mock_inventory(ad_account)
             await self._sync_mock_spend_history(ad_account)
 
@@ -536,11 +597,20 @@ class MetaAdsSyncService:
             snapshots_by_campaign[camp_id].append(snapshot)
 
         # 3. Adsets, anuncios e inventario (P-2.2)
+        SyncProgressTracker.report_progress(
+            ad_account.organization_id, ad_account.id, 3, 5, "adsets", "Sincronizando conjuntos de anuncios y segmentación..."
+        )
         adset_budget_by_campaign = await self._sync_real_adsets(
             ad_account, token, limiter, insights_period
         )
+        SyncProgressTracker.report_progress(
+            ad_account.organization_id, ad_account.id, 4, 5, "ads", "Sincronizando anuncios y creativos..."
+        )
         await self._sync_real_ads(ad_account, token, limiter, insights_period)
         if sync_type != SYNC_TYPE_BACKFILL:
+            SyncProgressTracker.report_progress(
+                ad_account.organization_id, ad_account.id, 5, 5, "creatives", "Sincronizando creativos, páginas e inventario..."
+            )
             await self._sync_real_inventory(ad_account, token, limiter)
             await self._sync_real_pages(ad_account, token, limiter)
 

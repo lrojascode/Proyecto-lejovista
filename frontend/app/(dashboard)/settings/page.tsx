@@ -553,6 +553,19 @@ export default function Settings() {
                             El token expiró. Reconecta la cuenta abajo con un token nuevo.
                           </p>
                         )}
+                        {acc.last_sync_error_code && acc.status !== "EXPIRED" && (
+                          <div style={{
+                            marginTop: "6px",
+                            padding: "6px 10px",
+                            borderRadius: "6px",
+                            background: "rgba(242, 153, 74, 0.1)",
+                            border: "1px solid rgba(242, 153, 74, 0.25)",
+                            fontSize: "12px",
+                            color: "var(--color-solar-amber)",
+                          }}>
+                            <strong>Diagnóstico de sync (Error {acc.last_sync_error_code}):</strong> {acc.last_sync_error_detail}
+                          </div>
+                        )}
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>

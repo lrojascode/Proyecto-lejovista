@@ -83,6 +83,9 @@ class AdAccountResponse(BaseModel):
     default_page_id: Optional[str] = None
     spend_cap: float
     amount_spent: float
+    last_sync_error_code: Optional[int] = None
+    last_sync_error_detail: Optional[str] = None
+    last_synced_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

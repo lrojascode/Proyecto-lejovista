@@ -65,6 +65,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [syncProgress, setSyncProgress] = useState<{ step: number; total: number; message: string } | null>(null);
+  const [syncError, setSyncError] = useState<{ code?: number | null; detail?: string | null } | null>(null);
   const [apiCallHistory, setApiCallHistory] = useState<ApiCallHistoryEntry[]>([]);
   const [spendHistory, setSpendHistory] = useState<SpendHistoryMonth[]>([]);
   const [businessPolicies, setBusinessPolicies] = useState<BusinessPolicies | null>(null);
@@ -100,13 +102,13 @@ export default function DashboardPage() {
     }
     try {
       const policies = await api.getBusinessPolicies();
-      setBusinessPolicies(policies);
+      setBusinessPolicies(policies || null);
     } catch (e) {
       console.error("Error fetching business policies:", e);
     }
     try {
       const kpis = await api.getKpisSummary();
-      setKpisSummary(kpis);
+      setKpisSummary(kpis || null);
     } catch (e) {
       console.error("Error fetching KPIs summary:", e);
     }
@@ -136,32 +138,57 @@ export default function DashboardPage() {
     if (lastEvent) {
       const msg = `[${new Date().toLocaleTimeString()}] ${lastEvent.event_type}: ${lastEvent.status}`;
       setNotifications(prev => [...prev, msg].slice(-3));
-      
-      if (lastEvent.event_type === "sync_status") {
-        if (lastEvent.status === "COMPLETED") {
-          setSyncing(false);
-          setSyncMessage("Sincronización completada exitosamente.");
-          fetchData(); // Reload data
-        } else if (lastEvent.status === "FAILED") {
-          setSyncing(false);
-          setSyncMessage("Error en la sincronización.");
-        } else {
-          setSyncing(true);
-          setSyncMessage(`Sincronizando: ${lastEvent.status}`);
+
+      if (lastEvent.event_type === "sync_progress") {
+        setSyncing(true);
+        setSyncError(null);
+        if (lastEvent.step && lastEvent.total_steps) {
+          setSyncProgress({
+            step: lastEvent.step,
+            total: lastEvent.total_steps,
+            message: lastEvent.message || "Sincronizando...",
+          });
         }
+        setSyncMessage(lastEvent.message || "Sincronizando...");
+      } else if (
+        lastEvent.event_type === "sync_completed" ||
+        (lastEvent.event_type === "sync_status" && lastEvent.status === "COMPLETED")
+      ) {
+        setSyncing(false);
+        setSyncProgress(null);
+        setSyncError(null);
+        const countText = lastEvent.records_synced ? ` (${lastEvent.records_synced} registros actualizados)` : "";
+        setSyncMessage(`✓ Sincronización completada exitosamente${countText}.`);
+        fetchData();
+      } else if (
+        lastEvent.event_type === "sync_failed" ||
+        (lastEvent.event_type === "sync_status" && lastEvent.status === "FAILED")
+      ) {
+        setSyncing(false);
+        setSyncProgress(null);
+        setSyncError({
+          code: lastEvent.error_code,
+          detail: lastEvent.error_detail || lastEvent.error_message || "Error en la sincronización.",
+        });
+        setSyncMessage(lastEvent.error_detail || "Error en la sincronización.");
       }
     }
   }, [lastEvent]);
 
   const handleSync = async () => {
     setSyncing(true);
-    setSyncMessage("Iniciando sincronización...");
+    setSyncProgress({ step: 1, total: 5, message: "Encolando sincronización..." });
+    setSyncError(null);
+    setSyncMessage("Sincronización encolada — revisando Meta en segundo plano...");
     try {
-      await api.triggerSync();
+      const res = await api.triggerSync();
+      if (res?.message) {
+        setSyncMessage(res.message);
+      }
     } catch (e: any) {
       console.error(e);
       setSyncing(false);
-      // Mostrar el motivo real (p. ej. cooldown "espera 60s" o "no hay cuentas activas").
+      setSyncProgress(null);
       setSyncMessage(e?.message || "Error al iniciar sincronización.");
     }
   };
@@ -226,19 +253,84 @@ export default function DashboardPage() {
             <span style={{ fontSize: 13, color: "var(--color-fog)" }}>{isConnected ? 'Conectado a Live Updates' : 'Desconectado'}</span>
           </div>
           {hasData && (
-            <button onClick={handleSync} disabled={syncing} className="btn-primary">
-              {syncing ? 'Sincronizando...' : 'Sincronizar Ahora'}
-            </button>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              <button onClick={handleSync} disabled={syncing} className="btn-primary">
+                {syncing
+                  ? syncProgress
+                    ? `Paso ${syncProgress.step}/${syncProgress.total}...`
+                    : "Sincronizando..."
+                  : "Sincronizar Ahora"}
+              </button>
+              {syncProgress && (
+                <div style={{ width: "160px", background: "var(--color-obsidian)", borderRadius: "4px", height: "4px", overflow: "hidden" }}>
+                  <div style={{
+                    width: `${(syncProgress.step / syncProgress.total) * 100}%`,
+                    height: "100%",
+                    background: "var(--color-pulse-green)",
+                    transition: "width 0.3s ease",
+                  }} />
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      {(syncMessage || notifications.length > 0) && (
+      {(syncMessage || syncError || notifications.length > 0) && (
         <div className="card-subtle">
-          <h3 style={{ fontSize: 13, fontWeight: 510, color: "var(--color-mist)", marginBottom: 8 }}>Estado del Sistema</h3>
-          {syncMessage && <p style={{ color: "var(--color-mist)", marginBottom: 8, fontSize: 14 }}>{syncMessage}</p>}
+          <h3 style={{ fontSize: 13, fontWeight: 510, color: "var(--color-mist)", marginBottom: 8 }}>Estado de Sincronización</h3>
+          {syncMessage && (
+            <p style={{
+              color: syncError ? "var(--color-coral-red)" : syncing ? "var(--color-signal-teal)" : "var(--color-mist)",
+              marginBottom: 8, fontSize: 14, fontWeight: 500,
+            }}>
+              {syncMessage}
+            </p>
+          )}
+
+          {/* Diagnóstico contextual de error (3.3) */}
+          {syncError && (
+            <div style={{
+              background: "rgba(235, 87, 87, 0.08)",
+              border: "1px solid rgba(235, 87, 87, 0.25)",
+              borderRadius: "8px",
+              padding: "12px",
+              marginBottom: "12px",
+              fontSize: "13px",
+            }}>
+              <div style={{ color: "var(--color-coral-red)", fontWeight: 510, marginBottom: "4px" }}>
+                ⚠ Fallo en Meta Ads {syncError.code ? `(Código ${syncError.code})` : ""}
+              </div>
+              <div style={{ color: "var(--color-fog)", marginBottom: "8px" }}>
+                {syncError.detail}
+              </div>
+              {syncError.code === 190 && (
+                <a href="/settings" className="btn-secondary btn-sm" style={{ display: "inline-block" }}>
+                  Reconectar token de Meta
+                </a>
+              )}
+            </div>
+          )}
+
+          {syncProgress && (
+            <div style={{ marginBottom: "8px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px", color: "var(--color-fog)", marginBottom: "4px" }}>
+                <span>{syncProgress.message}</span>
+                <span>{syncProgress.step}/{syncProgress.total}</span>
+              </div>
+              <div style={{ width: "100%", background: "var(--color-obsidian)", borderRadius: "4px", height: "6px", overflow: "hidden" }}>
+                <div style={{
+                  width: `${(syncProgress.step / syncProgress.total) * 100}%`,
+                  height: "100%",
+                  background: "var(--color-pulse-green)",
+                  transition: "width 0.3s ease",
+                }} />
+              </div>
+            </div>
+          )}
+
           <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
-            {notifications.map((n, i) => <li key={i} className="mono" style={{ color: "var(--color-fog)" }}>{n}</li>)}
+            {notifications.map((n, i) => <li key={i} className="mono" style={{ color: "var(--color-fog)", fontSize: "11px" }}>{n}</li>)}
           </ul>
         </div>
       )}
