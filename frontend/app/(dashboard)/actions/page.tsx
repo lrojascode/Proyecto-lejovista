@@ -434,6 +434,21 @@ export default function Actions() {
                         </div>
                       )}
 
+                      {/* Aviso de creación manual / pausada (Roadmap 9 / 6.6) */}
+                      {act.action_type === "CREATE_CAMPAIGN" && (
+                        <div style={{
+                          fontSize: "12px",
+                          color: "var(--color-solar-amber)",
+                          background: "rgba(245, 158, 11, 0.08)",
+                          border: "1px solid rgba(245, 158, 11, 0.2)",
+                          borderRadius: "6px",
+                          padding: "6px 10px",
+                          marginBottom: "1rem",
+                        }}>
+                          ℹ️ Esta campaña se creará en estado <strong>PAUSADO</strong> en Meta Ads. Podrás activarla manualmente en Ads Manager tras verificarla.
+                        </div>
+                      )}
+
                       <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
                         <button
                           className="btn-secondary btn-sm"
@@ -448,7 +463,11 @@ export default function Actions() {
                           onClick={() => handleApprove(act.id)}
                           disabled={processingId === act.id || bulkLoading}
                         >
-                          {processingId === act.id ? "Encolando..." : "Aprobar y Ejecutar"}
+                          {processingId === act.id
+                            ? "Encolando..."
+                            : act.action_type === "CREATE_CAMPAIGN"
+                            ? "Aprobar (Crear Pausada)"
+                            : "Aprobar y Ejecutar"}
                         </button>
                       </div>
                     </div>

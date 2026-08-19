@@ -497,8 +497,10 @@ export default function NewCampaignPage() {
                   </>
                 ) : (
                   <>
-                    Recuerda: 1) si tu cuenta tiene el límite de gasto topado, súbelo en Meta; 2) revisa la campaña en
-                    Ads Manager; 3) actívala manualmente cuando esté todo correcto.
+                    <strong style={{ color: "var(--color-pulse-green)", display: "block", marginBottom: "6px" }}>
+                      Campaña creada exitosamente en estado PAUSADA en Meta Ads.
+                    </strong>
+                    Por seguridad de tus presupuestos, la activación se realiza siempre de forma manual. Ingresa a Meta Ads Manager para verificarla y activarla cuando tu creativo y entrega estén listos.
                   </>
                 )}
               </p>
