@@ -176,7 +176,33 @@ export type SpendHistory = Schemas["SpendHistoryResponse"];
 // --- AI USAGE (/ai-usage) ---
 export type AiUsageFeature = Schemas["AiUsageFeature"];
 export type AiUsageTotals = Schemas["AiUsageTotals"];
-export type AiUsage = Schemas["AiUsageResponse"];
+export type AiUsageModel = {
+  provider: string;
+  model: string;
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+};
+export type AiUsageAdAccount = {
+  ad_account_id?: string | null;
+  ad_account_name?: string | null;
+  calls: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+};
+export type AiUsageDaily = {
+  date: string;
+  calls: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+};
+export type AiUsage = Schemas["AiUsageResponse"] & {
+  by_model?: AiUsageModel[];
+  by_ad_account?: AiUsageAdAccount[];
+  daily_timeline?: AiUsageDaily[];
+};
 
 // --- API CALL HISTORY (/campaigns/api-call-history) ---
 export type ApiCallHistoryEntry = Schemas["ApiCallHistoryEntry"];

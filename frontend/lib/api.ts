@@ -389,7 +389,11 @@ export const api = {
     apiRequest<SyncLearningSnapshot[]>(`/api/v1/campaigns/sync-learning-history?limit=${limit}`, "GET"),
 
   // --- AI USAGE (contador de tokens) ---
-  getAiUsage: (days: number = 30) => apiRequest<AiUsage>(`/api/v1/ai-usage?days=${days}`, "GET"),
+  getAiUsage: (days: number = 30, adAccountId?: string) => {
+    const params = new URLSearchParams({ days: String(days) });
+    if (adAccountId) params.append("ad_account_id", adAccountId);
+    return apiRequest<AiUsage>(`/api/v1/ai-usage?${params.toString()}`, "GET");
+  },
 
   // --- INSIGHTS ---
   getInsights: () => apiRequest<AIInsight[]>("/api/v1/insights", "GET"),

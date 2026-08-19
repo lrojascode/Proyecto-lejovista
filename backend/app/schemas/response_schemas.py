@@ -213,10 +213,38 @@ class AiUsageTotals(BaseModel):
     estimated_cost_usd: float
 
 
+class AiUsageModel(BaseModel):
+    provider: str
+    model: str
+    calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    estimated_cost_usd: float
+
+
+class AiUsageAdAccount(BaseModel):
+    ad_account_id: Optional[str] = None
+    ad_account_name: Optional[str] = None
+    calls: int
+    total_tokens: int
+    estimated_cost_usd: float
+
+
+class AiUsageDaily(BaseModel):
+    date: str
+    calls: int
+    total_tokens: int
+    estimated_cost_usd: float
+
+
 class AiUsageResponse(BaseModel):
     days: int
     totals: AiUsageTotals
     by_feature: List[AiUsageFeature]
+    by_model: List[AiUsageModel] = Field(default_factory=list)
+    by_ad_account: List[AiUsageAdAccount] = Field(default_factory=list)
+    daily_timeline: List[AiUsageDaily] = Field(default_factory=list)
 
 
 # --- Historial de llamadas a Meta ---
