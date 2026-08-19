@@ -8,8 +8,11 @@ eliminando colisiones de dígitos (ej. "27.00" vs "2700") y munición de IDs/tim
 from dataclasses import dataclass, is_dataclass, asdict
 from enum import Enum
 import json
+import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger("lejovista.grounding")
 
 MAX_GROUNDING_VALUES = 220
 MAX_ANALYSIS_CHARS = 2000
@@ -58,15 +61,25 @@ class GroundingSet:
         self._entries: List[GroundingEntry] = []
 
     def add(self, value: float, unit: GroundingUnit = GroundingUnit.ANY) -> None:
-        if len(self._entries) >= MAX_GROUNDING_VALUES:
-            return
         val_rounded = round(float(value), 4)
         entry = GroundingEntry(value=val_rounded, unit=unit)
         if entry not in self._entries:
+            if len(self._entries) >= MAX_GROUNDING_VALUES:
+                logger.warning(
+                    "GroundingSet alcanzo el limite MAX_GROUNDING_VALUES (%d); descartando entrada %s",
+                    MAX_GROUNDING_VALUES, entry
+                )
+                return
             self._entries.append(entry)
-        if val_rounded < 0 and len(self._entries) < MAX_GROUNDING_VALUES:
+        if val_rounded < 0:
             abs_entry = GroundingEntry(value=abs(val_rounded), unit=unit)
             if abs_entry not in self._entries:
+                if len(self._entries) >= MAX_GROUNDING_VALUES:
+                    logger.warning(
+                        "GroundingSet alcanzo el limite MAX_GROUNDING_VALUES (%d); descartando abs_entry %s",
+                        MAX_GROUNDING_VALUES, abs_entry
+                    )
+                    return
                 self._entries.append(abs_entry)
 
     def size(self) -> int:

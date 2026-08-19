@@ -10,18 +10,47 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import logging
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.meta_page import MetaPage
+from app.services.campaign_chat.grounding import GroundingSet, MAX_GROUNDING_VALUES
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.kpi_period import days_of_history, get_kpis_with_deltas
 from app.services.report_cache import get_report
 
+logger = logging.getLogger("lejovista.facts")
+
 RANKING_TOP_K = 8
 BREAKDOWN_TOP_K = 3
+
+BLOCK_PRIORITY: List[str] = [
+    "kpis",
+    "reach",
+    "ranking",
+    "account",
+    "alerts",
+    "recommendations",
+    "breakdowns",
+    "destination",
+]
+
+def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
+    """Verifica si anadir block_dict mantiene el total dentro de MAX_GROUNDING_VALUES.
+    Si entra, lo anade a facts y devuelve True; si no, lo omite y devuelve False (H7).
+    """
+    candidate = {**facts, **block_dict}
+    if GroundingSet.from_data(candidate).size() <= MAX_GROUNDING_VALUES:
+        facts.update(block_dict)
+        return True
+    logger.warning(
+        "Bloque '%s' omitido para no superar MAX_GROUNDING_VALUES (%d)",
+        block_name, MAX_GROUNDING_VALUES
+    )
+    return False
 
 PLAN_BY_TOPIC: Dict[str, List[str]] = {
     "SPEND": ["kpis", "account"],
@@ -83,103 +112,137 @@ async def resolve_facts(
         "topic": topic,
     }
 
-    # 3. Traer datos de reporte (cacheado) y KPIs
+    # 3. Traer datos de reporte (cacheado) y KPIs si son necesarios
     report = None
     if any(b in ("ranking", "breakdowns", "alerts", "recommendations", "account", "creative") for b in blocks) or topic in (
         "BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "ALERTS", "RECOMMENDATIONS", "AUDIENCE", "CTR", "SUMMARY", "CPL", "BUDGET_ADVICE", "SPEND"
     ):
         report = await get_report(db, ad_account, effective_days)
 
-    # Bloque: KPIs
+    # Ordenar los bloques a procesar según BLOCK_PRIORITY (H7)
+    priority_map = {b: i for i, b in enumerate(BLOCK_PRIORITY)}
+    active_blocks = set(blocks)
+    if topic in ("SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE", "CTR", "BEST_CAMPAIGN", "WORST_CAMPAIGN"):
+        active_blocks.add("kpis")
+    if topic in ("BUDGET_ADVICE", "CAMPAIGNS_OVERVIEW"):
+        active_blocks.add("account")
+    if topic in ("BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "LEADS", "CPL", "CTR", "SUMMARY"):
+        active_blocks.add("ranking")
+    if topic in ("AUDIENCE", "SUMMARY"):
+        active_blocks.add("breakdowns")
+    if topic in ("ALERTS", "SUMMARY"):
+        active_blocks.add("alerts")
+    if topic in ("RECOMMENDATIONS", "SUMMARY", "BUDGET_ADVICE"):
+        active_blocks.add("recommendations")
+    if topic in ("DESTINATION", "HOW_IT_WORKS"):
+        active_blocks.add("destination")
+
+    ordered_blocks = sorted(active_blocks, key=lambda b: priority_map.get(b, 999))
+
     kpis_data = None
-    if "kpis" in blocks or any(topic in ("SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE", "CTR", "BEST_CAMPAIGN", "WORST_CAMPAIGN") for _ in [1]):
-        kpis_data = await get_kpis_with_deltas(db, ad_account.id, effective_days)
-        curr = kpis_data.get("current", {})
-        prev = kpis_data.get("previous", {})
-        deltas = kpis_data.get("deltas_pct", {})
-        
-        spend = round(curr.get("spend", 0.0), 2)
-        convs = int(curr.get("conversations", 0))
-        cpl = round(curr.get("cost_per_conv", 0.0), 2)
-        
-        daily_avg_spend = round(spend / max(effective_days, 1), 2)
-        projection_30d_spend = round(daily_avg_spend * 30, 2)
-        
-        facts["kpis_del_periodo"] = {
-            "spend": spend,
-            "conversations": convs,
-            "cost_per_conv": cpl,
-            "gasto_promedio_diario": daily_avg_spend,
-            "proyeccion_mensual_gasto": projection_30d_spend,
-            "delta_spend_pct": deltas.get("spend", 0.0),
-            "delta_conversations_pct": deltas.get("conversations", 0.0),
-            "delta_cpl_pct": deltas.get("cost_per_conv", 0.0),
-        }
+    for b in ordered_blocks:
+        if b == "kpis":
+            if "kpis_del_periodo" not in facts:
+                kpis_data = await get_kpis_with_deltas(db, ad_account.id, effective_days)
+                curr = kpis_data.get("current", {})
+                deltas = kpis_data.get("deltas_pct", {})
+                spend = round(curr.get("spend", 0.0), 2)
+                convs = int(curr.get("conversations", 0))
+                cpl = round(curr.get("cost_per_conv", 0.0), 2)
+                daily_avg_spend = round(spend / max(effective_days, 1), 2)
+                projection_30d_spend = round(daily_avg_spend * 30, 2)
+                
+                kpi_dict = {
+                    "kpis_del_periodo": {
+                        "spend": spend,
+                        "conversations": convs,
+                        "cost_per_conv": cpl,
+                        "gasto_promedio_diario": daily_avg_spend,
+                        "proyeccion_mensual_gasto": projection_30d_spend,
+                        "delta_spend_pct": deltas.get("spend", 0.0),
+                        "delta_conversations_pct": deltas.get("conversations", 0.0),
+                        "delta_cpl_pct": deltas.get("cost_per_conv", 0.0),
+                    }
+                }
+                _safe_add_block(facts, kpi_dict, "kpis")
 
-    # Bloque: Account
-    if "account" in blocks or topic in ("SPEND", "BUDGET_ADVICE", "CAMPAIGNS_OVERVIEW"):
-        cap = float(ad_account.spend_cap or 0.0)
-        spent = float(ad_account.amount_spent or 0.0)
-        remaining = max(0.0, cap - spent) if cap > 0 else 0.0
-        
-        days_to_cap = None
-        if cap > 0 and kpis_data:
-            daily = facts.get("kpis_del_periodo", {}).get("gasto_promedio_diario", 0.0)
-            if daily > 0:
-                days_to_cap = round(remaining / daily, 1)
+        elif b == "account":
+            if "account" not in facts:
+                cap = float(ad_account.spend_cap or 0.0)
+                spent = float(ad_account.amount_spent or 0.0)
+                remaining = max(0.0, cap - spent) if cap > 0 else 0.0
+                days_to_cap = None
+                if cap > 0 and kpis_data:
+                    daily = facts.get("kpis_del_periodo", {}).get("gasto_promedio_diario", 0.0)
+                    if daily > 0:
+                        days_to_cap = round(remaining / daily, 1)
 
-        facts["account"] = {
-            "name": ad_account.name,
-            "status": ad_account.status,
-            "spend_cap": cap,
-            "amount_spent": spent,
-            "tope_restante": round(remaining, 2),
-            "dias_para_agotar_tope": days_to_cap,
-        }
+                acc_dict = {
+                    "account": {
+                        "name": ad_account.name,
+                        "status": ad_account.status,
+                        "spend_cap": cap,
+                        "amount_spent": spent,
+                        "tope_restante": round(remaining, 2),
+                        "dias_para_agotar_tope": days_to_cap,
+                    }
+                }
+                _safe_add_block(facts, acc_dict, "account")
 
-    # Bloque: Ranking
-    if ("ranking" in blocks or topic in ("BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "LEADS", "CPL", "CTR", "SUMMARY")) and report:
-        camps = report.get("campaigns", [])
-        top_camps = []
-        for c in camps[:RANKING_TOP_K]:
-            top_camps.append({
-                "name": c.get("name"),
-                "status": c.get("status"),
-                "spend": round(float(c.get("spend", 0.0)), 2),
-                "conversations": int(c.get("conversations", 0)),
-                "cost_per_conv": round(float(c.get("cpl", 0.0)), 2),
-                "ctr": round(float(c.get("ctr", 0.0)), 2),
-            })
-        facts["campaigns"] = top_camps
-        facts["total_campanas_activas"] = sum(1 for c in camps if c.get("status") == "ACTIVE")
-        facts["total_campanas"] = len(camps)
+        elif b == "ranking" and report:
+            if "campaigns" not in facts:
+                camps = report.get("campaigns", [])
+                top_camps = []
+                for c in camps[:RANKING_TOP_K]:
+                    top_camps.append({
+                        "name": c.get("name"),
+                        "status": c.get("status"),
+                        "spend": round(float(c.get("spend", 0.0)), 2),
+                        "conversations": int(c.get("conversations", 0)),
+                        "cost_per_conv": round(float(c.get("cpl", 0.0)), 2),
+                        "ctr": round(float(c.get("ctr", 0.0)), 2),
+                    })
+                rank_dict = {
+                    "campaigns": top_camps,
+                    "total_campanas_activas": sum(1 for c in camps if c.get("status") == "ACTIVE"),
+                    "total_campanas": len(camps),
+                }
+                _safe_add_block(facts, rank_dict, "ranking")
 
-    # Bloque: Breakdowns
-    if ("breakdowns" in blocks or topic in ("AUDIENCE", "SUMMARY")) and report:
-        facts["placements"] = report.get("placements_summary", {})
-        facts["demographics"] = report.get("demographics_summary", {})
-        facts["extra_breakdowns"] = report.get("extra_breakdowns", {})
+        elif b == "breakdowns" and report:
+            if "placements" not in facts:
+                bk_dict = {
+                    "placements": report.get("placements_summary", {}),
+                    "demographics": report.get("demographics_summary", {}),
+                    "extra_breakdowns": report.get("extra_breakdowns", {}),
+                }
+                _safe_add_block(facts, bk_dict, "breakdowns")
 
-    # Bloque: Alerts
-    if ("alerts" in blocks or topic in ("ALERTS", "SUMMARY")) and report:
-        facts["alertas_activas"] = [
-            {"level": a.get("level"), "category": a.get("category"), "title": a.get("title")}
-            for a in report.get("insights", [])[:5]
-        ]
+        elif b == "alerts" and report:
+            if "alertas_activas" not in facts:
+                alt_dict = {
+                    "alertas_activas": [
+                        {"level": a.get("level"), "category": a.get("category"), "title": a.get("title")}
+                        for a in report.get("insights", [])[:5]
+                    ]
+                }
+                _safe_add_block(facts, alt_dict, "alerts")
 
-    # Bloque: Recommendations
-    if ("recommendations" in blocks or topic in ("RECOMMENDATIONS", "SUMMARY", "BUDGET_ADVICE")) and report:
-        facts["recomendaciones"] = report.get("recommendations", [])[:5]
+        elif b == "recommendations" and report:
+            if "recomendaciones" not in facts:
+                rec_dict = {"recomendaciones": report.get("recommendations", [])[:5]}
+                _safe_add_block(facts, rec_dict, "recommendations")
 
-    # Bloque: Destination
-    if "destination" in blocks or topic in ("DESTINATION", "HOW_IT_WORKS"):
-        page_info = None
-        if db is not None:
-            pages = (await db.execute(select(MetaPage).where(MetaPage.organization_id == organization_id))).scalars().all()
-            if pages:
-                p = pages[0]
-                page_info = {"name": p.name, "whatsapp_number": p.whatsapp_number, "id": p.external_page_id}
-        facts["destino"] = page_info
+        elif b == "destination":
+            if "destino" not in facts:
+                page_info = None
+                if db is not None:
+                    pages = (await db.execute(select(MetaPage).where(MetaPage.organization_id == organization_id))).scalars().all()
+                    if pages:
+                        p = pages[0]
+                        page_info = {"name": p.name, "whatsapp_number": p.whatsapp_number, "id": p.external_page_id}
+                dest_dict = {"destino": page_info}
+                _safe_add_block(facts, dest_dict, "destination")
 
     # 4. Narración Canónica determinista
     canonical_text = narrate_facts(facts, topic, ad_account)
