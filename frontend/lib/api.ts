@@ -4,6 +4,7 @@ import type {
   CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
+  OrgMember, Invitation, InvitationDetails,
 } from "./types";
 
 // (S-2) El access token vive SOLO en memoria del módulo, nunca en
@@ -259,6 +260,21 @@ export const api = {
   archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),
   restoreAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/restore`, "POST"),
   deleteAdAccount: (id: string) => apiRequest<{ message: string }>(`/api/v1/organizations/my/ad-accounts/${id}`, "DELETE"),
+
+  // --- INVITACIONES Y EQUIPO ---
+  getOrgMembers: () => apiRequest<OrgMember[]>("/api/v1/organizations/my/members", "GET"),
+  getOrgInvitations: () => apiRequest<Invitation[]>("/api/v1/organizations/my/invitations", "GET"),
+  createOrgInvitation: (data: { email: string; role: "ADMIN" | "OPERATOR" | "VIEWER" }) =>
+    apiRequest<Invitation>("/api/v1/organizations/my/invitations", "POST", data),
+  deleteOrgInvitation: (id: string) =>
+    apiRequest<{ message: string }>(`/api/v1/organizations/my/invitations/${id}`, "DELETE"),
+  getInvitationDetails: (token: string) =>
+    apiRequest<InvitationDetails>(`/api/v1/invitations/${token}`, "GET"),
+  acceptInvitation: (token: string, data: { full_name: string; password: string }) =>
+    apiRequest<TokenResponse>(`/api/v1/invitations/${token}/accept`, "POST", data).then((res) => {
+      accessToken = res.access_token;
+      return res;
+    }),
 
   // --- CAMPAIGNS ---
   getRecentCampaigns: () => apiRequest<CampaignSnapshot[]>("/api/v1/campaigns/recent", "GET"),

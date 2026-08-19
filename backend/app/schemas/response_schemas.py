@@ -554,3 +554,26 @@ class ChatSessionSummary(BaseModel):
     ad_account_id: str
     draft_id: Optional[str] = None
     updated_at: str
+
+
+# --- INVITACIONES (Roadmap 4) ---
+
+class InvitationResponse(BaseModel):
+    id: str
+    email: str
+    role: str
+    organization_id: str
+    token: str
+    invite_url: str
+    expires_at: str
+    accepted_at: Optional[str] = None
+    created_at: str
+
+
+class InvitationDetailsResponse(BaseModel):
+    email: str
+    role: str
+    organization_name: str
+    organization_slug: str
+    is_expired: bool
+    is_accepted: bool

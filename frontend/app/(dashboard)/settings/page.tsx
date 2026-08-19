@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
-import type { Organization, AdAccount, MetaPage, WhatsAppNumber } from "@/lib/types";
+import type { Organization, AdAccount, MetaPage, WhatsAppNumber, OrgMember, Invitation } from "@/lib/types";
 
 export default function Settings() {
   const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
@@ -62,6 +62,15 @@ export default function Settings() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteInputName, setDeleteInputName] = useState("");
 
+  // Equipo e Invitaciones (6.1)
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState<"ADMIN" | "OPERATOR" | "VIEWER">("OPERATOR");
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteMsg, setInviteMsg] = useState("");
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
+
   const fetchData = async () => {
     try {
       const orgData = await api.getOrg();
@@ -85,6 +94,15 @@ export default function Settings() {
       const policiesData = await api.getBusinessPolicies();
       setIndustries(policiesData.available_industries || []);
 
+      try {
+        const membersData = await api.getOrgMembers();
+        setMembers(membersData);
+        const invsData = await api.getOrgInvitations();
+        setInvitations(invsData);
+      } catch (err) {
+        console.error("Error loading team data:", err);
+      }
+
       // Solo se ofrecen los modelos del proveedor de IA realmente activo
       // (según qué API key esté configurada en el backend), para no guardar
       // un modelo que el proveedor activo no reconocería.
@@ -98,6 +116,38 @@ export default function Settings() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSendInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setInviteMsg("");
+    if (!inviteEmail.trim()) return;
+    setInviteLoading(true);
+    try {
+      const created = await api.createOrgInvitation({ email: inviteEmail.trim(), role: inviteRole });
+      setInvitations((prev) => [created, ...prev]);
+      setInviteEmail("");
+      setInviteMsg("Invitación enviada exitosamente por correo.");
+    } catch (err: any) {
+      setInviteMsg(`Error: ${err.message || "No se pudo enviar la invitación."}`);
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const handleDeleteInvite = async (id: string) => {
+    try {
+      await api.deleteOrgInvitation(id);
+      setInvitations((prev) => prev.filter((i) => i.id !== id));
+    } catch (err: any) {
+      alert(err.message || "No se pudo revocar la invitación.");
+    }
+  };
+
+  const copyInviteLink = (inv: Invitation) => {
+    navigator.clipboard.writeText(inv.invite_url);
+    setCopiedToken(inv.token);
+    setTimeout(() => setCopiedToken(null), 2500);
   };
 
   useEffect(() => {
@@ -366,9 +416,11 @@ export default function Settings() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1.8fr", gap: "2rem" }}>
-        {/* Org Settings */}
-        <div className="glass-card" style={{ height: "fit-content" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1.25rem" }}>Preferencias Generales</h3>
+        {/* Left column: Org Settings + Team */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+          {/* Org Settings */}
+          <div className="glass-card" style={{ height: "fit-content" }}>
+            <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "1.25rem" }}>Preferencias Generales</h3>
           
           {msg && (
             <div style={{
@@ -526,8 +578,158 @@ export default function Settings() {
           </form>
         </div>
 
-        {/* Ad Accounts Connections */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+        {/* Team and Invitations (6.1) */}
+        <div className="glass-card">
+          <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem" }}>Equipo y Miembros</h3>
+          <p style={{ color: "var(--color-fog)", fontSize: "13px", marginBottom: "1.25rem" }}>
+            Invita a otros miembros de tu empresa con roles de Administrador, Operador o Consultor (Viewer).
+          </p>
+
+          {/* Formulario de Invitación */}
+          <form onSubmit={handleSendInvite} style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginBottom: "1.5rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: "0.75rem" }}>
+              <input
+                type="email"
+                className="form-input"
+                placeholder="correo@empresa.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                required
+              />
+              <select
+                className="form-input"
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as any)}
+                style={{ background: "var(--color-obsidian)" }}
+              >
+                <option value="OPERATOR">Operador</option>
+                <option value="VIEWER">Consultor (Viewer)</option>
+                <option value="ADMIN">Administrador</option>
+              </select>
+            </div>
+
+            <button
+              type="submit"
+              className="btn-secondary"
+              disabled={inviteLoading || !inviteEmail.trim()}
+              style={{ alignSelf: "flex-start" }}
+            >
+              {inviteLoading ? "Enviando..." : "Invitar Usuario"}
+            </button>
+          </form>
+
+          {inviteMsg && (
+            <div style={{
+              background: inviteMsg.includes("Error") ? "rgba(235, 87, 87, 0.1)" : "rgba(39, 166, 68, 0.1)",
+              border: `1px solid ${inviteMsg.includes("Error") ? "rgba(235, 87, 87, 0.2)" : "rgba(39, 166, 68, 0.2)"}`,
+              color: inviteMsg.includes("Error") ? "var(--danger)" : "var(--success)",
+              padding: "0.5rem 0.75rem",
+              borderRadius: "6px",
+              fontSize: "0.85rem",
+              marginBottom: "1rem"
+            }}>
+              {inviteMsg}
+            </div>
+          )}
+
+          {/* Lista de Miembros Actuales */}
+          <div style={{ marginBottom: "1.5rem" }}>
+            <h4 style={{ fontSize: "14px", fontWeight: 590, marginBottom: "0.5rem", color: "var(--color-paper)" }}>
+              Miembros del equipo ({members.length})
+            </h4>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              {members.map((m) => (
+                <div
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "8px 12px",
+                    background: "rgba(255, 255, 255, 0.02)",
+                    border: "1px solid var(--border-subtle)",
+                    borderRadius: "6px",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--color-paper)" }}>{m.full_name}</div>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>{m.email}</div>
+                  </div>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      background: m.role === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : m.role === "OPERATOR" ? "rgba(16, 185, 129, 0.15)" : "rgba(107, 114, 128, 0.2)",
+                      color: m.role === "ADMIN" ? "#60a5fa" : m.role === "OPERATOR" ? "#34d399" : "#9ca3af",
+                    }}
+                  >
+                    {m.role}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Invitaciones Pendientes */}
+          {invitations.filter((i) => !i.accepted_at).length > 0 && (
+            <div>
+              <h4 style={{ fontSize: "14px", fontWeight: 590, marginBottom: "0.5rem", color: "var(--color-paper)" }}>
+                Invitaciones pendientes
+              </h4>
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                {invitations.filter((i) => !i.accepted_at).map((inv) => (
+                  <div
+                    key={inv.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "8px 12px",
+                      background: "rgba(255, 255, 255, 0.02)",
+                      border: "1px dashed var(--border-subtle)",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: "13px", color: "var(--color-paper)" }}>{inv.email}</div>
+                      <div style={{ fontSize: "11px", color: "var(--color-fog)" }}>Rol: {inv.role}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <button
+                        type="button"
+                        onClick={() => copyInviteLink(inv)}
+                        className="btn-secondary"
+                        style={{ padding: "4px 8px", fontSize: "11px" }}
+                      >
+                        {copiedToken === inv.token ? "¡Copiado!" : "Copiar enlace"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteInvite(inv.id)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--color-coral-red)",
+                          cursor: "pointer",
+                          fontSize: "11px",
+                          padding: "4px 6px",
+                        }}
+                      >
+                        Revocar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Ad Accounts Connections */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
           
           {/* List connected */}
           <div className="glass-card">

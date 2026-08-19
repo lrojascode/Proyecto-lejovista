@@ -32,6 +32,36 @@ export type WhatsAppNumber = Schemas["WhatsAppNumberResponse"];
 export type BusinessPolicies = Schemas["BusinessPoliciesResponse"];
 export type AiModelsResponse = Schemas["AiModelsResponse"];
 
+// --- INVITACIONES Y EQUIPO ---
+export type OrgMember = {
+  id: string;
+  email: string;
+  full_name: string;
+  role: "ADMIN" | "OPERATOR" | "VIEWER";
+  created_at: string | null;
+};
+
+export type Invitation = {
+  id: string;
+  email: string;
+  role: "ADMIN" | "OPERATOR" | "VIEWER";
+  organization_id: string;
+  token: string;
+  invite_url: string;
+  expires_at: string;
+  accepted_at?: string | null;
+  created_at: string;
+};
+
+export type InvitationDetails = {
+  email: string;
+  role: string;
+  organization_name: string;
+  organization_slug: string;
+  is_expired: boolean;
+  is_accepted: boolean;
+};
+
 export type SyncStatusResponse = {
   ad_account_id?: string;
   status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED";

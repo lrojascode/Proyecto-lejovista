@@ -1,9 +1,14 @@
+import datetime
+import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from app.config import settings
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
+from app.models.organization_user import OrganizationUser
+from app.models.invitation import Invitation
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
 from app.models.whatsapp_number import WhatsAppNumber
@@ -17,13 +22,17 @@ from app.schemas.schemas import (
     AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
     WhatsAppNumberResponse, WhatsAppNumberCreate, WhatsAppNumberUpdate,
 )
+from app.schemas.invitation_schemas import InvitationCreateRequest
+from app.schemas.response_schemas import (
+    AiModelsResponse, BusinessPoliciesResponse, MessageResponse, InvitationResponse,
+)
 from app.utils.security import get_current_user, require_role
 from app.utils.throttle import enforce_cooldown
 from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
 from app.workers.tasks import sync_ad_account, refresh_org_pages
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
-from app.schemas.response_schemas import AiModelsResponse, BusinessPoliciesResponse, MessageResponse
+from app.services.email_service import send_email
 from typing import List, Optional
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
@@ -576,3 +585,155 @@ async def reconnect_ad_account(
 
     sync_ad_account.delay(acc.id, "FULL")
     return acc
+
+
+# --- INVITACIONES Y EQUIPO (Roadmap 4) ---
+
+@router.get("/my/members")
+async def list_org_members(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lista todos los usuarios miembros de la organización activa con sus roles."""
+    q = (
+        select(User.id, User.email, User.full_name, OrganizationUser.role, OrganizationUser.created_at)
+        .join(OrganizationUser, OrganizationUser.user_id == User.id)
+        .where(OrganizationUser.organization_id == current_user.organization_id)
+        .order_by(OrganizationUser.created_at.asc())
+    )
+    res = await db.execute(q)
+    members = []
+    for row in res.all():
+        members.append({
+            "id": row.id,
+            "email": row.email,
+            "full_name": row.full_name,
+            "role": row.role,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
+    return members
+
+
+@router.get("/my/invitations", response_model=List[InvitationResponse])
+async def list_org_invitations(
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lista las invitaciones enviadas para la organización activa."""
+    org = await db.get(Organization, current_user.organization_id)
+    q = (
+        select(Invitation)
+        .where(Invitation.organization_id == current_user.organization_id)
+        .order_by(Invitation.created_at.desc())
+    )
+    res = await db.execute(q)
+    invitations = res.scalars().all()
+    out = []
+    for inv in invitations:
+        invite_url = f"http://{org.slug}.{settings.BASE_DOMAIN}/invitations/{inv.token}"
+        out.append(
+            InvitationResponse(
+                id=inv.id,
+                email=inv.email,
+                role=inv.role,
+                organization_id=inv.organization_id,
+                token=inv.token,
+                invite_url=invite_url,
+                expires_at=inv.expires_at.isoformat(),
+                accepted_at=inv.accepted_at.isoformat() if inv.accepted_at else None,
+                created_at=inv.created_at.isoformat(),
+            )
+        )
+    return out
+
+
+@router.post("/my/invitations", response_model=InvitationResponse, status_code=status.HTTP_201_CREATED)
+async def create_org_invitation(
+    payload: InvitationCreateRequest,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Crea una invitación para unirse a la organización y le envía un correo."""
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    # 1. Comprobar si ya es miembro
+    q_existing_user = (
+        select(User.id)
+        .join(OrganizationUser, OrganizationUser.user_id == User.id)
+        .where(User.email == payload.email, OrganizationUser.organization_id == org.id)
+    )
+    if (await db.execute(q_existing_user)).scalar_one_or_none():
+        raise HTTPException(
+            status_code=400, detail="Este usuario ya es miembro de tu organización."
+        )
+
+    # 2. Generar token y fecha de expiración (7 días)
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+
+    inv = Invitation(
+        organization_id=org.id,
+        email=payload.email,
+        role=payload.role,
+        token=token,
+        expires_at=expires_at,
+        invited_by_user_id=current_user.id,
+    )
+    db.add(inv)
+    await db.commit()
+    await db.refresh(inv)
+
+    invite_url = f"http://{org.slug}.{settings.BASE_DOMAIN}/invitations/{token}"
+
+    # 3. Enviar email de invitación
+    subject = f"Has sido invitado a unirte a {org.name} en LejoVista"
+    html_content = f"""
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <h2>¡Hola!</h2>
+        <p>Has sido invitado a formar parte del equipo de <strong>{org.name}</strong> en LejoVista con el rol de <strong>{payload.role}</strong>.</p>
+        <p>Haz clic en el siguiente enlace para aceptar la invitación y configurar tu cuenta:</p>
+        <p style="margin: 24px 0;">
+            <a href="{invite_url}" style="background-color: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                Aceptar Invitación
+            </a>
+        </p>
+        <p style="color: #666; font-size: 13px;">Este enlace es válido por 7 días.</p>
+    </div>
+    """
+    await send_email(
+        to_email=payload.email,
+        subject=subject,
+        html_content=html_content,
+        text_content=f"Has sido invitado a {org.name} en LejoVista. Acepta tu invitación aquí: {invite_url}",
+    )
+
+    return InvitationResponse(
+        id=inv.id,
+        email=inv.email,
+        role=inv.role,
+        organization_id=inv.organization_id,
+        token=inv.token,
+        invite_url=invite_url,
+        expires_at=inv.expires_at.isoformat(),
+        accepted_at=None,
+        created_at=inv.created_at.isoformat(),
+    )
+
+
+@router.delete("/my/invitations/{invitation_id}", response_model=MessageResponse)
+async def delete_org_invitation(
+    invitation_id: str,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoca o elimina una invitación pendiente."""
+    inv = await db.get(Invitation, invitation_id)
+    if not inv or inv.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Invitación no encontrada.")
+
+    await db.delete(inv)
+    await db.commit()
+    return {"message": "Invitación revocada correctamente."}
+
