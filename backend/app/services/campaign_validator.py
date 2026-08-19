@@ -87,6 +87,15 @@ class CampaignValidator:
                 status_code=400,
                 detail="Debes subir una imagen o un video, o proveer image_url, image_hash o video_id.",
             )
+
+        # 2.3: Conflicto de fuentes de imagen — image_hash + image_path juntos provocaba
+        # que MetaAssetRepository prefiriera el hash viejo e ignorara la imagen nueva.
+        if request.image_hash and request.image_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Conflicto de imagen: no puedes enviar image_hash e image_path en la misma solicitud.",
+            )
+
         # Solo se exige miniatura con un video_id YA subido a Meta: para
         # `video_path` la resuelve la Saga (`/{video_id}/thumbnails`).
         if request.video_id and not request.thumbnail_url:

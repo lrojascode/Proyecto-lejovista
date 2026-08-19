@@ -1561,6 +1561,75 @@ async def test_art_driven_product_name_and_chat_flow(async_client: AsyncClient, 
     assert next_state(facts_art_first) == "BUILD_PLAN"
 
 
+@pytest.mark.asyncio
+async def test_campaign_validator_rejects_conflicting_image_sources_and_planner_shows_creative(
+    db_session: AsyncSession
+):
+    """
+    2.3: Verifica que CampaignValidator rechace la combinación image_hash + image_path,
+    y que AIPlanner incluya el creativo sincronizado en los parámetros de la acción.
+    """
+    from fastapi import HTTPException
+    from app.schemas.campaign_schemas import CampaignCreateRequest
+    from app.services.campaign_validator import CampaignValidator
+    from app.services.ai.planner import AIPlanner
+    from app.models.ai_insight import AIInsight
+    from app.models.meta_creative import MetaCreative
+
+    org, acc = await _make_org_and_account(db_session, slug="val-org")
+    await db_session.commit()
+
+    # 1. Validator rechaza conflicto image_hash + image_path
+    validator = CampaignValidator(acc, db=db_session)
+    conflict_req = CampaignCreateRequest(
+        ad_account_id=acc.id,
+        page_id="page_123",
+        whatsapp_number="51999888777",
+        copy_text="Texto de prueba para el anuncio",
+        product_name="Producto Test",
+        budget=100.0,
+        days=5,
+        image_path=f"{org.id}/images/art.jpg",
+        image_hash="hash1234567890abcdef",
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        validator._validate_business_rules(conflict_req)
+    assert exc_info.value.status_code == 400
+    assert "Conflicto de imagen" in exc_info.value.detail
+
+    # 2. Agregar MetaCreative a la cuenta
+    creative = MetaCreative(
+        organization_id=org.id,
+        ad_account_id=acc.id,
+        name="Creativo Ganador 2026",
+        image_hash="imghash_abc999",
+        url="https://example.com/img.jpg",
+    )
+    db_session.add(creative)
+    await db_session.commit()
+
+    # 3. AIPlanner planifica CREATE_CAMPAIGN con reused_creative
+    planner = AIPlanner(db_session)
+    insight = AIInsight(
+        organization_id=org.id,
+        ad_account_id=acc.id,
+        level="WARNING",
+        category="PERFORMANCE",
+        title="Fatiga de creativos",
+        description="El CTR ha caído.",
+        suggested_action_type="CREATE_CAMPAIGN",
+    )
+    db_session.add(insight)
+    await db_session.commit()
+
+    action = await planner._create_action_from_insight(acc, insight, "CREATE_CAMPAIGN")
+    assert action is not None
+    assert action.parameters.get("reused_creative") is not None
+    assert action.parameters["reused_creative"]["image_hash"] == "imghash_abc999"
+    assert action.parameters["reused_creative"]["name"] == "Creativo Ganador 2026"
+
+
+
 
 
 

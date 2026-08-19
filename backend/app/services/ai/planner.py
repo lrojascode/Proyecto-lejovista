@@ -9,6 +9,7 @@ from app.models.ai_action import AIAction
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.adset_snapshot import AdsetSnapshot
 from app.models.organization import Organization
+from app.models.meta_creative import MetaCreative
 from app.services.brand_code import derive_brand_code
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.campaign_targeting import build_targeting, _facebook_positions
@@ -320,6 +321,19 @@ class AIPlanner:
                     "description": copy["description"],
                     "welcome_message": copy["welcome_message"],
                 },
+                "reused_creative": (
+                    {
+                        "id": creative_record.id,
+                        "name": creative_record.name or "Creativo sincronizado",
+                        "image_hash": creative_record.image_hash,
+                        "image_url": creative_record.url,
+                    } if (creative_record := (await self.db.execute(
+                        select(MetaCreative)
+                        .where(MetaCreative.ad_account_id == ad_account.id)
+                        .order_by(MetaCreative.created_at.desc())
+                        .limit(1)
+                    )).scalar_one_or_none()) else None
+                ),
                 "suggestion_evidence": suggestion["evidence"],
             }
             # En producción esto generaría las 6 llamadas HTTP planificadas descritas en el paso0:

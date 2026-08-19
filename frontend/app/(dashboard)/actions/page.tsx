@@ -412,6 +412,28 @@ export default function Actions() {
                         <div style={{ fontSize: "14px", color: "var(--color-pulse-green)", fontWeight: 510 }}>{act.estimated_impact}</div>
                       </div>
 
+                      {/* Creativo a reutilizar en la cuenta (2.3) */}
+                      {(act.parameters as any)?.reused_creative && (
+                        <div style={{
+                          background: "rgba(255, 255, 255, 0.03)",
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: "6px",
+                          padding: "8px 12px",
+                          marginBottom: "1.25rem",
+                          fontSize: "12px",
+                        }}>
+                          <div style={{ color: "var(--color-fog)", marginBottom: "4px" }}>Creativo (imagen) que se reutilizará:</div>
+                          <div style={{ color: "var(--color-paper)", fontWeight: 500 }}>
+                            🖼 {(act.parameters as any).reused_creative.name || "Creativo sincronizado"}
+                            {(act.parameters as any).reused_creative.image_hash && (
+                              <span className="mono" style={{ color: "var(--color-mist)", marginLeft: "8px", fontSize: "11px" }}>
+                                (hash: {(act.parameters as any).reused_creative.image_hash})
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <div style={{ display: "flex", gap: "0.75rem", justifyContent: "flex-end" }}>
                         <button
                           className="btn-secondary btn-sm"

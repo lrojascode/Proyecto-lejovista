@@ -75,10 +75,8 @@ export default function NewCampaignPage() {
   // igual y el draft queda CREATED, pero en Ads Manager no hay nada. Se muestra
   // en vez de festejar una campaña que no existe.
   const [resultSimulated, setResultSimulated] = useState(false);
-  // Qué variable exactamente lo está apagando: hay tres causas posibles
-  // (MOCK_SERVICES, ENABLE_META_WRITEBACK, el allowlist) y desde la pantalla
-  // eran indistinguibles.
   const [resultSimulatedReason, setResultSimulatedReason] = useState<string | null>(null);
+  const [resultImageHash, setResultImageHash] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const pollAttempts = useRef(0);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -287,8 +285,9 @@ export default function NewCampaignPage() {
           // payload es JSON libre (Dict[str, Any] en el backend) — result se
           // va llenando paso a paso por la Saga, sin forma fija que declarar.
           const payload = draft.payload as
-            { result?: { campaign_id?: string; simulated?: boolean; simulated_reason?: string } } | undefined;
+            { result?: { campaign_id?: string; image_hash?: string; simulated?: boolean; simulated_reason?: string } } | undefined;
           setResultCampaignId(payload?.result?.campaign_id || null);
+          setResultImageHash(payload?.result?.image_hash || null);
           setResultSimulated(Boolean(payload?.result?.simulated));
           setResultSimulatedReason(payload?.result?.simulated_reason || null);
           setStatus("success");
@@ -503,10 +502,42 @@ export default function NewCampaignPage() {
                   </>
                 )}
               </p>
+
+              {/* Verificación de extremo a extremo del creativo (2.3) */}
+              {(imagePreviewUrl || resultImageHash || formData.image_hash) && (
+                <div style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  background: "rgba(255, 255, 255, 0.03)",
+                  border: "1px solid var(--border-subtle)",
+                  borderRadius: "8px",
+                  padding: "8px 16px",
+                  marginTop: "16px",
+                  textAlign: "left",
+                }}>
+                  {imagePreviewUrl && (
+                    <img
+                      src={imagePreviewUrl}
+                      alt="Arte subido"
+                      style={{ width: "48px", height: "48px", borderRadius: "6px", objectFit: "cover" }}
+                    />
+                  )}
+                  <div>
+                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Arte confirmado en Meta:</div>
+                    <div className="mono" style={{ fontSize: "12px", color: "var(--color-paper)" }}>
+                      Hash: {resultImageHash || formData.image_hash || "(generado por Meta)"}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {adsManagerLink && !resultSimulated && (
-                <a href={adsManagerLink} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ marginTop: "16px", display: "inline-block" }}>
-                  Abrir en Ads Manager
-                </a>
+                <div>
+                  <a href={adsManagerLink} target="_blank" rel="noopener noreferrer" className="btn-secondary" style={{ marginTop: "16px", display: "inline-block" }}>
+                    Abrir en Ads Manager
+                  </a>
+                </div>
               )}
               <div>
                 <button onClick={() => router.push("/campaigns")} className="btn-primary" style={{ marginTop: "16px" }}>
