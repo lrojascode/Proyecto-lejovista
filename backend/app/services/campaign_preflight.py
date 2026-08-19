@@ -83,6 +83,31 @@ class CampaignPreflight:
             f"{datetime.now().strftime('%b%Y').upper()}"
         ).replace(" ", "")
 
+        # --- 0. Políticas de Meta Ads (Fase 6.7 / Roadmap 10) ---
+        from app.services.meta_policy_rules.validator import default_policy_validator
+        policy_res = default_policy_validator.validate(
+            copy_text=copy_text,
+            headline=headline,
+            description=description,
+        )
+        if not policy_res.is_compliant:
+            first_blocking = policy_res.blocking_violations[0]
+            checks.append({
+                "step": "meta_policy",
+                "ok": False,
+                "error": {
+                    "title": f"Infracción de Política: {first_blocking.title}",
+                    "message": f"{first_blocking.description} (Coincidencia: '{first_blocking.matched_text}'). Sugerencia: {first_blocking.remediation}",
+                },
+                "violations": policy_res.to_dict()["blocking_violations"],
+            })
+        else:
+            checks.append({
+                "step": "meta_policy",
+                "ok": True,
+                "warnings": policy_res.to_dict()["warnings"],
+            })
+
         # --- 1. Campaña ---
         checks.append(await self._check(
             "campaign", f"{self.acc.external_account_id}/campaigns", token,

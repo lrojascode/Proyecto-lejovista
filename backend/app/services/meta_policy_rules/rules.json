@@ -1,0 +1,94 @@
+{
+  "version": "2026.08.1",
+  "updated_at": "2026-08-19T00:00:00Z",
+  "meta_policy_url": "https://www.facebook.com/policies/ads/",
+  "rules": [
+    {
+      "id": "HEALTH_UNREALISTIC_CLAIMS",
+      "category": "Salud y Pérdida de Peso",
+      "severity": "BLOCKING",
+      "title": "Afirmaciones engañosas o plazos poco realistas de salud/peso",
+      "description": "Meta prohíbe anuncios que prometan pérdida de peso rápida, curas milagrosas o resultados de salud garantizados en plazos específicos.",
+      "remediation": "Enfócate en hábitos saludables, ingredientes naturales o acompañamiento profesional sin prometer cifras de pérdida de peso en días.",
+      "patterns": [
+        "(?i)(?:pierde|baja)\\s+\\d+\\s*(?:kg|kilos|libras)\\s+en\\s+\\d+\\s*(?:días|dias|semanas|meses)",
+        "(?i)cura\\s+garantizada",
+        "(?i)elimina\\s+la\\s+grasa\\s+en\\s+\\d+\\s*(?:días|dias|noches)",
+        "(?i)milagroso|cura\\s+milagrosa|remedio\\s+milagroso",
+        "(?i)elimina\\s+arrugas\\s+en\\s+\\d+\\s*(?:días|dias|horas|minutos)"
+      ]
+    },
+    {
+      "id": "PERSONAL_ATTRIBUTES",
+      "category": "Atributos Personales",
+      "severity": "BLOCKING",
+      "title": "Afirmaciones directas o preguntas sobre atributos personales",
+      "description": "Meta prohíbe copies que apunten directamente a la condición personal, salud, raza, religión o dificultades financieras del usuario.",
+      "remediation": "Habla de las soluciones o del servicio en tercera persona en lugar de interpelar directamente con preguntas acusatorias.",
+      "patterns": [
+        "(?i)(?:¿|\\b)(?:estás|estas)\\s+(?:gordo|gorda|endeudado|endeudada|deprimido|deprimida|enfermo|enferma|solo|sola)",
+        "(?i)(?:¿|\\b)(?:tienes|sufres\\s+de)\\s+(?:sobrepeso|obesidad|depresión|ansiedad|deudas)",
+        "(?i)si\\s+(?:eres|estás)\\s+(?:gordo|gorda|endeudado|endeudada|soltero|soltera)",
+        "(?i)(?:¿|\\b)(?:eres\\s+cristiano|eres\\s+musulmán|eres\\s+gay|eres\\s+lesbiana)"
+      ]
+    },
+    {
+      "id": "DISCRIMINATION_SPECIAL_CATEGORIES",
+      "category": "No Discriminación (Empleo, Vivienda, Crédito)",
+      "severity": "BLOCKING",
+      "title": "Restricciones discriminatorias por género, edad o estado civil",
+      "description": "Las oportunidades de empleo, vivienda o servicios no pueden restringirse discriminatoriamente por género, edad o estado civil.",
+      "remediation": "Usa redacción inclusiva y neutral abierta a cualquier postulante o interesado.",
+      "patterns": [
+        "(?i)solo\\s+para\\s+mujeres\\s+solteras",
+        "(?i)solo\\s+para\\s+(?:hombres|mujeres)\\s*(?:jóvenes|jovenes)?",
+        "(?i)exclusivo\\s+para\\s+(?:hombres|mujeres)",
+        "(?i)no\\s+apto\\s+para\\s+mayores\\s+de\\s+\\d+",
+        "(?i)exclusivo\\s+solteros|exclusivo\\s+solteras",
+        "(?i)solo\\s+personas\\s+sin\\s+hijos"
+      ]
+    },
+    {
+      "id": "FINANCIAL_MISLEADING_OPPORTUNITIES",
+      "category": "Servicios Financieros y Oportunidades",
+      "severity": "BLOCKING",
+      "title": "Esquemas de enriquecimiento rápido o préstamos garantizados",
+      "description": "Meta rechaza anuncios que prometan ingresos garantizados sin esfuerzo, esquemas piramidales o préstamos sin verificación.",
+      "remediation": "Describe claramente las características del servicio o capacitación sin prometer retornos fijos garantizados.",
+      "patterns": [
+        "(?i)gana\\s+dinero\\s+sin\\s+trabajar",
+        "(?i)hazte\\s+rico\\s+(?:en\\s+\\d+\\s*(?:días|dias)|rápido|rapido)",
+        "(?i)ingresos\\s+(?:pasivos\\s+)?garantizados\\s+de\\s+\\$?\\d+",
+        "(?i)pr[eé]stamo\\s+garantizado\\s+sin\\s+(?:requisitos|evaluaci[oó]n|bur[oó]|infocorp)",
+        "(?i)duplica\\s+tu\\s+dinero\\s+en\\s+\\d+\\s*(?:días|dias)"
+      ]
+    },
+    {
+      "id": "BEFORE_AFTER_SENSATIONALISM",
+      "category": "Contenido Sensacionalista y Antes/Después",
+      "severity": "WARNING",
+      "title": "Contenido comparativo 'Antes y Después' o sensacionalista",
+      "description": "Las comparaciones explícitas de antes y después suelen sufrir limitaciones de entrega o rechazos manuales.",
+      "remediation": "Muestra el estado final o la experiencia positiva en vez de una comparativa de choque.",
+      "patterns": [
+        "(?i)mira\\s+el\\s+antes\\s+y\\s+despu[eé]s",
+        "(?i)impactante\\s+transformaci[oó]n",
+        "(?i)no\\s+vas\\s+a\\s+creer\\s+el\\s+resultado",
+        "(?i)el\\s+secreto\\s+que\\s+los\\s+m[eé]dicos\\s+no\\s+quieren\\s+que\\s+sepas"
+      ]
+    },
+    {
+      "id": "ABSOLUTE_GUARANTEES",
+      "category": "Garantías y Promesas Absolutas",
+      "severity": "WARNING",
+      "title": "Promesas de resultados 100% garantizados",
+      "description": "Afirmaciones como '100% garantizado' o 'éxito asegurado' sin términos claros generan penalizaciones en la subasta de Meta.",
+      "remediation": "Matiza indicando 'Satisfacción garantizada con soporte personalizado' o 'Términos y condiciones aplican'.",
+      "patterns": [
+        "(?i)100%\\s+garantizado|éxito\\s+100%\\s+seguro|exito\\s+100%\\s+seguro",
+        "(?i)resultados\\s+100%\\s+garantizados",
+        "(?i)sin\\s+ningún\\s+riesgo|cero\\s+riesgo\\s+garantizado"
+      ]
+    }
+  ]
+}

@@ -174,6 +174,8 @@ async def test_preflight_does_not_fake_ok_when_writes_are_simulated(db_session: 
 
     result = await _run(acc, limiter)
 
-    for check in result["checks"]:
+    api_checks = [c for c in result["checks"] if c["step"] in ("campaign", "adset", "creative")]
+    assert len(api_checks) == 3
+    for check in api_checks:
         assert check["ok"] is not True
         assert "simulad" in (check.get("skipped") or "")
