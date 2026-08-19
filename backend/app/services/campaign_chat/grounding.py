@@ -64,6 +64,10 @@ class GroundingSet:
         entry = GroundingEntry(value=val_rounded, unit=unit)
         if entry not in self._entries:
             self._entries.append(entry)
+        if val_rounded < 0 and len(self._entries) < MAX_GROUNDING_VALUES:
+            abs_entry = GroundingEntry(value=abs(val_rounded), unit=unit)
+            if abs_entry not in self._entries:
+                self._entries.append(abs_entry)
 
     def size(self) -> int:
         return len(self._entries)
@@ -101,7 +105,7 @@ class GroundingSet:
         return gset
 
     @classmethod
-    def _traverse_and_collect(cls, node: Any, gset: "GroundingSet", parent_key: str = "") -> None:
+    def _traverse_and_collect(cls, node: Any, gset: "GroundingSet", path: Tuple[str, ...] = ()) -> None:
         if is_dataclass(node):
             node = asdict(node)
 
@@ -109,12 +113,12 @@ class GroundingSet:
             for k, v in node.items():
                 if k in OPAQUE_KEYS:
                     continue
-                cls._traverse_and_collect(v, gset, parent_key=k.lower())
+                cls._traverse_and_collect(v, gset, path=path + (k.lower(),))
         elif isinstance(node, (list, tuple, set)):
             for item in node:
-                cls._traverse_and_collect(item, gset, parent_key=parent_key)
+                cls._traverse_and_collect(item, gset, path=path)
         elif isinstance(node, (int, float)) and not isinstance(node, bool):
-            unit = cls._classify_key_unit(parent_key)
+            unit = cls._classify_path_unit(path)
             gset.add(float(node), unit)
         elif isinstance(node, str):
             # Extraer números de strings descriptivos (ej. "los últimos 30 días" -> 30)
@@ -122,16 +126,44 @@ class GroundingSet:
                 for c in _parse_float_candidates(m.group(0)):
                     gset.add(c, GroundingUnit.ANY)
 
+    @classmethod
+    def _classify_path_unit(cls, path: Tuple[str, ...]) -> GroundingUnit:
+        if not path:
+            return GroundingUnit.ANY
+
+        leaf = path[-1].lower()
+
+        # 1. Sufijos explícitos tienen máxima prioridad
+        if leaf.endswith(("_pct", "_percent", "_tasa")):
+            return GroundingUnit.PERCENT
+        if leaf.endswith(("_soles", "_pen", "_usd", "_money")):
+            return GroundingUnit.MONEY
+        if leaf.endswith(("_cant", "_count", "_dias", "_days")):
+            return GroundingUnit.COUNT
+
+        # 2. Si algún ancestro o la clave misma es de porcentaje (deltas_pct, variacion, pct, etc.)
+        for key in path:
+            k = key.lower()
+            if any(p in k for p in ("deltas_pct", "variacion", "delta_pct", "pct", "percent", "tasa", "porcentaje")):
+                return GroundingUnit.PERCENT
+
+        # 3. Clasificación por clave inmediata: PERCENT antes que MONEY
+        if any(p in leaf for p in ("ctr", "rate", "share")):
+            return GroundingUnit.PERCENT
+
+        # 4. Clasificación por dinero
+        if any(m in leaf for m in ("spend", "budget", "cpl", "cost", "amount", "cap", "inversion", "gasto", "precio")):
+            return GroundingUnit.MONEY
+
+        # 5. Clasificación por conteo
+        if any(c in leaf for c in ("impressions", "clicks", "reach", "conversions", "conversations", "count", "days", "dias", "frequency", "leads", "frecuencia", "alcance")):
+            return GroundingUnit.COUNT
+
+        return GroundingUnit.ANY
+
     @staticmethod
     def _classify_key_unit(key: str) -> GroundingUnit:
-        k = key.lower()
-        if any(m in k for m in ("spend", "budget", "cpl", "cost", "amount", "cap", "inversion", "gasto", "precio")):
-            return GroundingUnit.MONEY
-        if any(p in k for p in ("ctr", "pct", "percent", "rate", "share", "delta_pct", "tasa")):
-            return GroundingUnit.PERCENT
-        if any(c in k for c in ("impressions", "clicks", "reach", "conversions", "conversations", "count", "days", "dias", "frequency", "leads")):
-            return GroundingUnit.COUNT
-        return GroundingUnit.ANY
+        return GroundingSet._classify_path_unit((key.lower(),))
 
 
 def _parse_float_candidates(raw: str) -> List[float]:

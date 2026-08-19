@@ -80,3 +80,33 @@ def test_unit_mismatch_rejections():
     assert numbers_are_grounded(facts, "El CTR aumentó en 34%.") is False
     # Cifra correcta respaldada
     assert numbers_are_grounded(facts, "Analizamos 12 días y gastaste S/. 100.00.") is True
+
+
+def test_h5_percentage_in_deltas_pct_is_accepted_as_percent():
+    """H5: deltas_pct.spend = 20.0 debe clasificarse como PERCENT y aceptarse como 20%."""
+    facts = {
+        "kpis": {
+            "spend": 500.0,
+            "deltas_pct": {
+                "spend": 20.0,
+                "cost_per_conv": -5.3,
+            }
+        }
+    }
+    # Porcentaje legítimo en deltas_pct.spend
+    assert numbers_are_grounded(facts, "El gasto subió 20% respecto al periodo anterior.") is True
+    assert numbers_are_grounded(facts, "El costo por conversación bajó 5.3%.") is True
+
+
+def test_h5_decimal_integer_collision_still_rejected():
+    """H5: spend=27.00 no debe respaldar 2700 ni impresiones=2700 respaldar S/. 27.00."""
+    facts_money = {"spend": 27.00}
+    # S/. 2700 inventado no debe pasar
+    assert numbers_are_grounded(facts_money, "Gastaste S/. 2700.") is False
+    assert numbers_are_grounded(facts_money, "Tuviste 2700 impresiones.") is False
+
+    facts_impressions = {"impressions": 2700}
+    # S/. 27.00 no debe pasar con 2700 impresiones
+    assert numbers_are_grounded(facts_impressions, "El costo fue de S/. 27.00.") is False
+    assert numbers_are_grounded(facts_impressions, "Gastaste S/. 2700.") is False
+    assert numbers_are_grounded(facts_impressions, "Alcanzaste 2700 impresiones.") is True
