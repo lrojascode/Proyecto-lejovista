@@ -272,6 +272,7 @@ class SuggestionCopy(BaseModel):
     primary_text: List[str]
     description: str
     welcome_message: str
+    suggested_product_name: Optional[str] = None
 
 
 class SuggestionResponse(BaseModel):
@@ -297,6 +298,7 @@ class SuggestionResponse(BaseModel):
     winning_ad_copy: Optional[Dict[str, Any]] = None
     evidence: List[str]
     copy: SuggestionCopy
+    suggested_product_name: Optional[str] = None
 
 
 # --- Historial de entrenamiento de la IA (creación de campañas) ---

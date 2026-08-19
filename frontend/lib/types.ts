@@ -65,7 +65,10 @@ export type SyncLearningSnapshot = {
 // --- CAMPAIGN SUGGESTION (/campaigns/suggestion) ---
 export type SuggestionChange = Schemas["SuggestionChange"];
 export type SuggestionAnalysis = Schemas["SuggestionAnalysis"];
-export type Suggestion = Schemas["SuggestionResponse"];
+export type Suggestion = Schemas["SuggestionResponse"] & {
+  suggested_product_name?: string | null;
+  copy: Schemas["SuggestionResponse"]["copy"] & { suggested_product_name?: string | null };
+};
 
 // --- REPORT (ReportBuilder.build / report_cache.get_report) ---
 export type ReportDeltasPct = Schemas["ReportDeltasPct"];

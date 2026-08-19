@@ -38,9 +38,10 @@ class SessionFacts:
 def next_state(facts: SessionFacts) -> str:
     if facts.draft_id:
         return "CREATING"
-    if not facts.goal_text:
+    has_media = bool(facts.image_path or facts.video_path)
+    if not facts.goal_text and not has_media:
         return "ASK_GOAL"
-    if not (facts.image_path or facts.video_path):
+    if not has_media:
         return "ASK_MEDIA"
     if not facts.has_proposal:
         return "BUILD_PLAN"

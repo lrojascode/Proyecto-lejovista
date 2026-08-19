@@ -1508,5 +1508,59 @@ async def test_org_custom_llm_key_and_client_resolution(async_client: AsyncClien
     assert test_data["provider"] == "openai"
 
 
+@pytest.mark.asyncio
+async def test_art_driven_product_name_and_chat_flow(async_client: AsyncClient, db_session: AsyncSession):
+    """
+    2.2: Verifica que el arte proponga el nombre del producto,
+    que la máquina de estados del chat salte directo a BUILD_PLAN si llega
+    primero la imagen, y que se derive el producto en los slots.
+    """
+    from sqlalchemy import select
+    from app.models.user import User
+    from app.services.ai.llm import OpenRouterClient
+    from app.services.campaign_chat.machine import SessionFacts, next_state
+    from app.services.campaign_proposal import build_campaign_proposal
+
+    org, acc = await _make_org_and_account(db_session, slug="art-org")
+    await db_session.commit()
+    headers = await _auth_headers_for_org(async_client, db_session, org, "artuser@example.com")
+    from sqlalchemy.orm import selectinload
+    user = (await db_session.execute(
+        select(User).options(selectinload(User.organizations)).where(User.email == "artuser@example.com")
+    )).scalar_one()
+
+    # 1. suggest_campaign_copy con imagen devuelve suggested_product_name
+    client = OpenRouterClient(organization=org)
+    copy_res = await client.suggest_campaign_copy(
+        org=org,
+        ad_account=acc,
+        product_name="",
+        image_path=f"{user.organization_id}/images/test_art.jpg",
+    )
+    assert copy_res.get("suggested_product_name") is not None
+
+    # 2. build_campaign_proposal incluye suggested_product_name
+    proposal = await build_campaign_proposal(
+        db_session,
+        user,
+        acc,
+        product_name="",
+        image_path=f"{user.organization_id}/images/test_art.jpg",
+    )
+    assert proposal.get("suggested_product_name") is not None
+
+    # 3. next_state con media pero sin goal_text va directo a BUILD_PLAN (arte manda)
+    facts_art_first = SessionFacts(
+        goal_text=None,
+        image_path=f"{user.organization_id}/images/test_art.jpg",
+        video_path=None,
+        has_proposal=False,
+        proposal_accepted=False,
+        draft_id=None,
+    )
+    assert next_state(facts_art_first) == "BUILD_PLAN"
+
+
+
 
 

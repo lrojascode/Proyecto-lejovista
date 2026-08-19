@@ -56,6 +56,7 @@ export default function NewCampaignPage() {
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestError, setSuggestError] = useState("");
+  const [productSuggestedFromImage, setProductSuggestedFromImage] = useState(false);
 
   const [waInput, setWaInput] = useState("");
   const [waSaving, setWaSaving] = useState(false);
@@ -195,27 +196,34 @@ export default function NewCampaignPage() {
     }
   };
 
-  /** Vuelve a pedir el copy pasando la imagen, para que el texto sea coherente
-   *  con lo que se ve. Solo tiene sentido si ya se pidió una sugerencia. */
+  /** Vuelve a pedir el copy y sugerencia pasando la imagen. Si el producto
+   *  está vacío, prellena el nombre propuesto por la IA a partir de la foto. */
   const regenerateCopyWithImage = async (imagePath: string) => {
-    if (!activeAdAccountId || !formData.product_name || !suggestion) return;
+    if (!activeAdAccountId) return;
     setCopyRegenerating(true);
     try {
+      const currentProd = formData.product_name.trim();
       const data: Suggestion = await api.getCampaignSuggestion(
-        activeAdAccountId, formData.product_name, imagePath
+        activeAdAccountId, currentProd || "Producto", imagePath
       );
       setSuggestion(data);
       setCopyVariant(0);
-      // Solo se refresca el copy: presupuesto y días pueden haberlos ajustado
-      // a mano y no hay motivo para pisarlos por cambiar la foto.
-      setFormData((prev) => ({
-        ...prev,
-        copy_text: data.copy.primary_text[0],
-        headline: data.copy.headline[0],
-        description: data.copy.description,
-      }));
+
+      const suggestedProd = data.copy?.suggested_product_name || data.suggested_product_name;
+      setFormData((prev) => {
+        const shouldFillProduct = !prev.product_name.trim() && Boolean(suggestedProd);
+        if (shouldFillProduct) {
+          setProductSuggestedFromImage(true);
+        }
+        return {
+          ...prev,
+          product_name: shouldFillProduct ? (suggestedProd as string) : prev.product_name,
+          copy_text: data.copy.primary_text[0],
+          headline: data.copy.headline[0],
+          description: data.copy.description,
+        };
+      });
     } catch (err: any) {
-      // El copy anterior sigue siendo válido: no se rompe el formulario.
       console.error("No se pudo regenerar el copy con la imagen:", err);
     } finally {
       setCopyRegenerating(false);
@@ -558,8 +566,26 @@ export default function NewCampaignPage() {
               )}
             </div>
             <div>
-              <label style={labelStyle}>Producto</label>
-              <input type="text" name="product_name" required value={formData.product_name} onChange={handleChange} className="form-input" placeholder="Cable GPT" />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <label style={labelStyle}>Producto</label>
+                {productSuggestedFromImage && (
+                  <span style={{ fontSize: "11px", color: "var(--color-mint)", fontWeight: 500 }}>
+                    ✨ Propuesto a partir de tu imagen (editable)
+                  </span>
+                )}
+              </div>
+              <input
+                type="text"
+                name="product_name"
+                required
+                value={formData.product_name}
+                onChange={(e) => {
+                  setProductSuggestedFromImage(false);
+                  handleChange(e);
+                }}
+                className="form-input"
+                placeholder="Cable GPT"
+              />
             </div>
             <div>
               <label style={labelStyle} htmlFor="wa-number">Número de WhatsApp</label>

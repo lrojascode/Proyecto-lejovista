@@ -307,6 +307,12 @@ async def _build_and_append_proposal(
         return False
 
     copy = proposal.get("copy") or {}
+    suggested_prod = proposal.get("suggested_product_name") or copy.get("suggested_product_name")
+    if suggested_prod and not slots.get("product_name"):
+        slots["product_name"] = suggested_prod
+        if not slots.get("goal_text"):
+            slots["goal_text"] = suggested_prod
+
     slots.setdefault("budget", proposal.get("suggested_budget"))
     slots.setdefault("days", proposal.get("suggested_days"))
     slots.setdefault("budget_type", "LIFETIME")

@@ -519,9 +519,11 @@ class OpenRouterClient:
             "('fórmula magistral', 'medicamento', 'dosis', 'tratamiento', 'receta médica'); si el "
             "producto pertenece a ese rubro, enfócalo como cuidado personal o cosmético, o describe "
             "el producto físico en vez del fármaco.\n\n"
+            "Si se provee una imagen o el producto no está especificado, identifica el producto principal y "
+            'proponlo en "suggested_product_name": "Nombre Corto del Producto" (máximo 40 caracteres, conciso).\n\n'
             "Responde ÚNICAMENTE con un JSON válido, sin texto adicional ni markdown, con "
-            'exactamente estas claves: {"headline": ["variante 1", "variante 2"], '
-            '"primary_text": ["variante 1", "variante 2"], "description": "...", "welcome_message": "..."}.'
+            'estas claves: {"headline": ["variante 1", "variante 2"], '
+            '"primary_text": ["variante 1", "variante 2"], "description": "...", "welcome_message": "...", "suggested_product_name": "..."}.'
             "\n\n" + _PROMPT_INJECTION_GUARD
         )
 
@@ -594,7 +596,7 @@ class OpenRouterClient:
         except Exception:
             logger.exception("Error llamando a la API del LLM para copy de campaña. Usando plantilla local.")
 
-        return self._generate_mock_copy(product_name, winning_context)
+        return self._generate_mock_copy(product_name, winning_context, image_path=image_path)
 
     _CHAT_EXTRACT_KEYS = {
         "intent", "product_name", "goal_text", "budget", "budget_type",
@@ -1015,38 +1017,54 @@ class OpenRouterClient:
             return None
         result["description"] = description
         result["welcome_message"] = str(data["welcome_message"])
+
+        suggested_prod = data.get("suggested_product_name")
+        if suggested_prod:
+            from app.services.campaign_chat.slots import sanitize_product_name
+            result["suggested_product_name"] = sanitize_product_name(str(suggested_prod))
+        else:
+            result["suggested_product_name"] = None
+
         return result
 
     def _generate_mock_copy(
-        self, product_name: str, winning_context: Optional[Dict[str, Any]] = None
+        self,
+        product_name: str,
+        winning_context: Optional[Dict[str, Any]] = None,
+        image_path: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Plantilla local determinista (sin LLM) — nunca rompe la creación de
         campañas si el LLM falla, no hay API key configurada, o MOCK_SERVICES
         está activo. Sigue la misma estructura DOLOR→PROMESA→BENEFICIOS→URGENCIA→CTA
         del playbook (§6), sin inventar cifras de rendimiento. Respeta los
         mismos límites de Meta que se le exigen al LLM (headline/description)."""
-        headline_a = f"{product_name} 🔥"[:META_HEADLINE_MAX_CHARS]
-        headline_b = f"Cotiza {product_name} ya"[:META_HEADLINE_MAX_CHARS]
+        from app.services.campaign_chat.slots import sanitize_product_name
+        prod_clean = product_name or "Producto"
+        suggested_prod = sanitize_product_name(product_name or "Producto Destacado") if (image_path or not product_name or product_name == "Producto") else None
+
+        headline_a = f"{prod_clean} 🔥"[:META_HEADLINE_MAX_CHARS]
+        headline_b = f"Cotiza {prod_clean} ya"[:META_HEADLINE_MAX_CHARS]
         return {
             "headline": [headline_a, headline_b],
             "primary_text": [
                 (
-                    f"¿Buscas {product_name.lower()} de confianza? 😩\n\n"
+                    f"¿Buscas {prod_clean.lower()} de confianza? 😩\n\n"
                     f"Con nosotros lo tienes fácil: calidad garantizada y atención inmediata. ✅\n"
                     f"✅ Entrega rápida\n✅ Atención personalizada\n✅ Precios justos\n\n"
                     f"🔥 Cupos limitados esta semana.\n"
                     f"📲 Escríbenos ahora por WhatsApp y cotiza sin compromiso."
                 ),
                 (
-                    f"¿Cansado de no encontrar {product_name.lower()} de calidad? 😩\n\n"
+                    f"¿Cansado de no encontrar {prod_clean.lower()} de calidad? 😩\n\n"
                     f"Te lo ponemos fácil: atención rápida y precios justos. ✅\n"
                     f"✅ Stock disponible\n✅ Asesoría personalizada\n✅ Entrega puntual\n\n"
                     f"🔥 Promoción válida esta semana.\n"
                     f"📲 Escríbenos por WhatsApp y cotiza gratis."
                 ),
             ],
-            "description": f"{product_name} · Cotiza por WhatsApp"[:META_DESCRIPTION_MAX_CHARS],
-            "welcome_message": f"¡Hola! 👋 Gracias por escribir. Cuéntanos qué necesitas de {product_name} y te ayudamos al toque.",
+            "description": f"{prod_clean} · Cotiza por WhatsApp"[:META_DESCRIPTION_MAX_CHARS],
+            "welcome_message": f"¡Hola! 👋 Gracias por escribir. Cuéntanos qué necesitas de {prod_clean} y te ayudamos al toque.",
+            "suggested_product_name": suggested_prod,
         }
 
     def _generate_mock_narrative(

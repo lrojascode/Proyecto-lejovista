@@ -82,4 +82,5 @@ async def build_campaign_proposal(
         "winning_ad_copy": suggestion["winning_ad_copy"],
         "evidence": suggestion["evidence"],
         "copy": copy,
+        "suggested_product_name": copy.get("suggested_product_name"),
     }
