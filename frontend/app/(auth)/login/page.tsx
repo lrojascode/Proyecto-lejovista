@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { getTenantSlugFromHostname } from "@/lib/config";
 
 export default function Login() {
   const router = useRouter();
@@ -18,14 +19,13 @@ export default function Login() {
   useEffect(() => {
     // Detectar el tenant slug del subdominio en el navegador
     if (typeof window !== "undefined") {
-      const hostname = window.location.hostname;
-      const parts = hostname.split(".");
-      if (parts.length > 1 && parts[0] !== "www" && parts[0] !== "api" && parts[0] !== "localhost") {
-        setTenantSlug(parts[0]);
-        setOrgName(parts[0].charAt(0).toUpperCase() + parts[0].slice(1) + " Corp");
+      const slug = getTenantSlugFromHostname(window.location.hostname);
+      if (slug) {
+        setTenantSlug(slug);
+        setOrgName(slug.charAt(0).toUpperCase() + slug.slice(1));
       } else {
-        setTenantSlug("cliente1");
-        setOrgName("Cliente 1 Corp");
+        setTenantSlug("");
+        setOrgName("");
       }
     }
   }, []);
@@ -45,8 +45,8 @@ export default function Login() {
           email,
           password,
           full_name: fullName,
-          organization_slug: tenantSlug,
-          organization_name: orgName,
+          organization_slug: tenantSlug || "default",
+          organization_name: orgName || "Mi Organización",
         });
       }
 
@@ -76,9 +76,15 @@ export default function Login() {
           <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em", marginBottom: "0.25rem" }}>
             LejoVista
           </h2>
-          <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>
-            Acceso para <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{tenantSlug || "Inquilino"}</strong>
-          </p>
+          {tenantSlug ? (
+            <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>
+              Accediendo al espacio de <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{tenantSlug}</strong>
+            </p>
+          ) : (
+            <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>
+              Plataforma de Optimización de Meta Ads
+            </p>
+          )}
         </div>
 
         {error && (
