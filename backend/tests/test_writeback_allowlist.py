@@ -111,3 +111,18 @@ def test_reason_and_simulate_flag_always_agree():
     for s in casos:
         simulado = s.simulate_meta_writes_for("uuid-1", "act_111")
         assert simulado is (s.writeback_block_reason("uuid-1", "act_111") is not None)
+
+
+def test_is_unrestricted_writeback_detected_when_no_allowlist():
+    """H1: ENABLE_META_WRITEBACK=True + MOCK_SERVICES=False + allowlist vacio es estado de alto riesgo."""
+    s_dangerous = _settings(MOCK_SERVICES=False, ENABLE_META_WRITEBACK=True, WRITEBACK_ACCOUNT_ALLOWLIST="")
+    assert s_dangerous.is_unrestricted_writeback is True
+
+    s_safe_mock = _settings(MOCK_SERVICES=True, ENABLE_META_WRITEBACK=True, WRITEBACK_ACCOUNT_ALLOWLIST="")
+    assert s_safe_mock.is_unrestricted_writeback is False
+
+    s_safe_allowlist = _settings(MOCK_SERVICES=False, ENABLE_META_WRITEBACK=True, WRITEBACK_ACCOUNT_ALLOWLIST="act_1317785970189038")
+    assert s_safe_allowlist.is_unrestricted_writeback is False
+
+    s_safe_disabled = _settings(MOCK_SERVICES=False, ENABLE_META_WRITEBACK=False, WRITEBACK_ACCOUNT_ALLOWLIST="")
+    assert s_safe_disabled.is_unrestricted_writeback is False

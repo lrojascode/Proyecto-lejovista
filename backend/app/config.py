@@ -91,6 +91,12 @@ class Settings(BaseSettings):
         disponible — respeta el allowlist de la cuenta piloto (F-2)."""
         return self.MOCK_SERVICES or not self.ENABLE_META_WRITEBACK
 
+    @property
+    def is_unrestricted_writeback(self) -> bool:
+        """H1: True si el sistema está configurado para escribir dinero real en TODAS
+        las cuentas sin restricción de allowlist (estado de alto riesgo)."""
+        return not self.MOCK_SERVICES and self.ENABLE_META_WRITEBACK and not self.WRITEBACK_ACCOUNT_ALLOWLIST.strip()
+
     def simulate_meta_writes_for(
         self, ad_account_id: Optional[str], external_account_id: Optional[str] = None
     ) -> bool:

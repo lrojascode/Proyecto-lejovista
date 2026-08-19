@@ -62,7 +62,10 @@ async def lifespan(app: FastAPI):
             "o el id de Meta (act_...).", settings.WRITEBACK_ACCOUNT_ALLOWLIST,
         )
     else:
-        logger.warning("Escrituras a Meta REALES para TODAS las cuentas (sin allowlist).")
+        logger.critical(
+            "¡PELIGRO! Escrituras a Meta REALES para TODAS las cuentas (ENABLE_META_WRITEBACK=true con WRITEBACK_ACCOUNT_ALLOWLIST vacio). "
+            "Cualquier accion aprobada se ejecutara con dinero real en cualquier cuenta conectada."
+        )
 
     # Iniciar listener de Redis para WebSockets
     listener_task = asyncio.create_task(redis_listener())
