@@ -1331,3 +1331,52 @@ async def test_insights_ordered_by_severity(async_client: AsyncClient, db_sessio
     levels = [item["level"] for item in res.json()]
     assert levels == ["CRITICAL", "WARNING", "INFO"]
 
+
+# --- 0.3: ciclo de vida de acciones SUPERSEDED ---
+@pytest.mark.asyncio
+async def test_superseded_actions_lifecycle(async_client: AsyncClient, db_session: AsyncSession):
+    from app.services.ai.engine import AIEngine
+    from app.models.ai_action import AIAction
+    org, acc = await _make_org_and_account(db_session, slug="supersede-org")
+    today = datetime.date.today()
+
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c_super",
+        campaign_name="Camp Super", status="ACTIVE", spend=100.0, conversions=1,
+        impressions=1000, clicks=50, budget=50.0, date=today,
+    ))
+    old_proposed = AIAction(
+        id="act-old-prop", organization_id=org.id, ad_account_id=acc.id,
+        action_type="MODIFY_BUDGET", risk_level="LOW", title="Old Proposed",
+        description="Old Desc", target_campaign_id="c_super", status="PROPOSED"
+    )
+    old_approved = AIAction(
+        id="act-old-appr", organization_id=org.id, ad_account_id=acc.id,
+        action_type="PAUSE_CAMPAIGN", risk_level="LOW", title="Old Approved",
+        description="Old Appr Desc", target_campaign_id="c_super", status="APPROVED"
+    )
+    db_session.add_all([old_proposed, old_approved])
+    await db_session.commit()
+
+    engine = AIEngine(db_session)
+    await engine.run_analysis(org.id)
+
+    await db_session.refresh(old_proposed)
+    await db_session.refresh(old_approved)
+
+    assert old_proposed.status == "SUPERSEDED"
+    assert old_proposed.superseded_at is not None
+    assert old_approved.status == "APPROVED"
+
+    headers = await _auth_headers_for_org(async_client, db_session, org, "supersede@example.com")
+    res_pending = await async_client.get("/api/v1/actions", headers={**headers, "X-Ad-Account-Id": acc.id})
+    assert res_pending.status_code == 200
+    pending_ids = [a["id"] for a in res_pending.json()]
+    assert "act-old-prop" not in pending_ids
+
+    res_history = await async_client.get("/api/v1/actions/history", headers={**headers, "X-Ad-Account-Id": acc.id})
+    assert res_history.status_code == 200
+    history_statuses = {a["id"]: a["status"] for a in res_history.json()}
+    assert history_statuses.get("act-old-prop") == "SUPERSEDED"
+
+

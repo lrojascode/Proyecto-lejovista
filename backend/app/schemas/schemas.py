@@ -190,7 +190,9 @@ class AIActionResponse(BaseModel):
     platform: str
     parameters: Dict[str, Any]
     status: str
+    analysis_run_id: Optional[str] = None
     proposed_at: datetime
+    superseded_at: Optional[datetime] = None
     approved_at: Optional[datetime] = None
     approved_by: Optional[str] = None
     executed_at: Optional[datetime] = None

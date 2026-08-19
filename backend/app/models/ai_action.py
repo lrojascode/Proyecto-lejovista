@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 import uuid
 from sqlalchemy import String, Float, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -26,14 +27,16 @@ class AIAction(Base):
     planned_api_calls: Mapped[list] = mapped_column(JSON, default=list)
     
     # Ciclo de vida
-    status: Mapped[str] = mapped_column(String, default="PROPOSED")  # PROPOSED, APPROVED, REJECTED, EXECUTING, COMPLETED, FAILED
+    status: Mapped[str] = mapped_column(String, default="PROPOSED")  # PROPOSED, APPROVED, REJECTED, EXECUTING, COMPLETED, FAILED, SUPERSEDED
+    analysis_run_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     proposed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    approved_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    approved_by: Mapped[str] = mapped_column(String, nullable=True)  # User ID o "AUTO"
-    rejected_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    reject_reason: Mapped[str] = mapped_column(String, nullable=True)
-    executed_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    execution_result: Mapped[dict] = mapped_column(JSON, nullable=True)
+    superseded_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # User ID o "AUTO"
+    rejected_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    reject_reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    execution_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     
     # Estimaciones
     estimated_impact: Mapped[str] = mapped_column(String, nullable=True)

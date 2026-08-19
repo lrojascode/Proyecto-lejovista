@@ -1,6 +1,7 @@
 import logging
 import json
 import datetime
+import uuid
 from typing import Dict, Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +9,7 @@ from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
+from app.models.ai_action import AIAction
 from app.services.ai.rules import Capa1Rules
 from app.services.ai.statistics import Capa2Statistics
 from app.services.ai.llm import OpenRouterClient, PROMPT_VERSION
@@ -60,6 +62,9 @@ class AIEngine:
                 )
                 continue
 
+            analysis_run_id = str(uuid.uuid4())
+            now_utc = datetime.datetime.utcnow()
+
             # 1. Capa 1: Reglas fijas
             rules_analyzer = Capa1Rules(self.db)
             insights_c1 = await rules_analyzer.analyze(acc)
@@ -79,6 +84,20 @@ class AIEngine:
                     AIInsight.is_dismissed == False,  # noqa: E712
                 )
                 .values(is_dismissed=True)
+            )
+
+            # 0.3: Cerrar como SUPERSEDED las acciones PROPOSED anteriores de esta cuenta.
+            # Solo PROPOSED — jamás tocar APPROVED/EXECUTING/COMPLETED.
+            await self.db.execute(
+                update(AIAction)
+                .where(
+                    AIAction.ad_account_id == acc.id,
+                    AIAction.status == "PROPOSED",
+                )
+                .values(
+                    status="SUPERSEDED",
+                    superseded_at=now_utc,
+                )
             )
 
             # Guardar insights en DB
@@ -135,7 +154,7 @@ class AIEngine:
 
             # 4. Proponer acciones basadas en los insights
             planner = AIPlanner(self.db)
-            proposed_actions = await planner.plan_actions(acc, all_insights)
+            proposed_actions = await planner.plan_actions(acc, all_insights, analysis_run_id=analysis_run_id)
             total_actions.extend(proposed_actions)
 
             # Guardamos la narrativa en el AdAccount para fácil acceso posterior,

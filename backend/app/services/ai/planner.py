@@ -27,7 +27,12 @@ class AIPlanner:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def plan_actions(self, ad_account: AdAccount, insights: List[AIInsight]) -> List[AIAction]:
+    async def plan_actions(
+        self,
+        ad_account: AdAccount,
+        insights: List[AIInsight],
+        analysis_run_id: Optional[str] = None,
+    ) -> List[AIAction]:
         """
         Toma una lista de insights generados y crea propuestas de acción (AIActions)
         asociadas en la base de datos (estado PROPOSED).
@@ -38,30 +43,28 @@ class AIPlanner:
         # Mapa campaign_id -> presupuesto del snapshot más reciente. Se usa como
         # base real para MODIFY_BUDGET en lugar de valores hardcodeados (AI-2).
         # También capturamos el nombre real de la campaña (name_map), usado por
-        # CREATE_CAMPAIGN para dar contexto de producto al generador de copy
-        # (Fase 3B) en vez del literal "THHN" hardcodeado para cualquier cuenta.
-        # B-2: acotar a los últimos 30 días — solo el snapshot más reciente por
-        # campaña/adset importa aquí, no hace falta cargar el historial completo
-        # de la cuenta (que crece sin límite con el tiempo).
+        # MODIFY_PLACEMENTS para componer un título legible.
+        budget_map: Dict[str, float] = {}
+        name_map: Dict[str, str] = {}
+        latest_date_by_campaign: Dict[str, datetime.date] = {}
         history_cutoff = datetime.date.today() - datetime.timedelta(days=30)
 
-        budget_map = {}
-        name_map: Dict[str, str] = {}
         q_snaps = select(CampaignSnapshot).where(
             CampaignSnapshot.ad_account_id == ad_account.id,
             CampaignSnapshot.date >= history_cutoff,
         ).order_by(CampaignSnapshot.date.desc())
         res_snaps = await self.db.execute(q_snaps)
         for s in res_snaps.scalars().all():
-            if s.campaign_id not in budget_map:
+            if s.campaign_id not in budget_map and s.budget is not None:
                 budget_map[s.campaign_id] = s.budget
+            if s.campaign_id not in name_map and s.campaign_name:
                 name_map[s.campaign_id] = s.campaign_name
 
-        # Mapa campaign_id -> adset_ids vigentes (según el snapshot más reciente de
-        # cada campaña). Se usa para resolver el target real de las escrituras a
-        # nivel de adset en vez de escribir sobre el nodo de campaña (AI-2).
+        # Mapa campaign_id -> adset_ids del snapshot más reciente. Las acciones
+        # de adset (MODIFY_BUDGET, MODIFY_PLACEMENTS, MODIFY_TARGETING) necesitan
+        # el target_adset_id real porque la API de Meta no acepta esos cambios a
+        # nivel de campaña (AI-2).
         adset_map: Dict[str, List[str]] = {}
-        latest_date_by_campaign: Dict[str, datetime.date] = {}
         # A-4: resumen de targeting REAL (del snapshot más reciente de cada
         # adset) para poder documentar old_placements con datos reales en vez
         # de una lista hardcodeada en MODIFY_PLACEMENTS.
@@ -81,13 +84,13 @@ class AIPlanner:
             if not ins.suggested_action_type:
                 continue
 
-            # 1. Comprobar si ya existe una acción propuesta pendiente (PROPOSED o APPROVED)
+            # 1. Comprobar si ya existe una acción propuesta pendiente (PROPOSED, APPROVED o EXECUTING)
             # para esta campaña e insight
             q = select(AIAction).where(
                 AIAction.ad_account_id == ad_account.id,
-                AIAction.campaign_id == ins.campaign_id if hasattr(AIAction, "campaign_id") else AIAction.target_campaign_id == ins.campaign_id,
+                AIAction.target_campaign_id == ins.campaign_id,
                 AIAction.action_type == ins.suggested_action_type,
-                AIAction.status.in_(["PROPOSED", "APPROVED", "EXECUTING"])
+                AIAction.status.in_(["PROPOSED", "APPROVED", "EXECUTING"]),
             )
             res = await self.db.execute(q)
             existing = res.scalars().all()
@@ -97,7 +100,7 @@ class AIPlanner:
             # 2. Generar los detalles y parámetros según el tipo de acción
             action = await self._create_action_from_insight(
                 ad_account, ins, budget_map.get(ins.campaign_id), adset_map.get(ins.campaign_id, []),
-                name_map.get(ins.campaign_id), adset_targeting_map,
+                name_map.get(ins.campaign_id), adset_targeting_map, analysis_run_id=analysis_run_id,
             )
             if action:
                 self.db.add(action)
@@ -117,6 +120,7 @@ class AIPlanner:
         adset_ids: Optional[List[str]] = None,
         existing_campaign_name: Optional[str] = None,
         adset_targeting_map: Optional[Dict[str, dict]] = None,
+        analysis_run_id: Optional[str] = None,
     ) -> Optional[AIAction]:
         """
         Construye una instancia de AIAction en base al insight y sus métricas.
@@ -349,6 +353,7 @@ class AIPlanner:
             parameters=parameters,
             planned_api_calls=planned_calls,
             status="PROPOSED",
+            analysis_run_id=analysis_run_id,
             estimated_impact=estimated_impact,
             confidence=confidence
         )
