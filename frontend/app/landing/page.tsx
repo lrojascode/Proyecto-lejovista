@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 export default function Home() {
   const [slug, setSlug] = useState("cliente1");
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
-      {/* Gradient floor atmosférico — el único gradiente permitido del sistema */}
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", background: "var(--color-obsidian)" }}>
+      {/* Gradient floor atmosférico */}
       <div aria-hidden style={{
         position: "absolute",
         left: 0,
@@ -23,33 +24,46 @@ export default function Home() {
         width: "100%",
         maxWidth: "1200px",
         margin: "0 auto",
-        padding: "16px 24px",
+        padding: "20px 24px",
         display: "flex",
         alignItems: "center",
-        justifyContent: "space-between"
+        justifyContent: "space-between",
+        borderBottom: "1px solid var(--border-subtle)",
       }}>
-        <span style={{ fontSize: "16px", fontWeight: 510, color: "var(--color-paper)", letterSpacing: "-0.011em" }}>
-          LejoVista
-        </span>
-        <nav style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <a
-            href={`http://${slug}.localhost:3000/login`}
-            style={{ color: "var(--color-mist)", fontSize: "13px", padding: "8px 12px" }}
-          >
-            Iniciar sesión
-          </a>
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <span style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.012em" }}>
+            LejoVista
+          </span>
+          <span style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            padding: "2px 8px",
+            borderRadius: "9999px",
+            background: "rgba(99, 102, 241, 0.15)",
+            color: "var(--color-signal-teal)",
+            border: "1px solid rgba(99, 102, 241, 0.25)",
+          }}>
+            Meta Ads AI
+          </span>
+        </div>
+
+        <nav style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <Link href="/login" className="btn-secondary btn-sm" style={{ textDecoration: "none" }}>
+            Iniciar Sesión
+          </Link>
           <a
             href={`http://${slug}.localhost:3000/login`}
             style={{
               background: "var(--color-paper)",
               color: "var(--color-void)",
               borderRadius: "9999px",
-              padding: "8px 16px",
+              padding: "8px 18px",
               fontSize: "13px",
-              fontWeight: 510
+              fontWeight: 590,
+              textDecoration: "none",
             }}
           >
-            Ir al panel
+            Ir al Espacio
           </a>
         </nav>
       </header>
@@ -60,39 +74,107 @@ export default function Home() {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
-        padding: "48px 24px 96px 24px",
+        padding: "64px 24px 80px 24px",
         textAlign: "center",
-        position: "relative"
+        position: "relative",
+        maxWidth: "1200px",
+        margin: "0 auto",
+        width: "100%",
       }}>
+        <div style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "6px 14px",
+          borderRadius: "9999px",
+          background: "rgba(255,255,255,0.03)",
+          border: "1px solid var(--border-subtle)",
+          fontSize: "13px",
+          color: "var(--color-fog)",
+          marginBottom: "24px",
+        }}>
+          <span>🛡️</span>
+          <span>Optimización de Meta Ads con Gobernanza Estricta y Cero Alucinaciones</span>
+        </div>
+
         <h1 style={{
-          fontSize: "clamp(40px, 7vw, 64px)",
-          lineHeight: 1,
+          fontSize: "clamp(36px, 6vw, 58px)",
+          lineHeight: 1.08,
           fontWeight: 590,
-          letterSpacing: "-0.022em",
+          letterSpacing: "-0.025em",
           color: "var(--color-paper)",
-          maxWidth: "760px"
+          maxWidth: "840px",
         }}>
-          LejoVista Platform
+          Gestión y Optimización Autónoma de Meta Ads con Inteligencia Artificial
         </h1>
+
         <p style={{
-          color: "var(--color-mist)",
+          color: "var(--color-fog)",
           fontSize: "18px",
-          lineHeight: 1.5,
-          maxWidth: "520px",
-          marginTop: "20px"
+          lineHeight: 1.6,
+          maxWidth: "680px",
+          marginTop: "20px",
         }}>
-          Gestión Autónoma, Análisis y Optimización de Campañas con Inteligencia Artificial.
+          LejoVista combina análisis estadístico determinístico en Python con modelos de lenguaje avanzados para auditar, diagnosticar y crear campañas de Meta Ads bajo estrictos límites financieros y aprobación humana.
         </p>
 
-        {/* Card funcional de acceso por subdominio (multi-tenant) */}
-        <div className="glass-card" style={{ maxWidth: "520px", width: "100%", marginTop: "48px", textAlign: "left" }}>
-          <h3 style={{ fontSize: "15px", fontWeight: 510, marginBottom: "8px" }}>
-            Pruebas en Entorno Local
+        {/* 4 Pilares de Valor */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+          gap: "1.5rem",
+          width: "100%",
+          marginTop: "56px",
+          textAlign: "left",
+        }}>
+          <div className="glass-card" style={{ padding: "1.5rem" }}>
+            <div style={{ fontSize: "24px", marginBottom: "12px" }}>📊</div>
+            <h3 style={{ fontSize: "16px", fontWeight: 590, color: "var(--color-paper)", marginBottom: "8px" }}>
+              IA Determinística y Grounding
+            </h3>
+            <p style={{ fontSize: "13.5px", color: "var(--color-fog)", lineHeight: 1.5 }}>
+              Regla AI-1: Ningún número o métrica es inventado por el LLM. Todos los KPIs, CPL, gastos y conversiones provienen directamente de Meta Graph API con tolerancia exacta.
+            </p>
+          </div>
+
+          <div className="glass-card" style={{ padding: "1.5rem" }}>
+            <div style={{ fontSize: "24px", marginBottom: "12px" }}>🔒</div>
+            <h3 style={{ fontSize: "16px", fontWeight: 590, color: "var(--color-paper)", marginBottom: "8px" }}>
+              Control Financiero y Creación Segura
+            </h3>
+            <p style={{ fontSize: "13.5px", color: "var(--color-fog)", lineHeight: 1.5 }}>
+              Protección de Spend Cap por organización. Todas las campañas se crean siempre en estado <code>PAUSED</code> (pausado) para requerir aprobación humana explícita antes de activarse.
+            </p>
+          </div>
+
+          <div className="glass-card" style={{ padding: "1.5rem" }}>
+            <div style={{ fontSize: "24px", marginBottom: "12px" }}>💬</div>
+            <h3 style={{ fontSize: "16px", fontWeight: 590, color: "var(--color-paper)", marginBottom: "8px" }}>
+              Chat Dual (Analista vs Creador)
+            </h3>
+            <p style={{ fontSize: "13.5px", color: "var(--color-fog)", lineHeight: 1.5 }}>
+              Dos experiencias especializadas: modo Analista para ejecutivos (consultas y comparaciones en lenguaje natural) y modo Creador para operadores de campañas.
+            </p>
+          </div>
+
+          <div className="glass-card" style={{ padding: "1.5rem" }}>
+            <div style={{ fontSize: "24px", marginBottom: "12px" }}>🏢</div>
+            <h3 style={{ fontSize: "16px", fontWeight: 590, color: "var(--color-paper)", marginBottom: "8px" }}>
+              Multi-Tenant y Marca Blanca
+            </h3>
+            <p style={{ fontSize: "13.5px", color: "var(--color-fog)", lineHeight: 1.5 }}>
+              Aislamiento riguroso por organización (`organization_id` y subdominio). Personalización de logo, nombre comercial y colores corporativos por tenant.
+            </p>
+          </div>
+        </div>
+
+        {/* Acceso por Subdominio / Local */}
+        <div className="glass-card" style={{ maxWidth: "560px", width: "100%", marginTop: "48px", textAlign: "left", padding: "1.75rem" }}>
+          <h3 style={{ fontSize: "16px", fontWeight: 590, color: "var(--color-paper)", marginBottom: "8px" }}>
+            Acceder a un Espacio de Trabajo
           </h3>
-          <p style={{ fontSize: "14px", color: "var(--color-fog)", lineHeight: 1.6, marginBottom: "16px" }}>
-            El sistema utiliza subdominios locales para identificar a cada inquilino (SaaS Multi-tenant).
-            Usa el botón de abajo para ir al panel de pruebas.
+          <p style={{ fontSize: "13.5px", color: "var(--color-fog)", lineHeight: 1.6, marginBottom: "16px" }}>
+            Ingresa el subdominio de tu organización para acceder al panel seguro de tu empresa.
           </p>
 
           <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "16px" }}>
@@ -111,19 +193,50 @@ export default function Home() {
             </span>
           </div>
 
-          <a
-            href={`http://${slug}.localhost:3000/login`}
-            className="btn-primary"
-            style={{ width: "100%" }}
-          >
-            Ir al Dashboard de {slug}
-          </a>
-
-          <div style={{ fontSize: "12px", color: "var(--color-ash)", marginTop: "16px" }}>
-            Para producción, configura el dominio base (ej. <code>lrojas.dev</code>) en tu archivo <code>.env</code>.
+          <div style={{ display: "flex", gap: "12px" }}>
+            <a
+              href={`http://${slug}.localhost:3000/login`}
+              className="btn-primary"
+              style={{ flexGrow: 1, textAlign: "center", textDecoration: "none" }}
+            >
+              Ir al Dashboard de {slug}
+            </a>
+            <Link
+              href="/login"
+              className="btn-secondary"
+              style={{ textDecoration: "none", whiteSpace: "nowrap" }}
+            >
+              Login Directo
+            </Link>
           </div>
         </div>
       </main>
+
+      {/* Footer Legal */}
+      <footer style={{
+        width: "100%",
+        maxWidth: "1200px",
+        margin: "0 auto",
+        padding: "32px 24px",
+        borderTop: "1px solid var(--border-subtle)",
+        display: "flex",
+        flexWrap: "wrap",
+        justifyContent: "space-between",
+        alignItems: "center",
+        fontSize: "13px",
+        color: "var(--color-ash)",
+        gap: "1rem",
+      }}>
+        <div>
+          <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>LejoVista Platform</strong> — Optimización Autónoma de Meta Ads
+          <div style={{ fontSize: "12px", marginTop: "4px" }}>© 2026 Todos los derechos reservados.</div>
+        </div>
+        <div style={{ display: "flex", gap: "20px" }}>
+          <Link href="/terms" style={{ color: "var(--color-fog)", textDecoration: "none" }}>Términos de Servicio</Link>
+          <Link href="/privacy" style={{ color: "var(--color-fog)", textDecoration: "none" }}>Política de Privacidad</Link>
+          <Link href="/data-deletion" style={{ color: "var(--color-fog)", textDecoration: "none" }}>Eliminación de Datos</Link>
+        </div>
+      </footer>
     </div>
   );
 }
