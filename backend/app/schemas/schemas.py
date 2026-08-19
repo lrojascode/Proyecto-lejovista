@@ -38,6 +38,9 @@ class OrganizationResponse(BaseModel):
     slug: str
     name: str
     ai_model: str
+    llm_provider: Optional[str] = None
+    has_llm_api_key: bool = False
+    llm_api_key_preview: Optional[str] = None
     max_budget: float
     status: str
     industry: Optional[str] = None
@@ -48,8 +51,20 @@ class OrganizationResponse(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = None
     ai_model: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_api_key: Optional[str] = None
     max_budget: Optional[float] = None
     industry: Optional[str] = None
+
+class LLMKeyTestRequest(BaseModel):
+    provider: str  # openai | gemini_direct | openrouter
+    api_key: str
+    model: Optional[str] = None
+
+class LLMKeyTestResponse(BaseModel):
+    valid: bool
+    message: str
+    provider: str
 
 # --- AD ACCOUNT SCHEMAS ---
 class AdAccountCreate(BaseModel):

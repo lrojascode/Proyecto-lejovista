@@ -270,22 +270,97 @@ Responde EXACTAMENTE con este contrato de salida en Markdown, sin texto antes ni
 
 
 class OpenRouterClient:
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        organization: Optional[Organization] = None,
+        api_key: Optional[str] = None,
+        provider: Optional[str] = None,
+    ):
+        self.organization = organization
+        self._explicit_api_key = api_key
+        self._explicit_provider = provider
+        self.api_key, self.base_url, self.provider, self.is_gemini_direct = self._resolve_config(organization)
+
+    def _resolve_config(self, org: Optional[Organization] = None) -> tuple[str, str, str, bool]:
+        target_org = org or self.organization
+        org_key = target_org.get_llm_api_key() if target_org else None
+        org_provider = target_org.llm_provider if target_org else None
+
+        # 1. Credencial configurada en la organización
+        if org_key and org_provider:
+            provider = org_provider
+            api_key = org_key
+            if provider == "openai":
+                return api_key, "https://api.openai.com/v1/chat/completions", "openai", False
+            elif provider == "gemini_direct":
+                return api_key, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
+            else:  # openrouter
+                return api_key, "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
+
+        # 2. Credencial pasada explícitamente al cliente
+        if self._explicit_api_key:
+            provider = self._explicit_provider or "openrouter"
+            api_key = self._explicit_api_key
+            if provider == "openai":
+                return api_key, "https://api.openai.com/v1/chat/completions", "openai", False
+            elif provider == "gemini_direct":
+                return api_key, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
+            else:
+                return api_key, "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
+
+        # 3. Fallback a credenciales globales de entorno: OPENAI > GEMINI > OPENROUTER
         if settings.OPENAI_API_KEY:
-            self.api_key = settings.OPENAI_API_KEY
-            self.base_url = "https://api.openai.com/v1/chat/completions"
-            self.is_gemini_direct = False
-            self.provider = "openai"
+            return settings.OPENAI_API_KEY, "https://api.openai.com/v1/chat/completions", "openai", False
         elif settings.GEMINI_API_KEY:
-            self.api_key = settings.GEMINI_API_KEY
-            self.base_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-            self.is_gemini_direct = True
-            self.provider = "gemini_direct"
+            return settings.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
         else:
-            self.api_key = api_key or settings.OPENROUTER_API_KEY
-            self.base_url = "https://openrouter.ai/api/v1/chat/completions"
-            self.is_gemini_direct = False
-            self.provider = "openrouter"
+            return settings.OPENROUTER_API_KEY or "", "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
+
+    async def test_key(self, model: Optional[str] = None) -> tuple[bool, str]:
+        """
+        Realiza una llamada mínima para comprobar si la API Key y el proveedor son válidos.
+        """
+        if settings.MOCK_SERVICES:
+            return True, f"Modo simulación: Credencial de {self.provider} validada correctamente."
+
+        if not self.api_key:
+            return False, "La API Key no puede estar vacía."
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "LejoVista Platform",
+            "Content-Type": "application/json"
+        }
+
+        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        target_model = model or (candidates[0]["value"] if candidates else "gpt-5.4-mini")
+        if self.is_gemini_direct and target_model.startswith("google/"):
+            target_model = target_model.replace("google/", "")
+
+        payload = {
+            "model": target_model,
+            "max_tokens": 5,
+            "messages": [
+                {"role": "user", "content": "ping"}
+            ]
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(self.base_url, json=payload, headers=headers)
+                if response.status_code == 200:
+                    return True, f"Credencial de {self.provider} verificada correctamente."
+                else:
+                    err_detail = response.text
+                    try:
+                        err_json = response.json()
+                        err_detail = err_json.get("error", {}).get("message", response.text)
+                    except Exception:
+                        pass
+                    return False, f"Error {response.status_code} ({self.provider}): {err_detail[:120]}"
+        except Exception as e:
+            return False, f"No se pudo conectar con {self.provider}: {str(e)[:120]}"
 
     async def analyze_campaigns(
         self,
@@ -309,12 +384,13 @@ class OpenRouterClient:
         ReportBuilder (no recalculado aquí). Opcional por compatibilidad hacia
         atrás; sin él, cae al contrato v1 (solo `raw_data_summary`).
         """
-        if settings.MOCK_SERVICES or not self.api_key:
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key:
             return self._generate_mock_narrative(org, ad_account, raw_data_summary, brief_context), True
 
-        # ---- LLAMADA REAL A OPENROUTER ----
+        # ---- LLAMADA REAL A OPENROUTER / PROVEEDOR ACTIVO ----
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
             "X-Title": "LejoVista Platform",
             "Content-Type": "application/json"
@@ -335,7 +411,7 @@ class OpenRouterClient:
         )
 
         model = org.ai_model or settings.DEFAULT_AI_MODEL
-        if self.is_gemini_direct and model.startswith("google/"):
+        if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
         payload = {
@@ -349,16 +425,16 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+                response = await client.post(base_url, json=payload, headers=headers)
                 if response.status_code == 200:
                     result = response.json()
-                    await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                    await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                     return result["choices"][0]["message"]["content"], False
                 else:
-                    logger.error(f"OpenRouter API returned error {response.status_code}: {response.text}")
+                    logger.error(f"LLM API returned error {response.status_code}: {response.text}")
                     return self._generate_mock_narrative(org, ad_account, raw_data_summary, brief_context), True
         except Exception as e:
-            logger.exception("Error calling OpenRouter API. Falling back to mock narrative.")
+            logger.exception("Error calling LLM API. Falling back to mock narrative.")
             return self._generate_mock_narrative(org, ad_account, raw_data_summary, brief_context), True
 
     async def suggest_campaign_copy(
@@ -396,11 +472,12 @@ class OpenRouterClient:
         `CampaignSuggester` (fortalezas, debilidades, fallos pasados), que ya
         se le mostraba al usuario pero no al redactor.
         """
-        if settings.MOCK_SERVICES or not self.api_key:
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key:
             return self._generate_mock_copy(product_name, winning_context)
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
             "X-Title": "LejoVista Platform",
             "Content-Type": "application/json",
@@ -478,7 +555,7 @@ class OpenRouterClient:
             ]
 
         model = org.ai_model or settings.DEFAULT_AI_MODEL
-        if self.is_gemini_direct and model.startswith("google/"):
+        if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
         payload = {
@@ -498,10 +575,10 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+                response = await client.post(base_url, json=payload, headers=headers)
                 if response.status_code == 200:
                     result = response.json()
-                    await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                    await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                     content = result["choices"][0]["message"]["content"]
                     parsed = self._parse_copy_json(content)
                     if parsed:
@@ -512,7 +589,7 @@ class OpenRouterClient:
                     )
                 else:
                     logger.error(
-                        f"OpenRouter API (copy de campaña) devolvió error {response.status_code}: {response.text}"
+                        f"LLM API (copy de campaña) devolvió error {response.status_code}: {response.text}"
                     )
         except Exception:
             logger.exception("Error llamando a la API del LLM para copy de campaña. Usando plantilla local.")
@@ -547,11 +624,12 @@ class OpenRouterClient:
         herramientas ni puede disparar ninguna acción. El motor vuelve a validar
         cada campo (rangos, regex de `product_name`) antes de usarlo.
         """
-        if settings.MOCK_SERVICES or not self.api_key:
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key:
             return None
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
             "X-Title": "LejoVista Platform",
             "Content-Type": "application/json",
@@ -586,9 +664,9 @@ class OpenRouterClient:
         # Modelo más barato disponible del proveedor activo — esto es
         # clasificación de intención sobre un mensaje corto, no redacción; no
         # tiene sentido cobrar precio de un modelo premium para parsear "sí".
-        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        candidates = MODELS_BY_PROVIDER.get(provider) or []
         model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
-        if self.is_gemini_direct and model.startswith("google/"):
+        if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
         payload = {
@@ -603,15 +681,15 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+                response = await client.post(base_url, json=payload, headers=headers)
                 if response.status_code != 200:
                     logger.error(
-                        "OpenRouter API (extracción del chat) devolvió error %s: %s",
+                        "LLM API (extracción del chat) devolvió error %s: %s",
                         response.status_code, response.text,
                     )
                     return None
                 result = response.json()
-                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                 content = result["choices"][0]["message"]["content"]
                 return self._parse_chat_extraction_json(content)
         except Exception:
@@ -646,11 +724,12 @@ class OpenRouterClient:
         con `rephrase.numbers_are_grounded` y descarta la respuesta entera si
         aparece uno nuevo, incluido cualquiera que el modelo haya calculado.
         """
-        if settings.MOCK_SERVICES or not self.api_key or not facts:
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key or not facts:
             return None
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
             "X-Title": "LejoVista Platform",
             "Content-Type": "application/json",
@@ -682,9 +761,9 @@ class OpenRouterClient:
             "Devuelve solo el JSON del contrato."
         )
 
-        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        candidates = MODELS_BY_PROVIDER.get(provider) or []
         model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
-        if self.is_gemini_direct and model.startswith("google/"):
+        if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
         payload = {
@@ -699,15 +778,15 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+                response = await client.post(base_url, json=payload, headers=headers)
                 if response.status_code != 200:
                     logger.error(
-                        "OpenRouter API (análisis del chat) devolvió error %s: %s",
+                        "LLM API (análisis del chat) devolvió error %s: %s",
                         response.status_code, response.text,
                     )
                     return None
                 result = response.json()
-                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para analizar el historial.")
@@ -735,11 +814,12 @@ class OpenRouterClient:
         los mismos números y los mismos enlaces que el original — así una
         cifra inventada no puede llegar al usuario aunque el prompt falle.
         """
-        if settings.MOCK_SERVICES or not self.api_key or not canonical_text.strip():
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key or not canonical_text.strip():
             return None
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
             "X-Title": "LejoVista Platform",
             "Content-Type": "application/json",
@@ -768,9 +848,9 @@ class OpenRouterClient:
             "Devuelve solo el JSON del contrato."
         )
 
-        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        candidates = MODELS_BY_PROVIDER.get(provider) or []
         model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
-        if self.is_gemini_direct and model.startswith("google/"):
+        if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
         payload = {
@@ -787,15 +867,15 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+                response = await client.post(base_url, json=payload, headers=headers)
                 if response.status_code != 200:
                     logger.error(
-                        "OpenRouter API (reescritura del chat) devolvió error %s: %s",
+                        "LLM API (reescritura del chat) devolvió error %s: %s",
                         response.status_code, response.text,
                     )
                     return None
                 result = response.json()
-                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para reescribir un mensaje.")
@@ -832,11 +912,12 @@ class OpenRouterClient:
         `MOCK_SERVICES` está activo — el chat cae al rechazo estático de
         siempre y sigue funcionando.
         """
-        if settings.MOCK_SERVICES or not self.api_key or not topics:
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key or not topics:
             return None, None
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {api_key}",
             "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
             "X-Title": "LejoVista Platform",
             "Content-Type": "application/json",
@@ -866,9 +947,9 @@ class OpenRouterClient:
 
         # Igual que la extracción de slots: clasificar una frase corta contra un
         # catálogo cerrado es la tarea más barata que hay, no paga premium.
-        candidates = MODELS_BY_PROVIDER.get(self.provider) or []
+        candidates = MODELS_BY_PROVIDER.get(provider) or []
         model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
-        if self.is_gemini_direct and model.startswith("google/"):
+        if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
         payload = {
@@ -882,16 +963,16 @@ class OpenRouterClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(base_url, json=payload, headers=headers)
                 if response.status_code != 200:
                     logger.error(
-                        "OpenRouter API (clasificación de pregunta) devolvió error %s: %s",
+                        "LLM API (clasificación de preguntas) devolvió error %s: %s",
                         response.status_code, response.text,
                     )
                     return None, None
                 result = response.json()
-                await record_token_usage(usage_ctx, self.provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para clasificar una pregunta.")

@@ -492,7 +492,7 @@ async def _try_llm_extraction(
         return None
 
     org = await db.get(Organization, current_user.organization_id)
-    client = OpenRouterClient()
+    client = OpenRouterClient(organization=org)
     usage_ctx = UsageContext(
         feature="campaign_chat", organization_id=current_user.organization_id, ad_account_id=session.ad_account_id,
     )
@@ -535,7 +535,7 @@ async def _try_llm_question_topic(
         ad_account_id=session.ad_account_id,
     )
     try:
-        topic, period_key = await OpenRouterClient().classify_chat_question(
+        topic, period_key = await OpenRouterClient(organization=org).classify_chat_question(
             org, text, questions.TOPIC_DESCRIPTIONS,
             periods=list(PERIOD_ENUM), usage_ctx=usage_ctx,
         )
@@ -569,7 +569,7 @@ async def _say(
         ad_account_id=session.ad_account_id,
     )
     try:
-        rewritten = await OpenRouterClient().rephrase_chat_message(
+        rewritten = await OpenRouterClient(organization=org).rephrase_chat_message(
             org, text, user_text, usage_ctx=usage_ctx,
         )
     except Exception:
@@ -609,7 +609,7 @@ async def _analyze(
     )
     facts_blob = json.dumps(facts, ensure_ascii=False, default=str)
     try:
-        written = await OpenRouterClient().compose_chat_answer(
+        written = await OpenRouterClient(organization=org).compose_chat_answer(
             org, user_text, topic, facts, usage_ctx=usage_ctx,
         )
     except Exception:

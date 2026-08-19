@@ -17,7 +17,11 @@ export type User = Schemas["UserResponse"];
 export type TokenResponse = Schemas["TokenResponse"];
 
 // --- ORGANIZATION / AD ACCOUNT ---
-export type Organization = Schemas["OrganizationResponse"];
+export type Organization = Schemas["OrganizationResponse"] & {
+  llm_provider?: string | null;
+  has_llm_api_key?: boolean;
+  llm_api_key_preview?: string | null;
+};
 export type AdAccount = Schemas["AdAccountResponse"];
 export type MetaPage = Schemas["MetaPageResponse"];
 export type WhatsAppNumber = Schemas["WhatsAppNumberResponse"];

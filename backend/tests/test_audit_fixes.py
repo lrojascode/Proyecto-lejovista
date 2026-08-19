@@ -1447,4 +1447,66 @@ async def test_delete_archived_ad_account(async_client: AsyncClient, db_session:
     assert clog_db.ad_account_id is None
 
 
+@pytest.mark.asyncio
+async def test_org_custom_llm_key_and_client_resolution(async_client: AsyncClient, db_session: AsyncSession):
+    """
+    1.2: Verifica cifrado/descifrado de LLM API Key en Organization,
+    precedencia de OpenRouterClient con org propia vs global, y que la API
+    nunca devuelva la key en plano.
+    """
+    from app.services.ai.llm import OpenRouterClient
+
+    org, acc = await _make_org_and_account(db_session, slug="llm-org")
+    await db_session.commit()
+    headers = await _auth_headers_for_org(async_client, db_session, org, "llmadmin@example.com")
+
+    # 1. Por defecto, no tiene key personalizada
+    assert org.get_llm_api_key() is None
+    assert org.has_llm_api_key is False
+    assert org.llm_api_key_preview is None
+
+    # 2. Configurar key y proveedor en modelo
+    fake_key = "sk-proj-test1234567890abcdef"
+    org.set_llm_api_key(fake_key)
+    org.llm_provider = "openai"
+    await db_session.commit()
+
+    assert org.get_llm_api_key() == fake_key
+    assert org.has_llm_api_key is True
+    assert org.llm_api_key_preview == "••••••••cdef"
+    assert org.llm_api_key_encrypted != fake_key
+
+    # 3. OpenRouterClient resuelve la key y proveedor de la org
+    client = OpenRouterClient(organization=org)
+    assert client.api_key == fake_key
+    assert client.provider == "openai"
+    assert "api.openai.com" in client.base_url
+
+    # 4. Actualizar vía PUT /organizations/my
+    new_key = "AIzaSyTestGoogleGeminiKey9999"
+    res = await async_client.put(
+        "/api/v1/organizations/my",
+        json={"llm_provider": "gemini_direct", "llm_api_key": new_key},
+        headers=headers,
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["llm_provider"] == "gemini_direct"
+    assert data["has_llm_api_key"] is True
+    assert data["llm_api_key_preview"] == "••••••••9999"
+    assert "AIzaSyTestGoogleGeminiKey9999" not in str(data)  # Nunca en plano
+
+    # 5. Endpoint de prueba de key
+    res_test = await async_client.post(
+        "/api/v1/organizations/my/llm-key/test",
+        json={"provider": "openai", "api_key": "sk-mock-key"},
+        headers=headers,
+    )
+    assert res_test.status_code == 200
+    test_data = res_test.json()
+    assert test_data["valid"] is True
+    assert test_data["provider"] == "openai"
+
+
+
 

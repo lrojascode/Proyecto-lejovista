@@ -141,7 +141,7 @@ class AIEngine:
             ])
 
             # Cliente OpenRouter para la narrativa
-            llm_client = OpenRouterClient()
+            llm_client = OpenRouterClient(organization=org)
             narrative, used_fallback = await llm_client.analyze_campaigns(
                 org, acc, insights_summary, raw_data,
                 usage_ctx=UsageContext(

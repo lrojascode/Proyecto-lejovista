@@ -19,6 +19,12 @@ export default function Settings() {
   const [aiProvider, setAiProvider] = useState<string>("");
   const [industry, setIndustry] = useState("");
   const [industries, setIndustries] = useState<{ value: string; label: string }[]>([]);
+
+  // LLM Custom Key States
+  const [llmProvider, setLlmProvider] = useState<string>("");
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmKeyTestMsg, setLlmKeyTestMsg] = useState<{ valid: boolean; text: string } | null>(null);
+  const [testingLlmKey, setTestingLlmKey] = useState(false);
   
   // Connection Form States
   const [accName, setAccName] = useState("");
@@ -61,6 +67,9 @@ export default function Settings() {
       setArchivedAccounts(archivedList);
       setMaxBudget(orgData.max_budget);
       setIndustry(orgData.industry || "");
+      setLlmProvider(orgData.llm_provider || "");
+      setLlmApiKey("");
+      setLlmKeyTestMsg(null);
 
       const pagesData = await api.getMyPages();
       setPages(pagesData);
@@ -73,7 +82,7 @@ export default function Settings() {
       // Solo se ofrecen los modelos del proveedor de IA realmente activo
       // (según qué API key esté configurada en el backend), para no guardar
       // un modelo que el proveedor activo no reconocería.
-      const modelsData = await api.getAiModels();
+      const modelsData = await api.getAiModels(orgData.llm_provider || undefined);
       setAiProvider(modelsData.active_provider);
       setAiModels(modelsData.models);
       const isKnownModel = modelsData.models.some((m) => m.value === orgData.ai_model);
@@ -89,12 +98,64 @@ export default function Settings() {
     fetchData();
   }, []);
 
+  const handleProviderChange = async (newProvider: string) => {
+    setLlmProvider(newProvider);
+    setLlmKeyTestMsg(null);
+    try {
+      const modelsData = await api.getAiModels(newProvider || undefined);
+      setAiModels(modelsData.models);
+      if (modelsData.models.length > 0 && !modelsData.models.some((m) => m.value === aiModel)) {
+        setAiModel(modelsData.models[0].value);
+      }
+    } catch (err) {
+      console.error("Error loading models for provider:", err);
+    }
+  };
+
+  const handleTestLlmKey = async () => {
+    if (!llmApiKey && !org?.has_llm_api_key) {
+      setLlmKeyTestMsg({ valid: false, text: "Ingresa una API Key para probarla." });
+      return;
+    }
+    if (!llmProvider) {
+      setLlmKeyTestMsg({ valid: false, text: "Selecciona un proveedor de IA." });
+      return;
+    }
+    setTestingLlmKey(true);
+    setLlmKeyTestMsg(null);
+    try {
+      const res = await api.testLLMKey({
+        provider: llmProvider,
+        api_key: llmApiKey,
+        model: aiModel,
+      });
+      setLlmKeyTestMsg({ valid: res.valid, text: res.message });
+    } catch (err: any) {
+      setLlmKeyTestMsg({ valid: false, text: err.message || "Error al probar la credencial." });
+    } finally {
+      setTestingLlmKey(false);
+    }
+  };
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg("");
     try {
-      await api.updateOrg({ ai_model: aiModel, max_budget: maxBudget, industry: industry || null });
+      const payload: any = {
+        ai_model: aiModel,
+        max_budget: maxBudget,
+        industry: industry || null,
+        llm_provider: llmProvider || null,
+      };
+      if (llmApiKey.trim()) {
+        payload.llm_api_key = llmApiKey.trim();
+      } else if (llmProvider === "" && org?.has_llm_api_key) {
+        payload.llm_api_key = null;
+      }
+      await api.updateOrg(payload);
       setMsg("Configuración de organización guardada con éxito.");
+      setLlmApiKey("");
+      await fetchData();
     } catch (err: any) {
       setMsg(`Error: ${err.message}`);
     }
@@ -297,6 +358,86 @@ export default function Settings() {
           )}
 
           <form onSubmit={handleSaveSettings} style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+            {/* Proveedor y Credencial de IA */}
+            <div style={{
+              background: "rgba(255, 255, 255, 0.02)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "8px",
+              padding: "1rem",
+              display: "flex",
+              flexDirection: "column",
+              gap: "0.85rem",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <label style={{ fontSize: "0.85rem", fontWeight: 510, color: "var(--color-paper)" }}>
+                  Proveedor de IA (LLM)
+                </label>
+                {org?.has_llm_api_key && (
+                  <span style={{
+                    fontSize: "11px",
+                    padding: "2px 8px",
+                    borderRadius: "4px",
+                    background: "rgba(56, 189, 248, 0.12)",
+                    color: "var(--color-mint)",
+                    border: "1px solid rgba(56, 189, 248, 0.25)"
+                  }}>
+                    {org.llm_api_key_preview}
+                  </span>
+                )}
+              </div>
+
+              <select
+                className="form-input"
+                value={llmProvider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+                style={{ background: "var(--color-obsidian)" }}
+              >
+                <option value="">Predeterminado del sistema ({aiProvider ? ({ openai: "OpenAI", gemini_direct: "Gemini", openrouter: "OpenRouter" }[aiProvider] ?? aiProvider) : "Automático"})</option>
+                <option value="openai">OpenAI (GPT-5.4 / GPT-5.4 Mini)</option>
+                <option value="gemini_direct">Google Gemini (Directo)</option>
+                <option value="openrouter">OpenRouter (Multi-modelo)</option>
+              </select>
+
+              {llmProvider && (
+                <div>
+                  <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                    API Key de {llmProvider === "openai" ? "OpenAI" : llmProvider === "gemini_direct" ? "Google Gemini" : "OpenRouter"}
+                  </label>
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <input
+                      type="password"
+                      className="form-input"
+                      value={llmApiKey}
+                      onChange={(e) => {
+                        setLlmApiKey(e.target.value);
+                        setLlmKeyTestMsg(null);
+                      }}
+                      placeholder={org?.has_llm_api_key ? "•••••••••••• (dejar en blanco para no cambiar)" : "sk-..."}
+                      style={{ flex: 1 }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={handleTestLlmKey}
+                      disabled={testingLlmKey || (!llmApiKey && !org?.has_llm_api_key)}
+                      style={{ fontSize: "12px", whiteSpace: "nowrap", padding: "0.4rem 0.75rem" }}
+                    >
+                      {testingLlmKey ? "Probando..." : "Probar"}
+                    </button>
+                  </div>
+                  {llmKeyTestMsg && (
+                    <div style={{
+                      marginTop: "0.5rem",
+                      fontSize: "12px",
+                      color: llmKeyTestMsg.valid ? "var(--success)" : "var(--color-coral-red)",
+                    }}>
+                      {badgeIcon(llmKeyTestMsg.valid ? "SUCCESS" : "ERROR")} {llmKeyTestMsg.text}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div>
               <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
                 Modelo de IA Preferido
@@ -311,13 +452,9 @@ export default function Settings() {
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
-              {aiProvider && (
-                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
-                  Proveedor activo detectado: <strong>{
-                    { openai: "OpenAI", gemini_direct: "Gemini (directo)", openrouter: "OpenRouter" }[aiProvider] ?? aiProvider
-                  }</strong>. Solo se muestran los modelos que este proveedor soporta.
-                </span>
-              )}
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
+                Solo se muestran los modelos compatibles con el proveedor seleccionado.
+              </span>
             </div>
 
             <div>

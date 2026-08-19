@@ -12,7 +12,8 @@ from app.models.ai_token_usage import AITokenUsage
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.schemas.schemas import (
-    OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse,
+    OrganizationResponse, OrganizationUpdate, LLMKeyTestRequest, LLMKeyTestResponse,
+    AdAccountCreate, AdAccountResponse,
     AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
     WhatsAppNumberResponse, WhatsAppNumberCreate, WhatsAppNumberUpdate,
 )
@@ -28,15 +29,23 @@ from typing import List, Optional
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
 @router.get("/ai-models", response_model=AiModelsResponse)
-async def get_available_ai_models(current_user: User = Depends(get_current_user)):
+async def get_available_ai_models(
+    provider: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
-    Modelos de IA que el selector de Preferencias debería ofrecer: solo los del
-    proveedor realmente activo (según qué API key esté configurada), para que
-    la organización no pueda guardar un modelo que el proveedor activo no
-    reconoce (ver AI-4/hallazgo del selector estático).
+    Modelos de IA que el selector de Preferencias debería ofrecer: si se pasa un
+    proveedor específico, sus modelos; si no, los del proveedor activo de la
+    organización o del sistema.
     """
-    provider = OpenRouterClient().provider
-    return {"active_provider": provider, "models": MODELS_BY_PROVIDER[provider]}
+    if provider and provider in MODELS_BY_PROVIDER:
+        return {"active_provider": provider, "models": MODELS_BY_PROVIDER[provider]}
+
+    org = await db.get(Organization, current_user.organization_id)
+    client = OpenRouterClient(organization=org)
+    active_provider = client.provider
+    return {"active_provider": active_provider, "models": MODELS_BY_PROVIDER.get(active_provider, [])}
 
 @router.get("/my", response_model=OrganizationResponse)
 async def get_my_organization(
@@ -58,12 +67,30 @@ async def update_my_organization(
     if not org:
         raise HTTPException(status_code=404, detail="Organización no encontrada.")
         
-    for k, v in org_update.model_dump(exclude_unset=True).items():
+    dump = org_update.model_dump(exclude_unset=True)
+    if "llm_api_key" in dump:
+        new_key = dump.pop("llm_api_key")
+        org.set_llm_api_key(new_key)
+
+    for k, v in dump.items():
         setattr(org, k, v)
         
     db.add(org)
     await db.commit()
+    await db.refresh(org)
     return org
+
+@router.post("/my/llm-key/test", response_model=LLMKeyTestResponse)
+async def test_llm_key(
+    payload: LLMKeyTestRequest,
+    current_user: User = Depends(require_role("ADMIN")),
+):
+    """
+    Prueba una API Key de LLM contra el proveedor seleccionado antes de guardarla.
+    """
+    client = OpenRouterClient(api_key=payload.api_key, provider=payload.provider)
+    valid, message = await client.test_key(model=payload.model)
+    return {"valid": valid, "message": message, "provider": payload.provider}
 
 @router.get("/my/policies", response_model=BusinessPoliciesResponse)
 async def get_my_business_policies(

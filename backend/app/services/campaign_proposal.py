@@ -42,7 +42,7 @@ async def build_campaign_proposal(
     org = await db.get(Organization, current_user.organization_id)
 
     suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=product_name)
-    copy = await OpenRouterClient().suggest_campaign_copy(
+    copy = await OpenRouterClient(organization=org).suggest_campaign_copy(
         org, ad_account, product_name=product_name,
         winning_context=suggestion.get("winning_campaign"),
         winning_ad_copy=suggestion.get("winning_ad_copy"),

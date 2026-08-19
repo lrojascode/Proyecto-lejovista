@@ -243,7 +243,13 @@ export const api = {
   // --- ORGANIZATIONS & ACCOUNTS ---
   getOrg: () => apiRequest<Organization>("/api/v1/organizations/my", "GET"),
   updateOrg: (data: any) => apiRequest<Organization>("/api/v1/organizations/my", "PUT", data),
-  getAiModels: () => apiRequest<AiModelsResponse>("/api/v1/organizations/ai-models", "GET"),
+  getAiModels: (provider?: string) =>
+    apiRequest<AiModelsResponse>(
+      provider ? `/api/v1/organizations/ai-models?provider=${encodeURIComponent(provider)}` : "/api/v1/organizations/ai-models",
+      "GET"
+    ),
+  testLLMKey: (data: { provider: string; api_key: string; model?: string }) =>
+    apiRequest<{ valid: boolean; message: string; provider: string }>("/api/v1/organizations/my/llm-key/test", "POST", data),
   getBusinessPolicies: () => apiRequest<BusinessPolicies>("/api/v1/organizations/my/policies", "GET"),
   getAdAccounts: (includeArchived: boolean = false) =>
     apiRequest<AdAccount[]>(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),

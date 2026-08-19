@@ -266,7 +266,7 @@ class AIPlanner:
             # Reemplaza el stub que hardcodeaba "THHN"/Lima/S/.2.50 para cualquier cuenta.
             suggestion = await CampaignSuggester(self.db).suggest(ad_account)
             product_name = existing_campaign_name or "Producto"
-            copy = await OpenRouterClient().suggest_campaign_copy(
+            copy = await OpenRouterClient(organization=org).suggest_campaign_copy(
                 org, ad_account, product_name=product_name,
                 winning_context=suggestion.get("winning_campaign"),
                 winning_ad_copy=suggestion.get("winning_ad_copy"),
