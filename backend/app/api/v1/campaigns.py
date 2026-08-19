@@ -29,6 +29,7 @@ from app.schemas.campaign_schemas import (
     CampaignCreateRequest, CampaignRiskPreviewRequest, CampaignPreflightRequest,
 )
 from app.schemas.schemas import CampaignDraftResponse
+from app.schemas.response_schemas import CampaignDetailResponse
 from app.services.campaign_validator import CampaignValidator
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.campaign_preflight import CampaignPreflight
@@ -169,6 +170,159 @@ async def get_campaign_history(
 
     res = await db.execute(q)
     return res.scalars().all()
+
+@router.get("/{campaign_id}/details", response_model=CampaignDetailResponse)
+async def get_campaign_details(
+    campaign_id: str,
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fase 6.9 (Roadmap 12): Detalle completo de una campaña individual con jerarquía
+    (AdSets y Ads sincronizados), métricas acumuladas, historial de cambios/acciones
+    aplicadas y enlace directo a Meta Ads Manager.
+    """
+    conditions = [
+        CampaignSnapshot.organization_id == current_user.organization_id,
+        CampaignSnapshot.campaign_id == campaign_id,
+    ]
+    if ad_account_id is not None:
+        conditions.append(CampaignSnapshot.ad_account_id == ad_account_id)
+
+    q_history = select(CampaignSnapshot).where(*conditions).order_by(CampaignSnapshot.date.asc())
+    history_res = (await db.execute(q_history)).scalars().all()
+
+    if not history_res:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada en los registros.")
+
+    latest = history_res[-1]
+    acc = await db.get(AdAccount, latest.ad_account_id)
+    ext_id = acc.external_account_id if acc else "unknown"
+    acc_name = acc.name if acc else "Cuenta"
+
+    total_spend = sum(s.spend for s in history_res)
+    total_conversions = sum(s.conversions for s in history_res)
+    total_impressions = sum(s.impressions for s in history_res)
+    total_clicks = sum(s.clicks for s in history_res)
+    avg_cpl = total_spend / total_conversions if total_conversions > 0 else total_spend
+    avg_ctr = (total_clicks / total_impressions * 100) if total_impressions > 0 else latest.ctr
+
+    # Ads Manager URL
+    clean_act = ext_id.replace("act_", "")
+    ads_manager_url = f"https://adsmanager.facebook.com/adsmanager/manage/campaigns?act={clean_act}&selected_campaign_ids={campaign_id}"
+
+    # AdSets de esta campaña (más recientes por adset_id)
+    from app.models.adset_snapshot import AdsetSnapshot
+    q_adsets = (
+        select(AdsetSnapshot)
+        .where(
+            AdsetSnapshot.organization_id == current_user.organization_id,
+            AdsetSnapshot.campaign_id == campaign_id,
+        )
+        .order_by(AdsetSnapshot.date.desc())
+    )
+    adsets_all = (await db.execute(q_adsets)).scalars().all()
+    seen_adsets = set()
+    adsets_deduped = []
+    for as_snap in adsets_all:
+        if as_snap.adset_id not in seen_adsets:
+            seen_adsets.add(as_snap.adset_id)
+            adsets_deduped.append({
+                "adset_id": as_snap.adset_id,
+                "name": as_snap.name,
+                "budget": as_snap.budget,
+                "spend": as_snap.spend,
+                "impressions": as_snap.impressions,
+                "clicks": as_snap.clicks,
+                "conversions": as_snap.conversions,
+                "cpl": as_snap.cpl,
+                "ctr": as_snap.ctr,
+                "targeting_summary": as_snap.targeting_summary or {},
+                "date": str(as_snap.date),
+            })
+
+    # Ads de esta campaña (más recientes por ad_id)
+    from app.models.ad_snapshot import AdSnapshot
+    q_ads = (
+        select(AdSnapshot)
+        .where(
+            AdSnapshot.organization_id == current_user.organization_id,
+            AdSnapshot.campaign_id == campaign_id,
+        )
+        .order_by(AdSnapshot.date.desc())
+    )
+    ads_all = (await db.execute(q_ads)).scalars().all()
+    seen_ads = set()
+    ads_deduped = []
+    for ad_snap in ads_all:
+        if ad_snap.ad_id not in seen_ads:
+            seen_ads.add(ad_snap.ad_id)
+            ads_deduped.append({
+                "ad_id": ad_snap.ad_id,
+                "adset_id": ad_snap.adset_id,
+                "name": ad_snap.name,
+                "creative_title": ad_snap.creative_title,
+                "creative_body": ad_snap.creative_body,
+                "creative_cta_type": ad_snap.creative_cta_type,
+                "spend": ad_snap.spend,
+                "impressions": ad_snap.impressions,
+                "clicks": ad_snap.clicks,
+                "conversions": ad_snap.conversions,
+                "cpl": ad_snap.cpl,
+                "ctr": ad_snap.ctr,
+                "date": str(ad_snap.date),
+            })
+
+    # Historial de acciones aplicadas o propuestas para esta campaña
+    from app.models.ai_action import AIAction
+    q_actions = (
+        select(AIAction)
+        .where(
+            AIAction.organization_id == current_user.organization_id,
+            AIAction.target_campaign_id == campaign_id,
+        )
+        .order_by(AIAction.proposed_at.desc())
+    )
+    actions_res = (await db.execute(q_actions)).scalars().all()
+    actions_list = [
+        {
+            "id": a.id,
+            "action_type": a.action_type,
+            "risk_level": a.risk_level,
+            "title": a.title,
+            "description": a.description,
+            "status": a.status,
+            "proposed_at": a.proposed_at.isoformat(),
+            "approved_at": a.approved_at.isoformat() if a.approved_at else None,
+            "executed_at": a.executed_at.isoformat() if a.executed_at else None,
+            "rejected_at": a.rejected_at.isoformat() if a.rejected_at else None,
+            "reject_reason": a.reject_reason,
+        }
+        for a in actions_res
+    ]
+
+    return {
+        "campaign_id": latest.campaign_id,
+        "campaign_name": latest.campaign_name,
+        "status": latest.status,
+        "objective": None,
+        "ad_account_id": latest.ad_account_id,
+        "ad_account_name": acc_name,
+        "external_account_id": ext_id,
+        "total_spend": round(total_spend, 2),
+        "total_conversions": total_conversions,
+        "total_impressions": total_impressions,
+        "total_clicks": total_clicks,
+        "average_cpl": round(avg_cpl, 2),
+        "average_ctr": round(avg_ctr, 2),
+        "latest_frequency": round(latest.frequency, 2),
+        "ads_manager_url": ads_manager_url,
+        "adsets": adsets_deduped,
+        "ads": ads_deduped,
+        "actions": actions_list,
+        "history": history_res,
+    }
 
 @router.post("/sync-trigger", response_model=MessageResponse)
 async def trigger_manual_sync(

@@ -112,6 +112,73 @@ export type CampaignSnapshot = Schemas["CampaignSnapshotResponse"];
 // --- INSIGHTS ---
 export type AIInsight = Schemas["AIInsightResponse"];
 
+// --- CAMPAIGN DRILL-DOWN (Roadmap 12) ---
+export type CampaignAdsetDetail = {
+  adset_id: string;
+  name: string;
+  budget: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  cpl: number;
+  ctr: number;
+  targeting_summary: Record<string, any>;
+  date: string;
+};
+
+export type CampaignAdDetail = {
+  ad_id: string;
+  adset_id: string;
+  name: string;
+  creative_title?: string | null;
+  creative_body?: string | null;
+  creative_cta_type?: string | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  cpl: number;
+  ctr: number;
+  date: string;
+};
+
+export type CampaignActionDetail = {
+  id: string;
+  action_type: string;
+  risk_level: string;
+  title: string;
+  description: string;
+  status: string;
+  proposed_at: string;
+  approved_at?: string | null;
+  executed_at?: string | null;
+  rejected_at?: string | null;
+  reject_reason?: string | null;
+};
+
+export type CampaignDetail = {
+  campaign_id: string;
+  campaign_name: string;
+  status: string;
+  objective?: string | null;
+  ad_account_id: string;
+  ad_account_name?: string | null;
+  external_account_id: string;
+  total_spend: number;
+  total_conversions: number;
+  total_impressions: number;
+  total_clicks: number;
+  average_cpl: number;
+  average_ctr: number;
+  latest_frequency: number;
+  ads_manager_url: string;
+  adsets: CampaignAdsetDetail[];
+  ads: CampaignAdDetail[];
+  actions: CampaignActionDetail[];
+  history: CampaignSnapshot[];
+};
+
 // --- CAMPAIGN DRAFT ---
 export type CampaignDraft = Schemas["CampaignDraftResponse"];
 

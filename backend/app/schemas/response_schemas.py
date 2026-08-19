@@ -7,8 +7,9 @@ declarado en el backend, `GET /openapi.json` lo expone correctamente, y
 `frontend/lib/types.ts` se puede generar desde ahí (`npm run generate-types`)
 en vez de mantenerse por separado.
 """
+from datetime import date
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # --- Reporte (ReportBuilder.build / report_cache.get_report) ---
@@ -619,3 +620,96 @@ class AIThresholdsConfigResponse(BaseModel):
     thresholds: Dict[str, Any]
     overrides: Dict[str, Any]
     defaults: Dict[str, Any]
+
+
+# --- DRILL-DOWN CAMPAÑA INDIVIDUAL (Roadmap 12 / Fase 6.9) ---
+
+class CampaignAdsetDetail(BaseModel):
+    adset_id: str
+    name: str
+    budget: float
+    spend: float
+    impressions: int
+    clicks: int
+    conversions: int
+    cpl: float
+    ctr: float
+    targeting_summary: Dict[str, Any] = Field(default_factory=dict)
+    date: str
+
+
+class CampaignAdDetail(BaseModel):
+    ad_id: str
+    adset_id: str
+    name: str
+    creative_title: Optional[str] = None
+    creative_body: Optional[str] = None
+    creative_cta_type: Optional[str] = None
+    spend: float
+    impressions: int
+    clicks: int
+    conversions: int
+    cpl: float
+    ctr: float
+    date: str
+
+
+class CampaignActionDetail(BaseModel):
+    id: str
+    action_type: str
+    risk_level: str
+    title: str
+    description: str
+    status: str
+    proposed_at: str
+    approved_at: Optional[str] = None
+    executed_at: Optional[str] = None
+    rejected_at: Optional[str] = None
+    reject_reason: Optional[str] = None
+
+
+class CampaignSnapshotItem(BaseModel):
+    id: str
+    campaign_id: str
+    campaign_name: str
+    objective: Optional[str] = None
+    status: str
+    budget: float
+    spend: float
+    reach: int = 0
+    impressions: int
+    clicks: int
+    conversions: int
+    conversations: int = 0
+    cpc: float = 0.0
+    cpl: float
+    ctr: float
+    frequency: float
+    placements_breakdown: Optional[Dict[str, Any]] = None
+    demographics_breakdown: Optional[Dict[str, Any]] = None
+    date: Union[str, date]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CampaignDetailResponse(BaseModel):
+    campaign_id: str
+    campaign_name: str
+    status: str
+    objective: Optional[str] = None
+    ad_account_id: str
+    ad_account_name: Optional[str] = None
+    external_account_id: str
+    total_spend: float
+    total_conversions: int
+    total_impressions: int
+    total_clicks: int
+    average_cpl: float
+    average_ctr: float
+    latest_frequency: float
+    ads_manager_url: str
+    adsets: List[CampaignAdsetDetail] = Field(default_factory=list)
+    ads: List[CampaignAdDetail] = Field(default_factory=list)
+    actions: List[CampaignActionDetail] = Field(default_factory=list)
+    history: List[CampaignSnapshotItem] = Field(default_factory=list)
+

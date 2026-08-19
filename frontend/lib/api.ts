@@ -1,7 +1,7 @@
 import { getApiUrl, getTenantSlugFromHostname } from "./config";
 import type {
   TokenResponse, User, Organization, AdAccount, MetaPage, WhatsAppNumber, BusinessPolicies, AiModelsResponse,
-  CampaignSnapshot, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
+  CampaignSnapshot, CampaignDetail, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
   OrgMember, Invitation, InvitationDetails, TenantBrand,
@@ -302,6 +302,7 @@ export const api = {
   // --- CAMPAIGNS ---
   getRecentCampaigns: () => apiRequest<CampaignSnapshot[]>("/api/v1/campaigns/recent", "GET"),
   getCampaignHistory: (campaignId: string) => apiRequest<CampaignSnapshot[]>(`/api/v1/campaigns/${campaignId}/history`, "GET"),
+  getCampaignDetails: (campaignId: string) => apiRequest<CampaignDetail>(`/api/v1/campaigns/${campaignId}/details`, "GET"),
   triggerSync: () => apiRequest<{ status: string; task_id?: string; message: string }>("/api/v1/campaigns/sync-trigger", "POST"),
   getSyncStatus: (adAccountId?: string) =>
     apiRequest<SyncStatusResponse>(`/api/v1/campaigns/sync-status${adAccountId ? `?ad_account_id=${encodeURIComponent(adAccountId)}` : ""}`, "GET"),
