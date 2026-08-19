@@ -19,6 +19,7 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.meta_page import MetaPage
 from app.services.campaign_chat.grounding import GroundingSet, MAX_GROUNDING_VALUES
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
+from app.services.campaign_chat import questions
 from app.services.kpi_period import days_of_history, get_kpis_with_deltas
 from app.services.report_cache import get_report
 
@@ -256,20 +257,10 @@ def narrate_facts(facts: Dict[str, Any], topic: str, ad_account: AdAccount) -> s
     acc = facts.get("account", {})
 
     if topic == "HOW_IT_WORKS":
-        dest = facts.get("destino") or {}
-        p_name = dest.get("name") or "tu página de Facebook"
-        wa = dest.get("whatsapp_number")
-        wa_text = f" y WhatsApp {wa}" if wa else ""
-        return (
-            f"Soy tu asistente de Meta Ads para {ad_account.name}. Te ayudo a monitorear "
-            f"métricas en tiempo real, detectar desvíos y crear campañas listas para publicar en {p_name}{wa_text}."
-        )
+        return questions.HOW_IT_WORKS_TEXT
 
     if topic == "WHY_PAUSED":
-        return (
-            "Todas las campañas se crean en estado PAUSED por seguridad financiera, para que puedas revisar "
-            "los creativos, segmentación y presupuesto en Meta Ads Manager antes de encenderlas."
-        )
+        return questions.WHY_PAUSED_TEXT
 
     if topic == "SPEND":
         spend = kpis.get("spend", 0.0)

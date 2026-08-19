@@ -284,20 +284,19 @@ def _mock_report(mocker):
     del dashboard, para gasto/leads/CPL) y `get_report` (ranking, alertas,
     segmentación)."""
     def _apply(report, kpis=None):
-        mocker.patch(
-            "app.services.campaign_chat.questions.get_report",
-            autospec=True, return_value=report,
-        )
-        # La ventana se recorta a los días realmente sincronizados; con datos
-        # de sobra el período pedido pasa intacto.
-        mocker.patch(
-            "app.services.campaign_chat.questions.days_of_history",
-            autospec=True, return_value=365,
-        )
-        return mocker.patch(
-            "app.services.campaign_chat.questions.get_kpis_with_deltas",
-            autospec=True, return_value=kpis if kpis is not None else _fake_kpis(),
-        )
+        for mod in ("questions", "facts"):
+            mocker.patch(
+                f"app.services.campaign_chat.{mod}.get_report",
+                autospec=True, return_value=report,
+            )
+            mocker.patch(
+                f"app.services.campaign_chat.{mod}.days_of_history",
+                autospec=True, return_value=365,
+            )
+            mocker.patch(
+                f"app.services.campaign_chat.{mod}.get_kpis_with_deltas",
+                autospec=True, return_value=kpis if kpis is not None else _fake_kpis(),
+            )
     return _apply
 
 

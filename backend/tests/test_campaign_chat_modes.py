@@ -70,15 +70,16 @@ async def test_viewer_can_create_ask_session_and_is_rejected_on_build(
 async def test_ask_mode_answering_questions_does_not_push_creation(
     async_client: AsyncClient, db_session: AsyncSession, mocker
 ):
-    mocker.patch("app.services.campaign_chat.questions.days_of_history", return_value=30)
-    mocker.patch(
-        "app.services.campaign_chat.questions.get_kpis_with_deltas",
-        return_value={
-            "current": {"spend": 800.0, "conversations": 30, "cost_per_conv": 26.6},
-            "previous": {"spend": 700.0, "conversations": 25, "cost_per_conv": 28.0},
-            "deltas_pct": {"spend": 14.3, "conversations": 20.0, "cost_per_conv": -5.0},
-        },
-    )
+    for mod in ("questions", "facts"):
+        mocker.patch(f"app.services.campaign_chat.{mod}.days_of_history", return_value=30)
+        mocker.patch(
+            f"app.services.campaign_chat.{mod}.get_kpis_with_deltas",
+            return_value={
+                "current": {"spend": 800.0, "conversations": 30, "cost_per_conv": 26.6},
+                "previous": {"spend": 700.0, "conversations": 25, "cost_per_conv": 28.0},
+                "deltas_pct": {"spend": 14.3, "conversations": 20.0, "cost_per_conv": -5.0},
+            },
+        )
 
     org = Organization(slug="chat-modes-org2", name="Chat Modes Org 2", status="ACTIVE")
     db_session.add(org)

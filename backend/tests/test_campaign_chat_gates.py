@@ -251,18 +251,23 @@ async def test_chat_works_when_the_rewriter_fails(
 # --- El LLM redacta las respuestas del historial (CH-8) ---
 
 async def _with_analyst(monkeypatch, written: str):
-    """Sustituye la redacción del LLM. `answer_question` se mockea para que
+    """Sustituye la redacción del LLM. `resolve_facts` se mockea para que
     devuelva `facts` sin depender de datos sincronizados."""
     from app.services.ai.llm import OpenRouterClient
+    from app.services.campaign_chat import facts as facts_module
     from app.services.campaign_chat import questions
 
     async def fake_answer(db, org_id, ad_account, topic, slots, period=None):
         return "Llevás S/. 1085.47 de inversión.", {"spend": 1085.47, "conversations": 402}
 
+    async def fake_resolve(db, org_id, ad_account, topic, slots=None, window_days=None):
+        return {"spend": 1085.47, "conversations": 402}, "Llevás S/. 1085.47 de inversión."
+
     async def fake_compose(self, org, question, topic, facts, usage_ctx=None):
         return written
 
     monkeypatch.setattr(questions, "answer_question", fake_answer)
+    monkeypatch.setattr(facts_module, "resolve_facts", fake_resolve)
     monkeypatch.setattr(OpenRouterClient, "compose_chat_answer", fake_compose)
 
 

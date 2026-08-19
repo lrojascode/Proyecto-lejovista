@@ -26,7 +26,7 @@ from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
-from app.services.campaign_chat import cards, extraction, questions, rephrase
+from app.services.campaign_chat import cards, extraction, facts as facts_module, questions, rephrase
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
 from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
 from app.services.campaign_chat.slots import sanitize_product_name
@@ -700,20 +700,20 @@ async def _answer_and_resume(
     ad_account = await db.get(AdAccount, session.ad_account_id)
     facts = None
     try:
-        answer, facts = await questions.answer_question(
+        facts, answer = await facts_module.resolve_facts(
             db, current_user.organization_id, ad_account, topic, session.slots_json or {},
-            period=period,
+            window_days=period.days if period else None,
         )
     except Exception:
         logger.exception("No se pudo responder la pregunta '%s' (sesión %s)", topic, session.id)
         answer = questions.NO_DATA_TEXT
+        facts = None
 
-    if facts:
-        # Preguntas sobre el pasado: el LLM redacta el análisis desde las cifras
-        # (CH-8). Los textos de producto (`facts is None`) no pasan por acá.
-        messages.append(await _analyze(db, current_user, session, user_text, topic, answer, facts))
-    else:
+    if topic in ("HOW_IT_WORKS", "WHY_PAUSED") or not facts:
         messages.append(await _say(db, current_user, session, answer, user_text))
+    else:
+        # Preguntas sobre el pasado: el LLM redacta el análisis desde las cifras (CH-8).
+        messages.append(await _analyze(db, current_user, session, user_text, topic, answer, facts))
 
     pendiente = _pending_prompt_for_state(session.state)
     if pendiente:
