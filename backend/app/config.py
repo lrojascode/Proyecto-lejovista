@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # el antiguo default "gemini-3.5-flash" no era un id válido.
     DEFAULT_AI_MODEL: str = Field(default="google/gemini-2.5-flash")
 
+    # --- Email (Brevo) ---
+    BREVO_API_KEY: str = Field(default="")
+    EMAIL_FROM: str = Field(default="notificaciones@lejovista.com")
+    EMAIL_FROM_NAME: str = Field(default="LejoVista")
+
     # --- Feature flags ---
     # Crear tablas con Base.metadata.create_all al arrancar. Solo para dev/test.
     # En producción debe ser false y usarse `alembic upgrade head` (evita drift).
