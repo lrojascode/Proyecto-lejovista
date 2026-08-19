@@ -511,7 +511,11 @@ export default function DashboardPage() {
                 <tbody>
                   {campaigns.slice(0, 5).map((campaign) => (
                     <tr key={campaign.id} style={{ borderBottom: "1px solid var(--color-graphite)" }}>
-                      <td style={{ padding: "12px 24px", fontSize: 14, color: "var(--color-mist)" }}>{campaign.campaign_name}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14 }}>
+                        <Link href={`/campaigns/${campaign.campaign_id}`} className="campaign-link">
+                          {campaign.campaign_name}
+                        </Link>
+                      </td>
                       <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{(campaign.cost_per_conv_7d ?? campaign.cpl).toFixed(2)}</td>
                       <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{(campaign.spend_7d ?? campaign.spend).toFixed(2)}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>

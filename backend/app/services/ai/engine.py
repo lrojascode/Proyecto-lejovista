@@ -251,6 +251,7 @@ class AIEngine:
             c_id = s.campaign_id
             if c_id not in campaigns:
                 campaigns[c_id] = {
+                    "campaign_id": c_id,
                     "name": s.campaign_name,
                     "spend": 0.0,
                     "conversions": 0,

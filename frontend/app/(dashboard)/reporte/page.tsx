@@ -383,7 +383,9 @@ export default function Reporte() {
             {r.campaigns.map((c: ReportCampaign) => (
               <tr key={c.campaign_id}>
                 <td style={{ ...td, fontWeight: 510, color: "var(--color-paper)" }}>
-                  {c.name}
+                  <Link href={`/campaigns/${c.campaign_id}`} className="campaign-link">
+                    {c.name}
+                  </Link>
                   {c.created_by_ai && (
                     <span className="badge badge-ai" style={{ marginLeft: "6px", fontSize: "0.68rem" }} title="Esta campaña la propuso y creó la IA de forma autónoma.">
                       {badgeIcon("badge-ai")} Creada por IA

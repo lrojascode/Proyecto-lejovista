@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
@@ -383,12 +384,17 @@ export default function Diagnostics() {
                       </tr>
                     </thead>
                     <tbody>
-                      {Object.values(briefData.campaigns_data || {}).map((c: any) => {
+                      {Object.entries(briefData.campaigns_data || {}).map(([cId, c]: [string, any]) => {
                         const convs = c.conversations ?? c.conversions ?? 0;
                         const cpl = convs > 0 ? c.spend / convs : c.spend;
+                        const targetId = c.campaign_id || c.id || cId;
                         return (
-                          <tr key={c.name} style={{ borderBottom: "1px solid var(--border-color)", color: "var(--text-primary)" }}>
-                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510 }}>{c.name}</td>
+                          <tr key={c.name || cId} style={{ borderBottom: "1px solid var(--border-color)", color: "var(--text-primary)" }}>
+                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510 }}>
+                              <Link href={`/campaigns/${targetId}`} className="campaign-link">
+                                {c.name}
+                              </Link>
+                            </td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>S/.{c.spend.toFixed(2)}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>{convs}</td>
                             <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
