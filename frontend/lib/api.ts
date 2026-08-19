@@ -5,6 +5,7 @@ import type {
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
   OrgMember, Invitation, InvitationDetails, TenantBrand,
+  CampaignRulesConfig, AIThresholdsConfig,
 } from "./types";
 
 // (S-2) El access token vive SOLO en memoria del módulo, nunca en
@@ -270,6 +271,16 @@ export const api = {
   archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),
   restoreAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/restore`, "POST"),
   deleteAdAccount: (id: string) => apiRequest<{ message: string }>(`/api/v1/organizations/my/ad-accounts/${id}`, "DELETE"),
+
+  // --- REGLAS DE CAMPAÑA Y UMBRALES IA (Roadmap 6) ---
+  getCampaignRulesConfig: () =>
+    apiRequest<CampaignRulesConfig>("/api/v1/organizations/my/campaign-rules", "GET"),
+  updateCampaignRulesConfig: (overrides: Record<string, any>) =>
+    apiRequest<CampaignRulesConfig>("/api/v1/organizations/my/campaign-rules", "PUT", { overrides }),
+  getAIThresholdsConfig: () =>
+    apiRequest<AIThresholdsConfig>("/api/v1/organizations/my/ai-thresholds", "GET"),
+  updateAIThresholdsConfig: (overrides: Record<string, any>) =>
+    apiRequest<AIThresholdsConfig>("/api/v1/organizations/my/ai-thresholds", "PUT", { overrides }),
 
   // --- INVITACIONES Y EQUIPO ---
   getOrgMembers: () => apiRequest<OrgMember[]>("/api/v1/organizations/my/members", "GET"),

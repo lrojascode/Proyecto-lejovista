@@ -577,3 +577,17 @@ class InvitationDetailsResponse(BaseModel):
     organization_slug: str
     is_expired: bool
     is_accepted: bool
+
+
+# --- REGLAS DE CAMPAÑA Y UMBRALES IA (Roadmap 6) ---
+
+class CampaignRulesConfigResponse(BaseModel):
+    rules: Dict[str, Any]
+    overrides: Dict[str, Any]
+    defaults: Dict[str, Any]
+
+
+class AIThresholdsConfigResponse(BaseModel):
+    thresholds: Dict[str, Any]
+    overrides: Dict[str, Any]
+    defaults: Dict[str, Any]

@@ -24,6 +24,15 @@ TENANT_CAMPAIGN_RULES: Dict[str, Any] = {
 }
 
 
+# Claves protegidas (Fase 6.6 / Roadmap 9): la activación automática por API
+# está prohibida por seguridad de la cuenta del cliente; las campañas siempre
+# se crean en estado PAUSED. Estas claves NO son overrideables por tenant.
+IMMUTABLE_RULE_KEYS = {
+    "default_status": "PAUSED",
+    "forbidden_status": "ACTIVE",
+}
+
+
 def get_campaign_rules_for_org(organization: Optional[object] = None) -> Dict[str, Any]:
     """M-2: reglas de campaña aplicables a una organización.
 
@@ -34,5 +43,7 @@ def get_campaign_rules_for_org(organization: Optional[object] = None) -> Dict[st
     """
     overrides = getattr(organization, "campaign_rules_overrides", None) or {}
     if not overrides:
-        return TENANT_CAMPAIGN_RULES
-    return {**TENANT_CAMPAIGN_RULES, **overrides}
+        return dict(TENANT_CAMPAIGN_RULES)
+    merged = {**TENANT_CAMPAIGN_RULES, **overrides}
+    merged.update(IMMUTABLE_RULE_KEYS)
+    return merged

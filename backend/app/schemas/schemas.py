@@ -61,6 +61,12 @@ class OrganizationUpdate(BaseModel):
     max_budget: Optional[float] = None
     industry: Optional[str] = None
 
+class CampaignRulesConfigUpdate(BaseModel):
+    overrides: Dict[str, Any]
+
+class AIThresholdsConfigUpdate(BaseModel):
+    overrides: Dict[str, Any]
+
 class TenantBrandResponse(BaseModel):
     name: str
     display_name: Optional[str] = None

@@ -72,6 +72,19 @@ export type InvitationDetails = {
   is_accepted: boolean;
 };
 
+// --- REGLAS DE CAMPAÑA Y UMBRALES IA ---
+export type CampaignRulesConfig = {
+  rules: Record<string, any>;
+  overrides: Record<string, any>;
+  defaults: Record<string, any>;
+};
+
+export type AIThresholdsConfig = {
+  thresholds: Record<string, any>;
+  overrides: Record<string, any>;
+  defaults: Record<string, any>;
+};
+
 export type SyncStatusResponse = {
   ad_account_id?: string;
   status: "IDLE" | "RUNNING" | "COMPLETED" | "FAILED";

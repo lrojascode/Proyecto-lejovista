@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
-import type { Organization, AdAccount, MetaPage, WhatsAppNumber, OrgMember, Invitation } from "@/lib/types";
+import type {
+  Organization, AdAccount, MetaPage, WhatsAppNumber, OrgMember, Invitation,
+  CampaignRulesConfig, AIThresholdsConfig,
+} from "@/lib/types";
 
 export default function Settings() {
   const { activeAdAccountId, setActiveAdAccountId } = useAdAccount();
@@ -26,6 +29,25 @@ export default function Settings() {
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoMsg, setLogoMsg] = useState("");
+
+  // Reglas de Campaña y Umbrales IA (6.3)
+  const [rulesConfig, setRulesConfig] = useState<CampaignRulesConfig | null>(null);
+  const [ruleOptGoal, setRuleOptGoal] = useState("CONVERSATIONS");
+  const [ruleObjective, setRuleObjective] = useState("OUTCOME_LEADS");
+  const [ruleDestType, setRuleDestType] = useState("WHATSAPP");
+  const [ruleMaxPerWindow, setRuleMaxPerWindow] = useState(15);
+  const [ruleWindowHours, setRuleWindowHours] = useState(24);
+  const [ruleGeoKey, setRuleGeoKey] = useState("2771");
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [rulesMsg, setRulesMsg] = useState("");
+
+  const [thresholdsConfig, setThresholdsConfig] = useState<AIThresholdsConfig | null>(null);
+  const [threshCplCritical, setThreshCplCritical] = useState(2.0);
+  const [threshFreqSat, setThreshFreqSat] = useState(3.0);
+  const [threshCtrMin, setThreshCtrMin] = useState(0.5);
+  const [threshTargetFallback, setThreshTargetFallback] = useState(3.5);
+  const [threshSaving, setThreshSaving] = useState(false);
+  const [threshMsg, setThreshMsg] = useState("");
 
   // LLM Custom Key States
   const [llmProvider, setLlmProvider] = useState<string>("");
@@ -111,6 +133,26 @@ export default function Settings() {
         setInvitations(invsData);
       } catch (err) {
         console.error("Error loading team data:", err);
+      }
+
+      try {
+        const rc = await api.getCampaignRulesConfig();
+        setRulesConfig(rc);
+        setRuleOptGoal(rc.rules.optimization_goal || "CONVERSATIONS");
+        setRuleObjective(rc.rules.objective || "OUTCOME_LEADS");
+        setRuleDestType(rc.rules.destination_type || "WHATSAPP");
+        setRuleMaxPerWindow(rc.rules.max_campaigns_per_window ?? 15);
+        setRuleWindowHours(rc.rules.campaign_window_hours ?? 24);
+        setRuleGeoKey(rc.rules.default_geo_region_key || "2771");
+
+        const tc = await api.getAIThresholdsConfig();
+        setThresholdsConfig(tc);
+        setThreshCplCritical(tc.thresholds.cpl_critical_multiplier ?? 2.0);
+        setThreshFreqSat(tc.thresholds.frequency_saturation ?? 3.0);
+        setThreshCtrMin(tc.thresholds.ctr_min_pct ?? 0.5);
+        setThreshTargetFallback(tc.thresholds.target_cpl_fallback ?? 3.5);
+      } catch (err) {
+        console.error("Error loading rules or thresholds:", err);
       }
 
       // Solo se ofrecen los modelos del proveedor de IA realmente activo
@@ -242,6 +284,88 @@ export default function Settings() {
       setLogoMsg(`Error: ${err.message || "No se pudo subir el logo."}`);
     } finally {
       setUploadingLogo(false);
+    }
+  };
+
+  const handleSaveRules = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRulesSaving(true);
+    setRulesMsg("");
+    try {
+      const overrides: Record<string, any> = {
+        optimization_goal: ruleOptGoal,
+        objective: ruleObjective,
+        destination_type: ruleDestType,
+        max_campaigns_per_window: Number(ruleMaxPerWindow),
+        campaign_window_hours: Number(ruleWindowHours),
+        default_geo_region_key: ruleGeoKey.trim() || "2771",
+      };
+      const updated = await api.updateCampaignRulesConfig(overrides);
+      setRulesConfig(updated);
+      setRulesMsg("Reglas de campaña actualizadas con éxito.");
+    } catch (err: any) {
+      setRulesMsg(`Error: ${err.message || "No se pudieron guardar las reglas."}`);
+    } finally {
+      setRulesSaving(false);
+    }
+  };
+
+  const handleResetRules = async () => {
+    setRulesSaving(true);
+    setRulesMsg("");
+    try {
+      const updated = await api.updateCampaignRulesConfig({});
+      setRulesConfig(updated);
+      setRuleOptGoal(updated.rules.optimization_goal || "CONVERSATIONS");
+      setRuleObjective(updated.rules.objective || "OUTCOME_LEADS");
+      setRuleDestType(updated.rules.destination_type || "WHATSAPP");
+      setRuleMaxPerWindow(updated.rules.max_campaigns_per_window ?? 15);
+      setRuleWindowHours(updated.rules.campaign_window_hours ?? 24);
+      setRuleGeoKey(updated.rules.default_geo_region_key || "2771");
+      setRulesMsg("Reglas restablecidas a los valores globales por defecto.");
+    } catch (err: any) {
+      setRulesMsg(`Error: ${err.message}`);
+    } finally {
+      setRulesSaving(false);
+    }
+  };
+
+  const handleSaveThresholds = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setThreshSaving(true);
+    setThreshMsg("");
+    try {
+      const overrides: Record<string, any> = {
+        cpl_critical_multiplier: Number(threshCplCritical),
+        frequency_saturation: Number(threshFreqSat),
+        ctr_min_pct: Number(threshCtrMin),
+        target_cpl_fallback: Number(threshTargetFallback),
+      };
+      const updated = await api.updateAIThresholdsConfig(overrides);
+      setThresholdsConfig(updated);
+      setThreshMsg("Umbrales de IA actualizados con éxito.");
+    } catch (err: any) {
+      setThreshMsg(`Error: ${err.message || "No se pudieron guardar los umbrales."}`);
+    } finally {
+      setThreshSaving(false);
+    }
+  };
+
+  const handleResetThresholds = async () => {
+    setThreshSaving(true);
+    setThreshMsg("");
+    try {
+      const updated = await api.updateAIThresholdsConfig({});
+      setThresholdsConfig(updated);
+      setThreshCplCritical(updated.thresholds.cpl_critical_multiplier ?? 2.0);
+      setThreshFreqSat(updated.thresholds.frequency_saturation ?? 3.0);
+      setThreshCtrMin(updated.thresholds.ctr_min_pct ?? 0.5);
+      setThreshTargetFallback(updated.thresholds.target_cpl_fallback ?? 3.5);
+      setThreshMsg("Umbrales restablecidos a los valores del sistema por defecto.");
+    } catch (err: any) {
+      setThreshMsg(`Error: ${err.message}`);
+    } finally {
+      setThreshSaving(false);
     }
   };
 
@@ -824,6 +948,262 @@ export default function Settings() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Reglas de Campaña por Empresa (6.3) */}
+        <div className="glass-card">
+          <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem" }}>Reglas de Campaña (Avanzado)</h3>
+          <p style={{ color: "var(--color-fog)", fontSize: "13px", marginBottom: "1.25rem" }}>
+            Parámetros de creación para Meta Ads aplicables a tu organización.
+          </p>
+
+          <form onSubmit={handleSaveRules} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Objetivo de Optimización
+                </label>
+                <select
+                  className="form-input"
+                  value={ruleOptGoal}
+                  onChange={(e) => setRuleOptGoal(e.target.value)}
+                >
+                  <option value="CONVERSATIONS">Conversaciones (WhatsApp / Mensajes)</option>
+                  <option value="LEAD_GENERATION">Generación de Clientes Potenciales</option>
+                  <option value="LINK_CLICKS">Clics en el Enlace</option>
+                  <option value="OFFSITE_CONVERSATIONS">Conversaciones Externas</option>
+                  <option value="IMPRESSIONS">Impresiones</option>
+                  <option value="REACH">Alcance</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Objetivo de Campaña
+                </label>
+                <select
+                  className="form-input"
+                  value={ruleObjective}
+                  onChange={(e) => setRuleObjective(e.target.value)}
+                >
+                  <option value="OUTCOME_LEADS">Clientes Potenciales (Leads)</option>
+                  <option value="OUTCOME_SALES">Ventas</option>
+                  <option value="OUTCOME_TRAFFIC">Tráfico</option>
+                  <option value="OUTCOME_ENGAGEMENT">Interacción</option>
+                  <option value="OUTCOME_AWARENESS">Reconocimiento</option>
+                </select>
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Destino
+                </label>
+                <select
+                  className="form-input"
+                  value={ruleDestType}
+                  onChange={(e) => setRuleDestType(e.target.value)}
+                >
+                  <option value="WHATSAPP">WhatsApp</option>
+                  <option value="MESSENGER">Messenger</option>
+                  <option value="WEBSITE">Sitio Web</option>
+                  <option value="ON_AD">En el Anuncio</option>
+                  <option value="INSTAGRAM_DIRECT">Instagram Direct</option>
+                </select>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Código Región Geo (Meta Key)
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={ruleGeoKey}
+                  onChange={(e) => setRuleGeoKey(e.target.value)}
+                  placeholder="2771 (Lima)"
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Máx. Campañas por Ventana
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  className="form-input"
+                  value={ruleMaxPerWindow}
+                  onChange={(e) => setRuleMaxPerWindow(parseInt(e.target.value) || 1)}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Ventana de Creación (Horas)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={168}
+                  className="form-input"
+                  value={ruleWindowHours}
+                  onChange={(e) => setRuleWindowHours(parseInt(e.target.value) || 1)}
+                />
+              </div>
+            </div>
+
+            <div style={{
+              fontSize: "11px",
+              color: "var(--color-fog)",
+              background: "rgba(255,255,255,0.02)",
+              padding: "8px 10px",
+              borderRadius: "4px",
+              border: "1px solid var(--border-subtle)",
+            }}>
+              <strong>Seguridad:</strong> Por política de LejoVista (Roadmap 9), las campañas se crean siempre en estado <code>PAUSED</code> para requerir activación manual explícita.
+            </div>
+
+            {rulesMsg && (
+              <div style={{
+                fontSize: "12px",
+                color: rulesMsg.includes("Error") ? "var(--color-coral-red)" : "var(--color-mint)",
+              }}>
+                {rulesMsg}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.25rem" }}>
+              <button type="submit" className="btn-secondary" disabled={rulesSaving}>
+                {rulesSaving ? "Guardando..." : "Guardar Reglas"}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetRules}
+                disabled={rulesSaving}
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--border-subtle)",
+                  color: "var(--color-fog)",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                }}
+              >
+                Restablecer Defaults
+              </button>
+            </div>
+          </form>
+        </div>
+
+        {/* Umbrales de IA por Empresa (6.3) */}
+        <div className="glass-card">
+          <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem" }}>Umbrales del Motor de IA (Avanzado)</h3>
+          <p style={{ color: "var(--color-fog)", fontSize: "13px", marginBottom: "1.25rem" }}>
+            Ajusta los disparadores de diagnósticos, anomalías y alertas del clasificador de campañas.
+          </p>
+
+          <form onSubmit={handleSaveThresholds} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Multiplicador CPL Crítico (x)
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="1.0"
+                  max="10.0"
+                  className="form-input"
+                  value={threshCplCritical}
+                  onChange={(e) => setThreshCplCritical(parseFloat(e.target.value) || 2.0)}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  Saturación de Frecuencia
+                </label>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="1.0"
+                  max="20.0"
+                  className="form-input"
+                  value={threshFreqSat}
+                  onChange={(e) => setThreshFreqSat(parseFloat(e.target.value) || 3.0)}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  CTR Mínimo Aceptable (%)
+                </label>
+                <input
+                  type="number"
+                  step="0.05"
+                  min="0.01"
+                  max="100.0"
+                  className="form-input"
+                  value={threshCtrMin}
+                  onChange={(e) => setThreshCtrMin(parseFloat(e.target.value) || 0.5)}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.25rem" }}>
+                  CPL Objetivo Fallback ($)
+                </label>
+                <input
+                  type="number"
+                  step="0.25"
+                  min="0.1"
+                  max="1000.0"
+                  className="form-input"
+                  value={threshTargetFallback}
+                  onChange={(e) => setThreshTargetFallback(parseFloat(e.target.value) || 3.5)}
+                />
+              </div>
+            </div>
+
+            {threshMsg && (
+              <div style={{
+                fontSize: "12px",
+                color: threshMsg.includes("Error") ? "var(--color-coral-red)" : "var(--color-mint)",
+              }}>
+                {threshMsg}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "0.75rem", marginTop: "0.25rem" }}>
+              <button type="submit" className="btn-secondary" disabled={threshSaving}>
+                {threshSaving ? "Guardando..." : "Guardar Umbrales"}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetThresholds}
+                disabled={threshSaving}
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--border-subtle)",
+                  color: "var(--color-fog)",
+                  borderRadius: "6px",
+                  padding: "6px 12px",
+                  fontSize: "13px",
+                  cursor: "pointer",
+                }}
+              >
+                Restablecer Defaults
+              </button>
+            </div>
+          </form>
         </div>
       </div>
 

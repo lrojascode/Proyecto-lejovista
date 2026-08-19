@@ -18,15 +18,18 @@ from app.models.api_call_log import APICallLog
 from app.models.ai_token_usage import AITokenUsage
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.campaign_learning_log import CampaignLearningLog
+from dataclasses import asdict
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, LLMKeyTestRequest, LLMKeyTestResponse,
     AdAccountCreate, AdAccountReconnect, AdAccountResponse,
     AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
     WhatsAppNumberResponse, WhatsAppNumberCreate, WhatsAppNumberUpdate,
+    CampaignRulesConfigUpdate, AIThresholdsConfigUpdate,
 )
 from app.schemas.invitation_schemas import InvitationCreateRequest
 from app.schemas.response_schemas import (
     AiModelsResponse, BusinessPoliciesResponse, MessageResponse, InvitationResponse,
+    CampaignRulesConfigResponse, AIThresholdsConfigResponse,
 )
 from app.utils.security import get_current_user, require_role
 from app.utils.throttle import enforce_cooldown
@@ -35,7 +38,9 @@ from app.workers.tasks import sync_ad_account, refresh_org_pages
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
 from app.services.email_service import send_email
-from typing import List, Optional
+from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES, get_campaign_rules_for_org
+from app.services.ai.thresholds import DEFAULT_THRESHOLDS, get_thresholds_for_org, _THRESHOLD_FIELDS
+from typing import List, Optional, Dict, Any
 
 router = APIRouter(prefix="/organizations", tags=["organizations"])
 
@@ -792,4 +797,160 @@ async def delete_org_invitation(
     await db.delete(inv)
     await db.commit()
     return {"message": "Invitación revocada correctamente."}
+
+
+# --- REGLAS DE CAMPAÑA Y UMBRALES IA (Roadmap 6 / Fase 6.3) ---
+
+_VALID_OPTIMIZATION_GOALS = {
+    "CONVERSATIONS", "LEAD_GENERATION", "LINK_CLICKS", "OFFSITE_CONVERSATIONS",
+    "IMPRESSIONS", "REACH", "LANDING_PAGE_VIEWS", "POST_ENGAGEMENT",
+}
+_VALID_OBJECTIVES = {
+    "OUTCOME_LEADS", "OUTCOME_SALES", "OUTCOME_TRAFFIC", "OUTCOME_ENGAGEMENT",
+    "OUTCOME_AWARENESS", "OUTCOME_APP_PROMOTION",
+}
+_VALID_DESTINATIONS = {
+    "WHATSAPP", "MESSENGER", "WEBSITE", "ON_AD", "INSTAGRAM_DIRECT",
+}
+
+
+@router.get("/my/campaign-rules", response_model=CampaignRulesConfigResponse)
+async def get_my_campaign_rules(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Devuelve las reglas de campaña efectivas para la organización, sus overrides y los defaults globales."""
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    return CampaignRulesConfigResponse(
+        rules=get_campaign_rules_for_org(org),
+        overrides=org.campaign_rules_overrides or {},
+        defaults=dict(TENANT_CAMPAIGN_RULES),
+    )
+
+
+@router.put("/my/campaign-rules", response_model=CampaignRulesConfigResponse)
+async def update_my_campaign_rules(
+    payload: CampaignRulesConfigUpdate,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Actualiza los overrides de reglas de campaña con validación estricta (evita fallos tardíos en la Saga)."""
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    overrides = payload.overrides or {}
+
+    # Validaciones
+    if "optimization_goal" in overrides:
+        goal = overrides["optimization_goal"]
+        if goal not in _VALID_OPTIMIZATION_GOALS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"optimization_goal '{goal}' inválido. Opciones válidas: {sorted(_VALID_OPTIMIZATION_GOALS)}",
+            )
+
+    if "objective" in overrides:
+        obj = overrides["objective"]
+        if obj not in _VALID_OBJECTIVES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"objective '{obj}' inválido. Opciones válidas: {sorted(_VALID_OBJECTIVES)}",
+            )
+
+    if "destination_type" in overrides:
+        dest = overrides["destination_type"]
+        if dest not in _VALID_DESTINATIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"destination_type '{dest}' inválido. Opciones válidas: {sorted(_VALID_DESTINATIONS)}",
+            )
+
+    if "max_campaigns_per_window" in overrides:
+        val = overrides["max_campaigns_per_window"]
+        if not isinstance(val, int) or val <= 0:
+            raise HTTPException(
+                status_code=400, detail="max_campaigns_per_window debe ser un entero positivo."
+            )
+
+    if "campaign_window_hours" in overrides:
+        val = overrides["campaign_window_hours"]
+        if not isinstance(val, (int, float)) or val <= 0:
+            raise HTTPException(
+                status_code=400, detail="campaign_window_hours debe ser un número positivo."
+            )
+
+    # Bloquear mutación de claves no overrideables
+    for forbidden_key in ("default_status", "forbidden_status"):
+        if forbidden_key in overrides:
+            overrides.pop(forbidden_key)
+
+    org.campaign_rules_overrides = overrides
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+
+    return CampaignRulesConfigResponse(
+        rules=get_campaign_rules_for_org(org),
+        overrides=org.campaign_rules_overrides or {},
+        defaults=dict(TENANT_CAMPAIGN_RULES),
+    )
+
+
+@router.get("/my/ai-thresholds", response_model=AIThresholdsConfigResponse)
+async def get_my_ai_thresholds(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Devuelve los umbrales de IA efectivos para la organización, sus overrides y los defaults del sistema."""
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    return AIThresholdsConfigResponse(
+        thresholds=asdict(get_thresholds_for_org(org)),
+        overrides=org.ai_thresholds_overrides or {},
+        defaults=asdict(DEFAULT_THRESHOLDS),
+    )
+
+
+@router.put("/my/ai-thresholds", response_model=AIThresholdsConfigResponse)
+async def update_my_ai_thresholds(
+    payload: AIThresholdsConfigUpdate,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Actualiza los umbrales de IA de la organización con validación de claves numéricas positivas."""
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    overrides = payload.overrides or {}
+
+    for k, v in overrides.items():
+        if k not in _THRESHOLD_FIELDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Umbral desconocido '{k}'. Campos válidos: {sorted(_THRESHOLD_FIELDS)}",
+            )
+        if not isinstance(v, (int, float)) or v <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"El valor de '{k}' debe ser un número positivo.",
+            )
+
+    org.ai_thresholds_overrides = overrides
+    db.add(org)
+    await db.commit()
+    await db.refresh(org)
+
+    return AIThresholdsConfigResponse(
+        thresholds=asdict(get_thresholds_for_org(org)),
+        overrides=org.ai_thresholds_overrides or {},
+        defaults=asdict(DEFAULT_THRESHOLDS),
+    )
+
 
