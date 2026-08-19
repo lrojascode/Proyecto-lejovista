@@ -528,6 +528,7 @@ class ChatSessionResponse(BaseModel):
     id: str
     state: str
     status: str
+    mode: str = "BUILD"
     ad_account_id: str
     draft_id: Optional[str] = None
     slots: ChatSlots
@@ -549,6 +550,7 @@ class ChatSessionSummary(BaseModel):
     id: str
     state: str
     status: str
+    mode: str = "BUILD"
     ad_account_id: str
     draft_id: Optional[str] = None
     updated_at: str

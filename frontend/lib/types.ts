@@ -125,9 +125,13 @@ export type AiUsage = Schemas["AiUsageResponse"];
 // --- API CALL HISTORY (/campaigns/api-call-history) ---
 export type ApiCallHistoryEntry = Schemas["ApiCallHistoryEntry"];
 
-// --- CHAT DE CREACIÓN DE CAMPAÑAS (/campaigns/chat) ---
-export type ChatSessionResponse = Schemas["ChatSessionResponse"];
-export type ChatSessionSummary = Schemas["ChatSessionSummary"];
+// --- CHAT DE CREACIÓN Y CONSULTA DE CAMPAÑAS (/campaigns/chat, /chat) ---
+export type ChatSessionResponse = Schemas["ChatSessionResponse"] & {
+  mode?: "BUILD" | "ASK";
+};
+export type ChatSessionSummary = Schemas["ChatSessionSummary"] & {
+  mode?: "BUILD" | "ASK";
+};
 export type ChatSlots = Schemas["ChatSlots"];
 export type ChatMessage = ChatSessionResponse["messages"][number];
 export type ChatTextMessage = Schemas["ChatTextMessage"];

@@ -9,7 +9,7 @@ from app.schemas.campaign_schemas import ChatDecisionRequest, ChatMessageRequest
 from app.schemas.response_schemas import ChatSessionResponse, ChatSessionSummary
 from app.services.campaign_chat import engine
 from app.services.campaign_chat.engine import ChatGuardError, ChatSessionNotFoundError
-from app.utils.security import get_active_ad_account_id, get_current_user, require_role
+from app.utils.security import get_active_ad_account_id, get_current_user, has_role
 
 router = APIRouter(prefix="/campaigns/chat", tags=["campaign-chat"])
 
@@ -17,16 +17,20 @@ router = APIRouter(prefix="/campaigns/chat", tags=["campaign-chat"])
 @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)
 async def create_chat_session(
     request: ChatSessionCreateRequest,
-    current_user: User = Depends(require_role("OPERATOR")),
+    current_user: User = Depends(get_current_user),
     active_ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Arranca una conversación nueva: resuelve la cuenta activa y la página +
-    WhatsApp de destino (regla AI-1, sin ambigüedad) ANTES de saludar — si algo
-    falta, el error llega de una en vez de descubrirse a mitad de chat."""
+    """Arranca una conversación nueva en modo BUILD o ASK."""
+    requested_mode = request.mode or "BUILD"
+    if requested_mode == "BUILD" and not await has_role(db, current_user, "OPERATOR"):
+        raise HTTPException(
+            status_code=403,
+            detail="Esta acción requiere el rol OPERATOR o superior en la organización.",
+        )
     try:
         session = await engine.create_session(
-            db, current_user, request.ad_account_id or active_ad_account_id
+            db, current_user, request.ad_account_id or active_ad_account_id, mode=requested_mode
         )
     except ChatGuardError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -41,7 +45,8 @@ async def list_chat_sessions(
     sessions = await engine.list_sessions(db, current_user)
     return [
         {
-            "id": s.id, "state": s.state, "status": s.status, "ad_account_id": s.ad_account_id,
+            "id": s.id, "state": s.state, "status": s.status, "mode": s.mode or "BUILD",
+            "ad_account_id": s.ad_account_id,
             "draft_id": s.draft_id, "updated_at": s.updated_at.isoformat() if s.updated_at else "",
         }
         for s in sessions
@@ -65,7 +70,7 @@ async def get_chat_session(
 async def post_chat_message(
     session_id: str,
     request: ChatMessageRequest,
-    current_user: User = Depends(require_role("OPERATOR")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -84,7 +89,7 @@ async def post_chat_message(
 async def post_chat_decision(
     session_id: str,
     request: ChatDecisionRequest,
-    current_user: User = Depends(require_role("OPERATOR")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -102,7 +107,7 @@ async def post_chat_decision(
 @router.post("/sessions/{session_id}/advance", response_model=ChatSessionResponse)
 async def advance_chat_session(
     session_id: str,
-    current_user: User = Depends(require_role("OPERATOR")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Relee el estado real de la Saga (`CampaignDraft`) y lo persiste en la

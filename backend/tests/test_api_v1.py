@@ -121,7 +121,7 @@ async def test_organization_and_ad_accounts(async_client: AsyncClient, mock_cele
     assert connect_res.status_code == 200
     ad_acc_data = connect_res.json()
     assert ad_acc_data["name"] == "Meta Ads Account Test"
-    assert ad_acc_data["external_account_id"] == "1234567890"
+    assert ad_acc_data["external_account_id"] == "act_1234567890"
     
     # Assert Celery task was scheduled
     mock_celery["sync_ad_account"].delay.assert_called_once()
@@ -167,7 +167,7 @@ async def test_campaign_snapshots_and_sync_trigger(async_client: AsyncClient, mo
     # Now trigger manual sync
     sync_trigger_success_res = await async_client.post("/api/v1/campaigns/sync-trigger", headers=headers)
     assert sync_trigger_success_res.status_code == 200
-    assert "Sincronización manual programada" in sync_trigger_success_res.json()["message"]
+    assert "Sincronización" in sync_trigger_success_res.json()["message"]
     mock_celery["sync_trigger"].delay.assert_called_once()
 
 

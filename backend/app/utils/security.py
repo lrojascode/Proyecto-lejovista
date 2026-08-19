@@ -227,28 +227,34 @@ async def get_current_user(
 ROLE_RANK = {"VIEWER": 0, "OPERATOR": 1, "ADMIN": 2}
 
 
+async def has_role(db: AsyncSession, current_user: User, min_role: str) -> bool:
+    """Verifica si el usuario tiene al menos `min_role` en su organización activa."""
+    from sqlalchemy import select
+    from app.models.organization_user import OrganizationUser
+
+    org_id = current_user.organization_id
+    if not org_id:
+        return False
+
+    q = select(OrganizationUser.role).where(
+        OrganizationUser.user_id == current_user.id,
+        OrganizationUser.organization_id == org_id,
+    )
+    role = (await db.execute(q)).scalar_one_or_none()
+    return role is not None and ROLE_RANK.get(role, -1) >= ROLE_RANK.get(min_role, 0)
+
+
 def require_role(min_role: str):
     async def _dependency(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
-        from sqlalchemy import select
-        from app.models.organization_user import OrganizationUser
-
-        org_id = current_user.organization_id
-        if not org_id:
+        if not current_user.organization_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="No perteneces a ninguna organización activa.",
             )
-
-        q = select(OrganizationUser.role).where(
-            OrganizationUser.user_id == current_user.id,
-            OrganizationUser.organization_id == org_id,
-        )
-        role = (await db.execute(q)).scalar_one_or_none()
-
-        if role is None or ROLE_RANK.get(role, -1) < ROLE_RANK[min_role]:
+        if not await has_role(db, current_user, min_role):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Esta acción requiere el rol {min_role} o superior en la organización.",

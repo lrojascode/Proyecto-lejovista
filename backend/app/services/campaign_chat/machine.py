@@ -15,7 +15,7 @@ from typing import FrozenSet, Optional
 from app.services.campaign_chat.slots import HARD_INVALIDATING_SLOTS, SOFT_INVALIDATING_SLOTS
 
 # Estados "ask": el motor espera un mensaje del usuario.
-ASK_STATES = frozenset({"ASK_GOAL", "ASK_MEDIA"})
+ASK_STATES = frozenset({"ASK_GOAL", "ASK_MEDIA", "BROWSING"})
 # Estados "gate": el motor espera una DECISIÓN explícita (aceptar/cambiar/rechazar).
 GATE_STATES = frozenset({"REVIEW_PLAN", "CONFIRM_RISK"})
 # Estados terminales: la sesión ya no avanza sola.
@@ -33,11 +33,14 @@ class SessionFacts:
     has_proposal: bool
     proposal_accepted: bool
     draft_id: Optional[str]
+    mode: str = "BUILD"
 
 
 def next_state(facts: SessionFacts) -> str:
     if facts.draft_id:
         return "CREATING"
+    if facts.mode == "ASK":
+        return "BROWSING"
     has_media = bool(facts.image_path or facts.video_path)
     if not facts.goal_text and not has_media:
         return "ASK_GOAL"

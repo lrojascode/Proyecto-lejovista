@@ -96,6 +96,7 @@ class ChatSessionCreateRequest(BaseModel):
     """`ad_account_id` es opcional: si falta, se usa la cuenta activa
     (header `X-Ad-Account-Id`, igual que el resto de la app)."""
     ad_account_id: Optional[str] = None
+    mode: Optional[Literal["BUILD", "ASK"]] = "BUILD"
 
 
 class ChatMessageRequest(BaseModel):

@@ -40,6 +40,8 @@ class CampaignChatSession(Base):
     state: Mapped[str] = mapped_column(String, nullable=False, default="AWAITING_MEDIA", index=True)
     # OPEN | CLOSED_CREATED | CLOSED_CANCELLED | CLOSED_FAILED | CLOSED_EXPIRED
     status: Mapped[str] = mapped_column(String, nullable=False, default="OPEN", index=True)
+    # BUILD (creación de campañas) | ASK (consulta / analista)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="BUILD", default="BUILD")
 
     slots_json: Mapped[dict] = mapped_column(JSON, default=dict)
     proposal_json: Mapped[dict] = mapped_column(JSON, nullable=True)

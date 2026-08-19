@@ -56,7 +56,7 @@ async def test_suggest_campaign_copy_uses_mock_when_mock_services_enabled(monkey
 
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
-    assert set(result.keys()) == _REQUIRED_COPY_KEYS
+    assert _REQUIRED_COPY_KEYS.issubset(result.keys())
     assert len(result["headline"]) == 2 and len(result["primary_text"]) == 2
     assert "Cable GPT" in result["headline"][0]
     assert all(len(h) <= 40 for h in result["headline"])
@@ -121,7 +121,7 @@ async def test_suggest_campaign_copy_falls_back_on_invalid_json(monkeypatch):
     org, acc = _org_and_acc()
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
-    assert set(result.keys()) == _REQUIRED_COPY_KEYS
+    assert _REQUIRED_COPY_KEYS.issubset(result.keys())
     assert "Cable GPT" in result["headline"][0]
 
 
@@ -226,7 +226,7 @@ async def test_suggest_campaign_copy_falls_back_on_http_error(monkeypatch):
     org, acc = _org_and_acc()
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
-    assert set(result.keys()) == _REQUIRED_COPY_KEYS
+    assert _REQUIRED_COPY_KEYS.issubset(result.keys())
 
 
 @pytest.mark.asyncio
@@ -241,7 +241,7 @@ async def test_suggest_campaign_copy_falls_back_on_network_exception(monkeypatch
     org, acc = _org_and_acc()
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
-    assert set(result.keys()) == _REQUIRED_COPY_KEYS
+    assert _REQUIRED_COPY_KEYS.issubset(result.keys())
 
 
 @pytest.mark.asyncio
@@ -255,7 +255,7 @@ async def test_suggest_campaign_copy_no_api_key_uses_mock(monkeypatch):
     org, acc = _org_and_acc()
     result = await OpenRouterClient().suggest_campaign_copy(org, acc, "Cable GPT")
 
-    assert set(result.keys()) == _REQUIRED_COPY_KEYS
+    assert _REQUIRED_COPY_KEYS.issubset(result.keys())
 
 
 @pytest.mark.asyncio

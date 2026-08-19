@@ -1,6 +1,7 @@
 import logging
 import json
 import datetime
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional, Tuple
 import httpx
 from app.config import settings
@@ -11,6 +12,16 @@ from app.services.ai.thresholds import classify_campaign, compute_target_cpl
 from app.services.ai.statistics import INSUFFICIENT_HISTORY_TITLE
 
 logger = logging.getLogger("lejovista.llm")
+
+
+@dataclass(frozen=True)
+class ChatPlan:
+    blocks: List[str]
+    period_key: Optional[str] = None
+    period_b_key: Optional[str] = None
+    focus_campaign: Optional[str] = None
+    wants_creation: bool = False
+    topic: Optional[str] = None
 
 # Versión del prompt del Master Brief. Se persiste junto a la narrativa para
 # poder trazar qué versión generó cada informe (AI-4).
@@ -991,6 +1002,89 @@ class OpenRouterClient:
         period = period if isinstance(period, str) and period in periodos else None
         return topic, period
 
+    async def plan_chat_request(
+        self,
+        org: Organization,
+        user_text: str,
+        available_campaigns: Optional[List[str]] = None,
+        usage_ctx: Optional[UsageContext] = None,
+    ) -> ChatPlan:
+        """Planificador abierto de consultas para el chat (CH-10/CH-11).
+        
+        Preserva AI-1: solo devuelve etiquetas de bloques, períodos y nombres de campaña
+        reales existentes. Cero números en la salida del modelo.
+        """
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key:
+            return ChatPlan(blocks=["kpis"])
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "LejoVista Platform",
+            "Content-Type": "application/json",
+        }
+
+        camp_list = available_campaigns or []
+        camp_block = f"Campañas reales disponibles: {', '.join(camp_list)}\n" if camp_list else ""
+        system_prompt = (
+            "Eres un planificador analítico para consultas de Meta Ads.\n"
+            "Tu salida es estrictamente un JSON estructurado:\n"
+            '{"blocks": ["kpis", "ranking", ...], "period_key": "7d|30d|90d|all|null", '
+            '"period_b_key": "7d|30d|90d|all|null", "focus_campaign": "NOMBRE o null", "wants_creation": false, "topic": "ETIQUETA o null"}\n\n'
+            "Bloques disponibles: kpis, ranking, breakdowns, timeseries, alerts, recommendations, account, destination, creative, product.\n"
+            f"{camp_block}"
+            "REGLA AI-1: NUNCA devuelvas cifras ni cálculos. Solo etiquetas de bloques y períodos.\n"
+            f"{_PROMPT_INJECTION_GUARD}"
+        )
+        user_prompt = f"Consulta del cliente: {_delimit_untrusted(user_text)}"
+        candidates = MODELS_BY_PROVIDER.get(provider) or []
+        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        if is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
+        payload = {
+            "model": model,
+            "temperature": 0.0,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res = await client.post(base_url, json=payload, headers=headers)
+                if res.status_code != 200:
+                    return ChatPlan(blocks=["kpis"])
+                result = res.json()
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                data = _extract_json_object(result["choices"][0]["message"]["content"])
+        except Exception:
+            logger.exception("Error en plan_chat_request")
+            return ChatPlan(blocks=["kpis"])
+
+        if not data:
+            return ChatPlan(blocks=["kpis"])
+
+        valid_blocks = {"kpis", "ranking", "breakdowns", "timeseries", "alerts", "recommendations", "account", "destination", "creative", "product"}
+        blocks = [b for b in data.get("blocks", []) if b in valid_blocks] or ["kpis"]
+        period = data.get("period_key") if data.get("period_key") in ("7d", "30d", "90d", "180d", "all") else None
+        period_b = data.get("period_b_key") if data.get("period_b_key") in ("7d", "30d", "90d", "180d", "all") else None
+        focus_camp = data.get("focus_campaign") if data.get("focus_campaign") in camp_list else None
+        wants_creation = bool(data.get("wants_creation", False))
+        topic = data.get("topic")
+
+        return ChatPlan(
+            blocks=blocks,
+            period_key=period,
+            period_b_key=period_b,
+            focus_campaign=focus_camp,
+            wants_creation=wants_creation,
+            topic=topic,
+        )
+
     @staticmethod
     def _parse_copy_json(content: str) -> Optional[Dict[str, Any]]:
         """Extrae el JSON del copy de la respuesta del LLM. Tolera que el modelo
@@ -1018,12 +1112,13 @@ class OpenRouterClient:
         result["description"] = description
         result["welcome_message"] = str(data["welcome_message"])
 
-        suggested_prod = data.get("suggested_product_name")
-        if suggested_prod:
-            from app.services.campaign_chat.slots import sanitize_product_name
-            result["suggested_product_name"] = sanitize_product_name(str(suggested_prod))
-        else:
-            result["suggested_product_name"] = None
+        if "suggested_product_name" in data:
+            suggested_prod = data.get("suggested_product_name")
+            if suggested_prod:
+                from app.services.campaign_chat.slots import sanitize_product_name
+                result["suggested_product_name"] = sanitize_product_name(str(suggested_prod))
+            else:
+                result["suggested_product_name"] = None
 
         return result
 

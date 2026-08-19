@@ -290,3 +290,24 @@ async def test_period_is_taken_only_from_the_closed_enum(monkeypatch):
     assert await OpenRouterClient().classify_chat_question(
         _org(), "cuanto gaste?", _TOPICS, periods=["7d", "30d"],
     ) == ("SPEND", None)
+
+
+@pytest.mark.asyncio
+async def test_plan_chat_request_returns_valid_blocks(monkeypatch):
+    _key_env(monkeypatch)
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({
+            "blocks": ["kpis", "ranking", "invalid_block"],
+            "period_key": "30d",
+            "period_b_key": "90d",
+            "wants_creation": False,
+        }))
+    ))
+    plan = await OpenRouterClient().plan_chat_request(
+        _org(), "comparame el gasto y las mejores campañas de julio vs agosto",
+        available_campaigns=["Camp1", "Camp2"],
+    )
+    assert plan.blocks == ["kpis", "ranking"]
+    assert plan.period_key == "30d"
+    assert plan.period_b_key == "90d"
+    assert plan.wants_creation is False

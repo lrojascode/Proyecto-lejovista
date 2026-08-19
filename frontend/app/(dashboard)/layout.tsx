@@ -133,6 +133,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const menuItems = [
     { name: "Resumen", path: "/", icon: GridIcon },
     { name: "Campañas", path: "/campaigns", icon: TargetIcon },
+    { name: "Chat Analista", path: "/chat", icon: SparkleIcon },
     { name: "Reporte", path: "/reporte", icon: DocIcon },
     { name: "Diagnósticos IA", path: "/diagnostics", icon: SparkleIcon },
     { name: "Acciones Sugeridas", path: "/actions", icon: BoltIcon },

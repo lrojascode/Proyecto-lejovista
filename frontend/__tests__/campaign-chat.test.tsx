@@ -49,7 +49,7 @@ const reviewCard = {
 
 function baseSession(overrides: any = {}) {
   return {
-    id: 'session-1', state: 'ASK_GOAL', status: 'OPEN', ad_account_id: 'acc-1', draft_id: null,
+    id: 'session-1', state: 'ASK_GOAL', status: 'OPEN', mode: 'BUILD', ad_account_id: 'acc-1', draft_id: null,
     slots: {}, messages: [textMsg('¡Hola! ¿Qué querés promocionar?')],
     created_at: '2026-01-01T00:00:00', updated_at: '2026-01-01T00:00:00',
     ...overrides,
@@ -85,7 +85,7 @@ describe('Campaign chat page', () => {
     await waitFor(() => {
       expect(screen.getByText(/¿Qué querés promocionar\?/i)).toBeInTheDocument()
     })
-    expect(api.startCampaignChat).toHaveBeenCalledWith('acc-1')
+    expect(api.startCampaignChat).toHaveBeenCalledWith('acc-1', 'BUILD')
   })
 
   it('Aceptar en la tarjeta de revisión llama a decideCampaignChatCard con accept', async () => {
@@ -165,7 +165,7 @@ describe('Campaign chat — sesión por cuenta y chat nuevo', () => {
 
     render(<CampaignChatPage />)
 
-    await waitFor(() => expect(api.startCampaignChat).toHaveBeenCalledWith('acc-1'))
+    await waitFor(() => expect(api.startCampaignChat).toHaveBeenCalledWith('acc-1', 'BUILD'))
   })
 
   it('reusa la sesión guardada cuando sí es de la cuenta activa', async () => {

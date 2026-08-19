@@ -42,6 +42,7 @@ from app.services.campaign_preflight import CampaignPreflight
 from app.services.campaign_proposal import build_campaign_proposal
 from app.services.campaign_risk import assess_campaign_risk
 from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
+from app.utils.security import has_role
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +78,11 @@ class ChatSessionNotFoundError(Exception):
 # --- Creación de sesión ---
 
 async def create_session(
-    db: AsyncSession, current_user: User, ad_account_id: Optional[str]
+    db: AsyncSession, current_user: User, ad_account_id: Optional[str], mode: str = "BUILD"
 ) -> CampaignChatSession:
     if not ad_account_id:
         raise ChatGuardError(
-            "No hay ninguna cuenta de anuncios seleccionada. Elegí una cuenta antes de crear una campaña."
+            "No hay ninguna cuenta de anuncios seleccionada. Elegí una cuenta antes de continuar."
         )
 
     q = select(AdAccount).where(
@@ -92,6 +93,25 @@ async def create_session(
     ad_account = (await db.execute(q)).scalar_one_or_none()
     if not ad_account:
         raise ChatGuardError("AdAccount no encontrada para esta organización.")
+
+    if mode == "ASK":
+        session = CampaignChatSession(
+            organization_id=current_user.organization_id,
+            created_by_user_id=current_user.id,
+            ad_account_id=ad_account.id,
+            state="BROWSING",
+            status="OPEN",
+            mode="ASK",
+            slots_json={"_origin_mode": "ASK"},
+            messages_json=[cards.text_message(
+                "¡Hola! Soy tu analista de Meta Ads. ¿Qué querés saber sobre el rendimiento de tu cuenta?",
+                quick_replies=["¿Cómo vengo este mes?", "¿Cuál campaña rinde mejor?", "¿Dónde estoy perdiendo plata?"]
+            )],
+        )
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+        return session
 
     if await cap_reached(db, current_user.organization_id, ad_account):
         org = await db.get(Organization, current_user.organization_id)
@@ -114,6 +134,7 @@ async def create_session(
         ad_account_id=ad_account.id,
         state="ASK_GOAL",
         status="OPEN",
+        mode="BUILD",
         slots_json={"page_id": page.external_page_id, "whatsapp_number": page.whatsapp_number},
         messages_json=[cards.text_message(cards.GREETING_TEXT)],
     )
@@ -215,6 +236,7 @@ def session_to_dict(session: CampaignChatSession, messages: Optional[List[Dict[s
         "id": session.id,
         "state": session.state,
         "status": session.status,
+        "mode": session.mode or "BUILD",
         "ad_account_id": session.ad_account_id,
         "draft_id": session.draft_id,
         "slots": slots,
@@ -236,6 +258,7 @@ def _facts(session: CampaignChatSession) -> SessionFacts:
         has_proposal=session.proposal_json is not None,
         proposal_accepted=bool(proposal.get("_accepted")),
         draft_id=session.draft_id,
+        mode=session.mode or "BUILD",
     )
 
 
@@ -445,6 +468,12 @@ def _build_create_request(session: CampaignChatSession) -> CampaignCreateRequest
 async def _handle_accept_risk(
     db: AsyncSession, current_user: User, session: CampaignChatSession, messages: List[Dict[str, Any]]
 ) -> None:
+    if not await has_role(db, current_user, "OPERATOR"):
+        messages.append(cards.build_error_message(
+            "FORBIDDEN", "Esta acción requiere el rol OPERATOR o superior en la organización."
+        ))
+        return
+
     if session.draft_id:
         # Idempotencia: ya se creó (doble clic o reintento de red). No se
         # vuelve a llamar a start_campaign_creation.
@@ -707,6 +736,39 @@ async def _handle_text(
     is_gate = session.state in GATE_STATES
     result = extraction.extract_message(text, state=session.state, is_gate=is_gate)
 
+    slots = dict(session.slots_json or {})
+    if slots.get("_pending_escalation"):
+        t_clean = text.lower()
+        if result.intent == "accept" or any(w in t_clean for w in ("si", "sí", "dale", "armar", "crear", "adelante", "armemos")):
+            if not await has_role(db, current_user, "OPERATOR"):
+                messages.append(cards.text_message("Para armar y publicar campañas necesitás el rol de Operador o Administrador en la organización."))
+                slots.pop("_pending_escalation", None)
+                session.slots_json = slots
+                return
+            ad_acc = await db.get(AdAccount, session.ad_account_id)
+            page, err = await resolve_destination(db, ad_acc, current_user.organization_id)
+            if page is None:
+                messages.append(cards.text_message(err or cards.GUARD_NO_PAGE_TEXT))
+                slots.pop("_pending_escalation", None)
+                session.slots_json = slots
+                return
+            session.mode = "BUILD"
+            slots.pop("_pending_escalation", None)
+            slots["page_id"] = page.external_page_id
+            slots["whatsapp_number"] = page.whatsapp_number
+            session.slots_json = slots
+            session.state = next_state(_facts(session))
+            messages.append(cards.text_message("¡Excelente! Vamos a armar la campaña."))
+            pendiente = _pending_prompt_for_state(session.state)
+            if pendiente:
+                messages.append(cards.text_message(pendiente))
+            return
+        else:
+            slots.pop("_pending_escalation", None)
+            session.slots_json = slots
+            messages.append(cards.text_message("Entendido, seguimos consultando métricas. ¿Qué otra duda tenés?"))
+            return
+
     # Una pregunta reconocida por regex se responde con datos reales sin gastar
     # un token (CH-6). Si ningún regex la reconoce, recién ahí entra el LLM a
     # elegir el tema — antes se rechazaba de una, y eso descartaba preguntas
@@ -720,6 +782,18 @@ async def _handle_text(
     if result.intent == "off_topic":
         await _handle_off_topic(db, current_user, session, text, messages)
         return
+
+    if session.mode == "ASK" and (session.state == "BROWSING"):
+        if result.intent in ("provide_info", "change") and not result.question_topic:
+            slots["_pending_escalation"] = True
+            if result.goal_text:
+                slots["goal_text"] = result.goal_text
+            session.slots_json = slots
+            messages.append(cards.text_message(
+                "¿Querés que armemos una campaña para promocionar esto?",
+                quick_replies=["Sí, armemos la campaña", "No, solo estoy consultando"]
+            ))
+            return
 
     if result.intent == "unclear":
         llm_result = await _try_llm_extraction(db, current_user, session, text)

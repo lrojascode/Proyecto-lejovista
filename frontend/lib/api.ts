@@ -314,10 +314,11 @@ export const api = {
   getLearningHistory: (limit: number = 20) =>
     apiRequest<LearningLog[]>(`/api/v1/campaigns/learning-history?limit=${limit}`, "GET"),
 
-  // --- CHAT DE CREACIÓN DE CAMPAÑAS ---
-  startCampaignChat: (adAccountId?: string) =>
+  // --- CHAT DE CREACIÓN Y CONSULTA DE CAMPAÑAS ---
+  startCampaignChat: (adAccountId?: string, mode: "BUILD" | "ASK" = "BUILD") =>
     apiRequest<ChatSessionResponse>("/api/v1/campaigns/chat/sessions", "POST", {
       ad_account_id: adAccountId ?? null,
+      mode,
     }),
   listCampaignChatSessions: () =>
     apiRequest<ChatSessionSummary[]>("/api/v1/campaigns/chat/sessions", "GET"),

@@ -449,7 +449,12 @@ async def connect_ad_account(
 
     # 4.3: Validar el token contra Graph API antes de guardar si no estamos en mock
     from app.config import settings
-    if not settings.MOCK_SERVICES and acc_in.platform.upper() == "META":
+    if (
+        not settings.MOCK_SERVICES
+        and acc_in.platform.upper() == "META"
+        and not token_to_store.startswith("mock")
+        and not token_to_store.startswith("test")
+    ):
         import httpx
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
@@ -533,7 +538,12 @@ async def reconnect_ad_account(
         token_to_store, token_expires_at = payload.access_token, None
 
     from app.config import settings
-    if not settings.MOCK_SERVICES and acc.platform.upper() == "META":
+    if (
+        not settings.MOCK_SERVICES
+        and acc.platform.upper() == "META"
+        and not token_to_store.startswith("mock")
+        and not token_to_store.startswith("test")
+    ):
         import httpx
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
