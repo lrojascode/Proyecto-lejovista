@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
@@ -326,8 +328,10 @@ export default function Diagnostics() {
                       </span>
                     )}
                   </h3>
-                  <div style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.7", whiteSpace: "pre-line" }}>
-                    {briefData.narrative ? briefData.narrative : (
+                  <div className="narrative-content" style={{ fontSize: "0.95rem", color: "var(--text-primary)", lineHeight: "1.7" }}>
+                    {briefData.narrative ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{briefData.narrative}</ReactMarkdown>
+                    ) : (
                       <span style={{ color: "var(--text-secondary)" }}>
                         La narrativa todavía no se generó. Presiona “Ejecutar Diagnóstico IA” para generarla en segundo plano y recarga en unos minutos.
                       </span>
