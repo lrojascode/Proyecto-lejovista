@@ -25,7 +25,9 @@ async def test_resolve_facts_kpis_and_calculator(mocker):
     )
     mocker.patch("app.services.campaign_chat.facts.get_report", return_value={})
 
-    facts, canonical = await resolve_facts(None, "org_1", _acc(), "SPEND", window_days=30)
+    from app.services.ai.llm import ChatPlan
+    plan = ChatPlan(topic="SPEND", blocks=["kpis", "account"])
+    facts, canonical = await resolve_facts(None, "org_1", _acc(), plan, window_days=30)
     
     # Verificaciones de bloques
     assert "kpis_del_periodo" in facts

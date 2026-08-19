@@ -57,9 +57,7 @@ _NEEDS_KPIS = {"SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE"}
 _NEEDS_REPORT = {
     "BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "ALERTS",
     "RECOMMENDATIONS", "AUDIENCE", "CTR", "SUMMARY", "CPL", "BUDGET_ADVICE",
-    # SPEND lo usa solo para el tope de gasto de la cuenta, que es un dato de
-    # la cuenta (no de la ventana) y por lo tanto no arrastra el desfase.
-    "SPEND",
+    "REACH", "SPEND_CAP", "SPEND",
 }
 
 # Forma de pregunta: abre con "¿", cierra con "?", o arranca con una palabra
@@ -92,12 +90,18 @@ _TOPIC_PATTERNS: List[tuple] = [
     ("BUDGET_ADVICE", re.compile(
         r"cuanto (deberia|tengo que|conviene|deberia de)? ?(invertir|gastar|poner|meter)|"
         r"presupuesto (recomendado|ideal|sugerido)|cuanto invierto|cuanto pongo", re.IGNORECASE)),
+    ("SPEND_CAP", re.compile(
+        r"tope de gasto|limite de gasto|limite de la cuenta|saldo restante|tope restante|"
+        r"cuanto me queda|cuanto saldo", re.IGNORECASE)),
     ("SPEND", re.compile(
         r"cuanto (gaste|gastamos|llevo gastado|he gastado|invert)|\bgasto\b|\bgastos\b|"
         r"\binversion\b|cuanto va|cuanto llevo", re.IGNORECASE)),
+    ("REACH", re.compile(
+        r"\balcance\b|personas alcanzadas|cuanta gente|a cuanta gente|a cuantas personas|"
+        r"impresiones|frecuencia|a cuantos llegue|a cuanta gente le llegue", re.IGNORECASE)),
     ("LEADS", re.compile(
         r"\bleads?\b|conversacion|cuantos me escrib|cuantos mensajes|cuantos contactos|"
-        r"\bclientes\b|cuanta gente", re.IGNORECASE)),
+        r"\bclientes\b", re.IGNORECASE)),
     ("CTR", re.compile(r"\bctr\b|\bclics?\b|\bclicks?\b|tasa de clic", re.IGNORECASE)),
     ("ALERTS", re.compile(
         r"\balertas?\b|\bproblemas?\b|que esta mal|algo mal|hay algo que|"
@@ -134,7 +138,9 @@ TOPIC_DESCRIPTIONS: Dict[str, str] = {
     "BEST_CAMPAIGN": "cuál campaña rinde mejor",
     "WORST_CAMPAIGN": "cuál campaña rinde peor o está fallando",
     "BUDGET_ADVICE": "cuánto conviene invertir",
+    "SPEND_CAP": "tope o límite de gasto de la cuenta y saldo restante",
     "SPEND": "cuánto se gastó / la inversión hecha",
+    "REACH": "alcance, personas alcanzadas, impresiones o frecuencia",
     "LEADS": "cuántos leads, conversaciones, mensajes o contactos llegaron",
     "CTR": "clics, CTR o tasa de clics",
     "ALERTS": "si hay algo mal, problemas o alertas en la cuenta",
@@ -223,11 +229,6 @@ def _answer_spend(period: Period, kpis: Dict[str, Any], report: Optional[Dict[st
     linea = f"En {period.label} llevás {_money(actual.get('spend'))} de inversión."
     if delta is not None:
         linea += f" Eso es {_pct(delta)} respecto del período anterior."
-    cuenta = (report or {}).get("account") or {}
-    cap = cuenta.get("spend_cap") or 0
-    if cap > 0:
-        restante = cap - (cuenta.get("amount_spent") or 0)
-        linea += f"\n\nTu tope de gasto en la cuenta es {_money(cap)} y te quedan {_money(restante)}."
     return linea
 
 
@@ -408,6 +409,24 @@ async def _answer_destination(db: AsyncSession, organization_id: str, slots: Dic
     )
 
 
+def _answer_reach(period: Period, report: Dict[str, Any]) -> str:
+    kpis = (report or {}).get("kpis") or {}
+    reach = kpis.get("total_reach", 0)
+    impr = kpis.get("total_impressions") or sum(c.get("impressions", 0) for c in ((report or {}).get("campaigns") or []))
+    freq = (impr / reach) if reach else 0
+    return f"En {period.label} alcanzaste a {reach:,} personas con {impr:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", ".")
+
+
+def _answer_spend_cap(period: Period, report: Dict[str, Any]) -> str:
+    acc = (report or {}).get("account") or {}
+    cap = acc.get("spend_cap", 0)
+    spent = acc.get("amount_spent", 0)
+    remaining = max(0, cap - spent) if cap else 0
+    if cap:
+        return f"Tu tope de gasto en la cuenta es {_money(cap)} y te quedan {_money(remaining)} disponibles."
+    return "No tenés un tope de gasto configurado en Meta Ads."
+
+
 # Respuestas que combinan KPIs (fuente del dashboard) con el reporte.
 _KPI_ANSWERS = {
     "SPEND": _answer_spend,
@@ -422,6 +441,8 @@ _REPORT_ANSWERS = {
     "BEST_CAMPAIGN": _answer_best_campaign,
     "WORST_CAMPAIGN": _answer_worst_campaign,
     "CTR": _answer_ctr,
+    "REACH": _answer_reach,
+    "SPEND_CAP": _answer_spend_cap,
     "CAMPAIGNS_OVERVIEW": _answer_campaigns_overview,
     "ALERTS": _answer_alerts,
     "RECOMMENDATIONS": _answer_recommendations,

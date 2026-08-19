@@ -313,6 +313,13 @@ async def test_answer_spend_uses_real_kpis(_mock_report):
     out = await _answer(None, "org", _acc(), "SPEND", {})
     assert "S/. 300.00" in out
     assert "+10.0%" in out
+
+
+@pytest.mark.asyncio
+async def test_answer_spend_cap_uses_real_account_data(_mock_report):
+    _mock_report(_fake_report())
+    out = await _answer(None, "org", _acc(), "SPEND_CAP", {})
+    assert "S/. 1000.00" in out
     assert "S/. 600.00" in out  # tope 1000 - gastado 400 = restante
 
 
@@ -449,3 +456,25 @@ def test_llm_catalog_matches_the_topics_the_code_can_answer():
     assert {t for t, _ in _TOPIC_PATTERNS} == set(TOPIC_DESCRIPTIONS)
     estaticos = {"HOW_IT_WORKS", "WHY_PAUSED", "DESTINATION"}
     assert set(TOPIC_DESCRIPTIONS) == estaticos | set(_KPI_ANSWERS) | set(_REPORT_ANSWERS)
+
+
+@pytest.mark.asyncio
+async def test_h4_reach_question_disambiguated_from_leads(_mock_report):
+    """H4: '¿a cuánta gente le llegué?' debe clasificar como REACH y responder alcance, no leads."""
+    assert questions.classify_question("¿A cuánta gente le llegué en los últimos 30 días?") == "REACH"
+    _mock_report({"campaigns": [], "kpis": {"total_reach": 15400, "total_impressions": 30800, "avg_ctr": 2.1}})
+    out = await _answer(None, "org", _acc(), "REACH", {})
+    assert "15.400 personas" in out
+    assert "30.800 impresiones" in out
+    assert "conversaciones" not in out
+
+
+@pytest.mark.asyncio
+async def test_h4_spend_without_spend_cap_is_clean(_mock_report):
+    """H4: '¿cuánto gasté?' en cuenta sin spend_cap no menciona topes de gasto."""
+    acc_no_cap = types.SimpleNamespace(id="acc_no_cap", name="Cuenta Sin Tope", spend_cap=0.0, amount_spent=250.0, status="ACTIVE")
+    _mock_report(_fake_report())
+    out = await _answer(None, "org", acc_no_cap, "SPEND", {})
+    assert "S/. 300.00" in out
+    assert "tope" not in out.lower()
+    assert "restante" not in out.lower()

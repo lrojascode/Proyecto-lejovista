@@ -39,6 +39,17 @@ BLOCK_PRIORITY: List[str] = [
     "destination",
 ]
 
+BLOCK_DESCRIPTIONS: Dict[str, str] = {
+    "kpis": "métricas clave: inversión, conversaciones, costo por lead y variaciones",
+    "reach": "alcance de personas, impresiones, frecuencia y CPM",
+    "ranking": "ranking de campañas ordenadas por rendimiento",
+    "account": "datos de la cuenta publicitaria, estado, tope de gasto y saldo restante",
+    "alerts": "alertas y desvíos detectados en la cuenta",
+    "recommendations": "sugerencias y recomendaciones optimizadas",
+    "breakdowns": "desglose por ubicación/placement y datos demográficos",
+    "destination": "página de Facebook y número de WhatsApp de destino",
+}
+
 def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
     """Verifica si anadir block_dict mantiene el total dentro de MAX_GROUNDING_VALUES.
     Si entra, lo anade a facts y devuelve True; si no, lo omite y devuelve False (H7).
@@ -54,13 +65,15 @@ def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_nam
     return False
 
 PLAN_BY_TOPIC: Dict[str, List[str]] = {
-    "SPEND": ["kpis", "account"],
+    "SPEND": ["kpis"],
+    "SPEND_CAP": ["account"],
+    "REACH": ["reach"],
     "LEADS": ["kpis", "ranking"],
     "CPL": ["kpis", "ranking"],
-    "CTR": ["kpis", "ranking"],
+    "CTR": ["reach", "ranking"],
     "BEST_CAMPAIGN": ["ranking", "kpis"],
     "WORST_CAMPAIGN": ["ranking", "kpis"],
-    "CAMPAIGNS_OVERVIEW": ["ranking", "account"],
+    "CAMPAIGNS_OVERVIEW": ["ranking"],
     "ALERTS": ["alerts", "kpis"],
     "RECOMMENDATIONS": ["recommendations", "kpis"],
     "AUDIENCE": ["breakdowns", "ranking"],
@@ -68,7 +81,7 @@ PLAN_BY_TOPIC: Dict[str, List[str]] = {
     "HOW_IT_WORKS": ["destination"],
     "WHY_PAUSED": [],
     "BUDGET_ADVICE": ["kpis", "account", "recommendations"],
-    "SUMMARY": ["kpis", "ranking", "alerts", "recommendations"],
+    "SUMMARY": ["kpis", "reach", "ranking", "alerts", "recommendations"],
 }
 
 
@@ -115,17 +128,19 @@ async def resolve_facts(
 
     # 3. Traer datos de reporte (cacheado) y KPIs si son necesarios
     report = None
-    if any(b in ("ranking", "breakdowns", "alerts", "recommendations", "account", "creative") for b in blocks) or topic in (
-        "BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "ALERTS", "RECOMMENDATIONS", "AUDIENCE", "CTR", "SUMMARY", "CPL", "BUDGET_ADVICE", "SPEND"
+    if any(b in ("ranking", "breakdowns", "alerts", "recommendations", "account", "creative", "reach") for b in blocks) or topic in (
+        "BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "ALERTS", "RECOMMENDATIONS", "AUDIENCE", "CTR", "SUMMARY", "CPL", "BUDGET_ADVICE", "REACH", "SPEND_CAP"
     ):
         report = await get_report(db, ad_account, effective_days)
 
     # Ordenar los bloques a procesar según BLOCK_PRIORITY (H7)
     priority_map = {b: i for i, b in enumerate(BLOCK_PRIORITY)}
     active_blocks = set(blocks)
-    if topic in ("SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE", "CTR", "BEST_CAMPAIGN", "WORST_CAMPAIGN"):
+    if topic in ("SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE", "BEST_CAMPAIGN", "WORST_CAMPAIGN"):
         active_blocks.add("kpis")
-    if topic in ("BUDGET_ADVICE", "CAMPAIGNS_OVERVIEW"):
+    if topic in ("REACH", "CTR", "SUMMARY"):
+        active_blocks.add("reach")
+    if topic in ("SPEND_CAP", "BUDGET_ADVICE"):
         active_blocks.add("account")
     if topic in ("BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "LEADS", "CPL", "CTR", "SUMMARY"):
         active_blocks.add("ranking")
@@ -166,6 +181,28 @@ async def resolve_facts(
                     }
                 }
                 _safe_add_block(facts, kpi_dict, "kpis")
+
+        elif b == "reach" and report:
+            if "alcance" not in facts:
+                rep_kpis = report.get("kpis", {})
+                camps = report.get("campaigns", [])
+                reach_val = int(rep_kpis.get("total_reach", 0))
+                impressions_val = int(rep_kpis.get("total_impressions") or sum(c.get("impressions", 0) for c in camps))
+                spend_val = float(rep_kpis.get("total_spend", 0.0))
+                avg_ctr = float(rep_kpis.get("avg_ctr", 0.0))
+                freq = round(impressions_val / max(reach_val, 1), 2) if reach_val > 0 else 0.0
+                cpm = round((spend_val / max(impressions_val, 1)) * 1000, 2) if impressions_val > 0 else 0.0
+
+                reach_dict = {
+                    "alcance": {
+                        "total_personas": reach_val,
+                        "impresiones": impressions_val,
+                        "frecuencia": freq,
+                        "cpm": cpm,
+                        "ctr_promedio_pct": avg_ctr,
+                    }
+                }
+                _safe_add_block(facts, reach_dict, "reach")
 
         elif b == "account":
             if "account" not in facts:
@@ -262,27 +299,59 @@ def narrate_facts(facts: Dict[str, Any], topic: str, ad_account: AdAccount) -> s
     if topic == "WHY_PAUSED":
         return questions.WHY_PAUSED_TEXT
 
+    if topic == "SPEND_CAP":
+        if acc.get("spend_cap", 0) > 0:
+            return f"Tu tope de gasto en la cuenta es S/. {acc['spend_cap']:.2f} y te quedan S/. {acc['tope_restante']:.2f} disponibles."
+        return f"Tu cuenta {ad_account.name} no tiene un tope de gasto (spend cap) configurado en Meta Ads."
+
     if topic == "SPEND":
         spend = kpis.get("spend", 0.0)
-        delta = kpis.get("delta_spend_pct", 0.0)
-        delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta != 0 else ""
+        convs = kpis.get("conversations", 0)
+        if not spend and not convs:
+            return questions.NO_DATA_TEXT
+        delta = kpis.get("delta_spend_pct")
+        delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
         text = f"En {ventana} llevás S/. {spend:.2f} de inversión{delta_str}."
-        if acc.get("spend_cap", 0) > 0:
+        if "account" in facts and acc.get("spend_cap", 0) > 0:
             text += f" Tu tope de gasto en la cuenta es S/. {acc['spend_cap']:.2f} y te quedan S/. {acc['tope_restante']:.2f}."
         return text
 
+    if topic == "REACH":
+        alc = facts.get("alcance", {})
+        personas = alc.get("total_personas", 0)
+        impresiones = alc.get("impresiones", 0)
+        if not personas and not impresiones:
+            return questions.NO_DATA_TEXT
+        freq = alc.get("frecuencia", 0.0)
+        return f"En {ventana} alcanzaste a {personas:,} personas con {impresiones:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", ".")
+
+    if topic == "CTR":
+        alc = facts.get("alcance", {})
+        personas = alc.get("total_personas", 0)
+        impresiones = alc.get("impresiones", 0)
+        if not personas and not impresiones:
+            return questions.NO_DATA_TEXT
+        ctr = alc.get("ctr_promedio_pct", 0.0)
+        return f"Tu CTR promedio es {ctr:.2f}% en {ventana}, sobre un alcance de {personas:,} personas.".replace(",", ".")
+
     if topic == "LEADS":
         convs = kpis.get("conversations", 0)
-        delta = kpis.get("delta_conversations_pct", 0.0)
-        delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta != 0 else ""
+        spend = kpis.get("spend", 0.0)
+        if not spend and not convs:
+            return questions.NO_DATA_TEXT
+        delta = kpis.get("delta_conversations_pct")
+        delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
         camps = facts.get("campaigns", [])
         top_str = f" La que más generó fue {camps[0]['name']} con {camps[0]['conversations']} contactos." if camps else ""
         return f"En {ventana} lograste {convs} conversaciones iniciadas{delta_str}.{top_str}"
 
     if topic == "CPL":
+        convs = kpis.get("conversations", 0)
+        if not convs:
+            return f"Todavía no hay conversaciones en {ventana}, así que no hay un costo por lead que calcular."
         cpl = kpis.get("cost_per_conv", 0.0)
-        delta = kpis.get("delta_cpl_pct", 0.0)
-        delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta != 0 else ""
+        delta = kpis.get("delta_cpl_pct")
+        delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
         camps = facts.get("campaigns", [])
         best_cpl = camps[0] if camps else None
         best_str = f" La más eficiente es {best_cpl['name']} con S/. {best_cpl['cost_per_conv']:.2f} por lead." if best_cpl else ""
