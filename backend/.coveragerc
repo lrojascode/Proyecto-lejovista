@@ -1,0 +1,11 @@
+# Configuración de cobertura del backend.
+#
+# `concurrency` es lo importante: SQLAlchemy en modo asyncio ejecuta el cuerpo de
+# las corrutinas dentro de greenlets (`greenlet_spawn`), y el trazador por defecto
+# de coverage no los sigue. Sin esta línea, el cuerpo de casi todos los endpoints
+# `async def` se reportaba como NO cubierto aunque los tests lo ejecutaran: medía
+# ~79.7% con la suite entera en verde, y agregar tests nuevos no movía la aguja
+# porque el problema era de medición, no de cobertura real.
+[run]
+concurrency = greenlet,thread
+source = app

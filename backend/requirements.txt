@@ -2,6 +2,9 @@ fastapi>=0.110.0
 uvicorn>=0.28.0
 sqlalchemy>=2.0.28
 asyncpg>=0.29.0
+# Lo usa SQLAlchemy async y, desde .coveragerc, el trazador de coverage
+# (concurrency = greenlet). Declarado explícito por ser dependencia directa.
+greenlet>=3.0.0
 pydantic>=2.6.4
 pydantic-settings>=2.2.1
 celery>=5.3.6

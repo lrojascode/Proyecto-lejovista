@@ -135,8 +135,27 @@ app.include_router(ws_router) # Not prefixed with api/v1 to keep ws://host/ws/
 # Servir archivos estáticos subidos (/media)
 import os
 from fastapi.staticfiles import StaticFiles
-os.makedirs(settings.MEDIA_ROOT, exist_ok=True)
-app.mount("/media", StaticFiles(directory=settings.MEDIA_ROOT), name="media")
+
+# Solo los logos son públicos: el login los necesita ANTES de autenticar.
+# MEDIA_ROOT guarda además los creativos de campaña de cada organización
+# (MEDIA_ROOT/{org_id}/{uuid}.ext), así que montarlo entero dejaba las imágenes y
+# videos de cualquier tenant accesibles sin autenticación. Se monta solo el
+# subdirectorio de logos, que es el único que la app referencia por HTTP
+# (`/media/logos/...`, ver POST /organizations/my/logo).
+_LOGOS_DIR = os.path.join(settings.MEDIA_ROOT, "logos")
+try:
+    os.makedirs(_LOGOS_DIR, exist_ok=True)
+except OSError:
+    # Crear el directorio no puede tumbar el import: en CI MEDIA_ROOT conserva el
+    # default de producción (/app/media) y el runner no puede escribir en /app.
+    # Con check_dir=False el mount se registra igual y responde 404 hasta que el
+    # directorio exista.
+    logger.warning("No se pudo crear el directorio de logos %s", _LOGOS_DIR)
+app.mount(
+    "/media/logos",
+    StaticFiles(directory=_LOGOS_DIR, check_dir=False),
+    name="media-logos",
+)
 
 @app.get("/")
 def read_root():

@@ -89,3 +89,34 @@ async def test_ai_thresholds_api_lifecycle_and_validation(async_client: AsyncCli
     assert updated["thresholds"]["cpl_critical_multiplier"] == 1.5
     assert updated["thresholds"]["target_cpl_fallback"] == 5.0
     assert updated["overrides"]["cpl_critical_multiplier"] == 1.5
+
+
+@pytest.mark.asyncio
+async def test_default_status_no_es_overrideable_por_tenant(async_client: AsyncClient):
+    """La regla de oro del playbook: toda campaña nace PAUSED y la activación es
+    manual. Un tenant no puede desactivarla por configuración — el endpoint
+    descarta `default_status`/`forbidden_status` en silencio en vez de guardarlos.
+    """
+    headers = await _signup_admin(async_client, "org-regla-de-oro")
+
+    res = await async_client.put(
+        "/api/v1/organizations/my/campaign-rules",
+        json={"overrides": {
+            "default_status": "ACTIVE",
+            "forbidden_status": "PAUSED",
+            "max_campaigns_per_window": 20,
+        }},
+        headers=headers,
+    )
+    assert res.status_code == 200
+    body = res.json()
+
+    # Las dos claves prohibidas no se guardaron...
+    assert "default_status" not in body["overrides"]
+    assert "forbidden_status" not in body["overrides"]
+    # ...y las reglas efectivas siguen creando en PAUSED.
+    assert body["rules"]["default_status"] == "PAUSED"
+    assert body["rules"]["forbidden_status"] == "ACTIVE"
+    # El override legítimo del mismo payload sí se aplicó.
+    assert body["overrides"]["max_campaigns_per_window"] == 20
+    assert body["rules"]["max_campaigns_per_window"] == 20

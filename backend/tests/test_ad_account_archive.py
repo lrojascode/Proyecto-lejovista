@@ -125,3 +125,91 @@ async def test_archived_account_excluded_from_single_account_auto_select(
     )).scalars().all()
     assert len(accounts) == 1
     assert accounts[0].id == active_id
+
+
+# --- Eliminación definitiva (DELETE) ---------------------------------------
+# El borrado duro llegó con el panel de "cuentas archivadas" y no tenía ninguna
+# prueba. Es la única operación irreversible sobre una cuenta: exige que la
+# cuenta esté archivada, respeta el aislamiento por organización, y conserva la
+# auditoría desvinculándola (SET NULL) en vez de borrarla en cascada.
+
+@pytest.mark.asyncio
+async def test_delete_requires_auth(async_client: AsyncClient):
+    res = await async_client.delete("/api/v1/organizations/my/ad-accounts/some-id")
+    assert res.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_rechaza_cuenta_no_archivada(async_client: AsyncClient):
+    """Una cuenta viva no se puede borrar: hay que archivarla antes."""
+    headers, _ = await _signup(async_client, "delete-org-activa")
+    acc_id = await _connect_account(async_client, headers)
+
+    res = await async_client.delete(f"/api/v1/organizations/my/ad-accounts/{acc_id}", headers=headers)
+    assert res.status_code == 400
+    assert "archivadas" in res.json()["detail"]
+
+    # Sigue existiendo
+    res_list = await async_client.get(
+        "/api/v1/organizations/my/ad-accounts?include_archived=true", headers=headers
+    )
+    assert [a["id"] for a in res_list.json()] == [acc_id]
+
+
+@pytest.mark.asyncio
+async def test_delete_aisla_por_organizacion(async_client: AsyncClient):
+    """La cuenta de otra organización responde 404, no 403: no se filtra que exista."""
+    headers_a, _ = await _signup(async_client, "delete-org-a")
+    acc_id = await _connect_account(async_client, headers_a, external_id="act_aaa")
+    await async_client.post(
+        f"/api/v1/organizations/my/ad-accounts/{acc_id}/archive", headers=headers_a
+    )
+
+    headers_b, _ = await _signup(async_client, "delete-org-b")
+    res = await async_client.delete(
+        f"/api/v1/organizations/my/ad-accounts/{acc_id}", headers=headers_b
+    )
+    assert res.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_borra_la_cuenta_y_conserva_la_auditoria(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    """Borrar la cuenta no puede llevarse el registro de llamadas a la API: es
+    auditoría, y `api_call_logs.ad_account_id` es nullable justamente para eso."""
+    from app.models.api_call_log import APICallLog
+
+    headers, _ = await _signup(async_client, "delete-org-audit")
+    acc_id = await _connect_account(async_client, headers, external_id="act_audit")
+
+    log = APICallLog(
+        ad_account_id=acc_id, method="GET", endpoint="act_audit/insights",
+        params={}, status_code=200, response_preview="ok",
+    )
+    db_session.add(log)
+    await db_session.commit()
+    log_id = log.id
+
+    await async_client.post(
+        f"/api/v1/organizations/my/ad-accounts/{acc_id}/archive", headers=headers
+    )
+    res = await async_client.delete(
+        f"/api/v1/organizations/my/ad-accounts/{acc_id}", headers=headers
+    )
+    assert res.status_code == 200
+    assert "eliminada definitivamente" in res.json()["message"]
+
+    # La cuenta ya no está, ni siquiera pidiendo las archivadas.
+    res_list = await async_client.get(
+        "/api/v1/organizations/my/ad-accounts?include_archived=true", headers=headers
+    )
+    assert res_list.json() == []
+
+    # El log sobrevive, desvinculado.
+    db_session.expire_all()
+    superviviente = (
+        await db_session.execute(select(APICallLog).where(APICallLog.id == log_id))
+    ).scalar_one_or_none()
+    assert superviviente is not None
+    assert superviviente.ad_account_id is None

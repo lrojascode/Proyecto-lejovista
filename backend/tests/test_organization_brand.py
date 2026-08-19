@@ -92,3 +92,22 @@ async def test_tenant_brand_public_endpoint_isolation(async_client: AsyncClient,
     res_res = await async_client.get("/api/v1/auth/tenant-brand?slug=api")
     assert res_res.status_code == 200
     assert res_res.json()["name"] == "LejoVista"
+
+
+def test_solo_los_logos_se_sirven_por_http():
+    """MEDIA_ROOT guarda los creativos de campaña de cada organización
+    (MEDIA_ROOT/{org_id}/{uuid}.ext). Montarlo entero en /media los dejaba
+    accesibles sin autenticación y entre tenants; solo el subdirectorio de logos
+    es público, porque el login lo necesita antes de autenticar.
+
+    De paso fija el otro motivo del cambio: el mount ya no depende de poder crear
+    MEDIA_ROOT al importar (en CI apunta a /app y el runner no puede escribir ahí).
+    """
+    from app.main import app
+
+    montajes_media = sorted(
+        r.path for r in app.routes if getattr(r, "path", "").startswith("/media")
+    )
+    assert montajes_media == ["/media/logos"], (
+        f"Se esperaba solo /media/logos montado, hay: {montajes_media}"
+    )
