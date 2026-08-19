@@ -106,6 +106,9 @@ class AdAccountResponse(BaseModel):
     last_sync_error_code: Optional[int] = None
     last_sync_error_detail: Optional[str] = None
     last_synced_at: Optional[datetime] = None
+    token_expires_at: Optional[datetime] = None
+    token_expires_in_days: Optional[int] = None
+    token_warning: Optional[bool] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

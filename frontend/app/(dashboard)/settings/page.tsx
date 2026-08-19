@@ -90,6 +90,7 @@ export default function Settings() {
   const [reconnectLoading, setReconnectLoading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [deleteInputName, setDeleteInputName] = useState("");
+  const [checkingTokenId, setCheckingTokenId] = useState<string | null>(null);
 
   // Equipo e Invitaciones (6.1)
   const [members, setMembers] = useState<OrgMember[]>([]);
@@ -402,6 +403,25 @@ export default function Settings() {
       await fetchData();
     } catch (err: any) {
       setArchiveMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleCheckToken = async (accId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCheckingTokenId(accId);
+    setArchiveMsg("");
+    try {
+      const updated = await api.checkAdAccountToken(accId);
+      setArchiveMsg(
+        updated.token_warning
+          ? `Atención: El token de '${updated.name}' vence en ${updated.token_expires_in_days ?? 0} días.`
+          : `Token de '${updated.name}' verificado y activo (vigencia: ${updated.token_expires_in_days ?? 'OK'} días).`
+      );
+      await fetchData();
+    } catch (err: any) {
+      setArchiveMsg(`Error al verificar token: ${err.message}`);
+    } finally {
+      setCheckingTokenId(null);
     }
   };
 
@@ -1277,15 +1297,27 @@ export default function Settings() {
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                        {acc.status === "EXPIRED" ? (
-                          <span className="badge badge-danger">{badgeIcon("badge-danger")} Token expirado</span>
+                        {acc.status === "EXPIRED" || acc.last_sync_error_code === 190 ? (
+                          <span className="badge badge-danger">{badgeIcon("badge-danger")} Token expirado (190)</span>
+                        ) : acc.token_warning || (acc.token_expires_in_days !== null && acc.token_expires_in_days !== undefined && acc.token_expires_in_days <= 7) ? (
+                          <span className="badge badge-warning">{badgeIcon("badge-warning")} Vence en {acc.token_expires_in_days}d</span>
                         ) : acc.status === "SUSPENDED" ? (
                           <span className="badge badge-warning">{badgeIcon("badge-warning")} Suspendida</span>
                         ) : (
                           <span className="badge badge-success">{badgeIcon("badge-success")} Activo</span>
                         )}
 
-                        {(acc.status === "EXPIRED" || acc.last_sync_error_code === 190) && (
+                        <button
+                          type="button"
+                          className="btn-secondary btn-sm"
+                          disabled={checkingTokenId === acc.id}
+                          onClick={(e) => handleCheckToken(acc.id, e)}
+                          title="Inspeccionar vigencia del token en Meta"
+                        >
+                          {checkingTokenId === acc.id ? "Comprobando..." : "Verificar Token"}
+                        </button>
+
+                        {(acc.status === "EXPIRED" || acc.last_sync_error_code === 190 || acc.token_warning) && (
                           <button
                             type="button"
                             className="btn-primary btn-sm"

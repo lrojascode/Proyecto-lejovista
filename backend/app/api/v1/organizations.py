@@ -241,6 +241,46 @@ async def restore_ad_account(
     await db.refresh(acc)
     return acc
 
+@router.post("/my/ad-accounts/{ad_account_id}/check-token", response_model=AdAccountResponse)
+async def check_ad_account_token(
+    ad_account_id: str,
+    current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db)
+):
+    """Inspecciona el estado y expiración del token de Meta para esta cuenta."""
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Cuenta publicitaria no encontrada.")
+
+    cred = acc.meta_credential
+    if not cred:
+        raise HTTPException(status_code=400, detail="La cuenta no tiene credencial de Meta asociada.")
+
+    raw_token = cred.get_access_token()
+    if not raw_token:
+        raise HTTPException(status_code=400, detail="No hay token de acceso disponible.")
+
+    from app.services.meta_ads.token_inspection import inspect_token_expiration
+    inspection = await inspect_token_expiration(raw_token)
+    if not inspection["is_valid"]:
+        cred.status = "EXPIRED"
+        acc.status = "EXPIRED"
+        acc.last_sync_error_code = 190
+        acc.last_sync_error_detail = inspection["error"] or "Token expirado o revocado."
+    else:
+        expires_at = inspection["expires_at"]
+        cred.token_expires_at = expires_at
+        if acc.status == "EXPIRED":
+            acc.status = "ACTIVE"
+            acc.last_sync_error_code = None
+            acc.last_sync_error_detail = None
+
+    db.add(cred)
+    db.add(acc)
+    await db.commit()
+    await db.refresh(acc)
+    return acc
+
 @router.delete("/my/ad-accounts/{ad_account_id}", response_model=MessageResponse)
 async def delete_ad_account(
     ad_account_id: str,

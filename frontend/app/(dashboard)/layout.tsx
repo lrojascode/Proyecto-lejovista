@@ -47,6 +47,71 @@ function AdAccountSelector() {
   );
 }
 
+function TokenWarningBanner() {
+  const { accounts, activeAdAccountId } = useAdAccount();
+  const activeAccount = accounts.find((a) => a.id === activeAdAccountId);
+
+  if (!activeAccount) return null;
+
+  const isExpired = activeAccount.status === "EXPIRED" || activeAccount.last_sync_error_code === 190;
+  const isExpiringSoon = activeAccount.token_warning || (
+    activeAccount.token_expires_in_days !== null &&
+    activeAccount.token_expires_in_days !== undefined &&
+    activeAccount.token_expires_in_days <= 7
+  );
+
+  if (!isExpired && !isExpiringSoon) return null;
+
+  const days = activeAccount.token_expires_in_days ?? 0;
+
+  return (
+    <div
+      style={{
+        background: isExpired ? "rgba(239, 68, 68, 0.12)" : "rgba(245, 158, 11, 0.12)",
+        border: `1px solid ${isExpired ? "rgba(239, 68, 68, 0.35)" : "rgba(245, 158, 11, 0.35)"}`,
+        color: isExpired ? "#fca5a5" : "#fcd34d",
+        borderRadius: "8px",
+        padding: "12px 16px",
+        marginBottom: "1.5rem",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "1rem",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13.5px" }}>
+        <span style={{ fontSize: "18px" }}>{isExpired ? "🚫" : "⚠️"}</span>
+        <span>
+          {isExpired ? (
+            <>
+              <strong>Token de Meta Expirado:</strong> El token de acceso para la cuenta <strong>{activeAccount.name}</strong> ha expirado. La sincronización y optimización automática están suspendidas.
+            </>
+          ) : (
+            <>
+              <strong>Aviso anticipado de expiración:</strong> El token de acceso de Meta para <strong>{activeAccount.name}</strong> vencerá en <strong>{days} {days === 1 ? "día" : "días"}</strong>. Reconéctalo antes de que venza para evitar interrupciones.
+            </>
+          )}
+        </span>
+      </div>
+      <Link
+        href="/settings"
+        style={{
+          background: isExpired ? "#ef4444" : "#f59e0b",
+          color: "#000",
+          fontWeight: 600,
+          fontSize: "12px",
+          padding: "6px 12px",
+          borderRadius: "6px",
+          textDecoration: "none",
+          whiteSpace: "nowrap",
+        }}
+      >
+        Reconectar en Configuración
+      </Link>
+    </div>
+  );
+}
+
 // Remonta el contenido de la página cuando cambia la cuenta publicitaria activa,
 // para que cada página vuelva a hacer sus fetches con el nuevo header
 // X-Ad-Account-Id (lo lee apiRequest de localStorage). Reemplaza el
@@ -57,6 +122,7 @@ function AccountScopedContent({ children }: { children: React.ReactNode }) {
   const { activeAdAccountId } = useAdAccount();
   return (
     <div key={activeAdAccountId || "none"} style={{ display: "contents" }}>
+      <TokenWarningBanner />
       {children}
     </div>
   );

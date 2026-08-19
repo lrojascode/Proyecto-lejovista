@@ -509,3 +509,18 @@ def archive_old_snapshots_task():
             logger.info(f"Archivado de snapshots completado: {counts}")
 
     run_async(_impl())
+
+
+@celery_app.task(name="app.workers.tasks.check_expiring_tokens_task")
+def check_expiring_tokens_task():
+    """Fase 6.4 (Roadmap 7): Inspecciona tokens de acceso de Meta Ads y emite
+    avisos anticipados (< 7 días) o alertas de expiración vía WebSocket y email.
+    Corre diariamente vía Celery Beat (08:00 Lima)."""
+    async def _impl():
+        from app.services.meta_ads.token_inspection import check_expiring_tokens
+        async with async_session() as db:
+            results = await check_expiring_tokens(db)
+            logger.info(f"Inspección de tokens de Meta completada: {len(results)} cuentas evaluadas.")
+
+    run_async(_impl())
+

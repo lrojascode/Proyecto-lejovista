@@ -42,6 +42,8 @@ _TASK_ROUTES = {
     "app.workers.creation_tasks.*": {"queue": "creation"},
     # Mantenimiento de datos (D-3): sin apuro, va a la cola por defecto.
     "app.workers.tasks.archive_old_snapshots_task": {"queue": "celery"},
+    # Aviso anticipado de expiración de token Meta (Roadmap 7 / Fase 6.4)
+    "app.workers.tasks.check_expiring_tokens_task": {"queue": "sync"},
 }
 
 # Configuración básica
@@ -74,6 +76,12 @@ celery_app.conf.update(
         # deja los snapshots frescos con los que se mide cada campaña creada).
         "daily-campaign-outcomes": {
             "task": "app.workers.tasks.evaluate_campaign_outcomes",
+            "schedule": crontab(hour=8, minute=0),
+            "args": ()
+        },
+        # Roadmap 7 (Fase 6.4): Verificación diaria de expiración de tokens Meta (8:00 AM)
+        "daily-check-expiring-tokens": {
+            "task": "app.workers.tasks.check_expiring_tokens_task",
             "schedule": crontab(hour=8, minute=0),
             "args": ()
         },

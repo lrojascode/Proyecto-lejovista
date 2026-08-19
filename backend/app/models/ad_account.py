@@ -63,6 +63,28 @@ class AdAccount(Base):
             self.meta_credential = MetaCredential(organization_id=self.organization_id)
         self.meta_credential.set_refresh_token(token)
 
+    @property
+    def token_expires_at(self):
+        if self.meta_credential:
+            return self.meta_credential.token_expires_at
+        return None
+
+    @property
+    def token_expires_in_days(self):
+        if self.meta_credential and self.meta_credential.token_expires_at:
+            delta = self.meta_credential.token_expires_at - datetime.utcnow()
+            return max(0, delta.days)
+        return None
+
+    @property
+    def token_warning(self) -> bool:
+        if self.status == "EXPIRED":
+            return True
+        days = self.token_expires_in_days
+        if days is not None and days <= 7:
+            return True
+        return False
+
     __table_args__ = (
         UniqueConstraint("organization_id", "platform", "external_account_id", name="uq_org_platform_acc"),
     )

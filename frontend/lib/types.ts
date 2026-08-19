@@ -36,6 +36,9 @@ export type AdAccount = Schemas["AdAccountResponse"] & {
   last_sync_error_code?: number | null;
   last_sync_error_detail?: string | null;
   last_synced_at?: string | null;
+  token_expires_at?: string | null;
+  token_expires_in_days?: number | null;
+  token_warning?: boolean | null;
 };
 export type MetaPage = Schemas["MetaPageResponse"];
 export type WhatsAppNumber = Schemas["WhatsAppNumberResponse"];

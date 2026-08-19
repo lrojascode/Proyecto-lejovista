@@ -8,9 +8,12 @@ export type AdAccountSummary = {
   name: string;
   external_account_id: string;
   status: string;
-  // Página de Facebook predeterminada para campañas (Settings → Páginas y
-  // WhatsApp); el formulario de creación la preselecciona.
   default_page_id?: string | null;
+  last_sync_error_code?: number | null;
+  last_sync_error_detail?: string | null;
+  token_expires_at?: string | null;
+  token_expires_in_days?: number | null;
+  token_warning?: boolean | null;
 };
 
 interface AdAccountContextType {
