@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
@@ -264,19 +265,6 @@ export default function NewCampaignPage() {
     }
   };
 
-  // D-3: el worker publica `campaign_creation` (READY/FAILED) por WebSocket al
-  // terminar la Saga — antes se ignoraba y solo existía el polling. Al recibirlo,
-  // consultamos el draft de inmediato (fuente de verdad) en vez de esperar el
-  // próximo tick. El polling queda como fallback si el WS está caído.
-  useEffect(() => {
-    if (!lastEvent || lastEvent.event_type !== "campaign_creation") return;
-    if (!draftId || lastEvent.job_id !== draftId) return;
-    if (status !== "polling") return;
-    if (pollTimer.current) clearTimeout(pollTimer.current);
-    pollDraft(draftId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastEvent]);
-
   const pollDraft = (id: string) => {
     pollAttempts.current += 1;
     api.getCampaignDraft(id)
@@ -306,6 +294,19 @@ export default function NewCampaignPage() {
         setStatus("error");
       });
   };
+
+  // D-3: el worker publica `campaign_creation` (READY/FAILED) por WebSocket al
+  // terminar la Saga — antes se ignoraba y solo existía el polling. Al recibirlo,
+  // consultamos el draft de inmediato (fuente de verdad) en vez de esperar el
+  // próximo tick. El polling queda como fallback si el WS está caído.
+  useEffect(() => {
+    if (!lastEvent || lastEvent.event_type !== "campaign_creation") return;
+    if (!draftId || lastEvent.job_id !== draftId) return;
+    if (status !== "polling") return;
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+    pollDraft(draftId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastEvent]);
 
   // Paso 1 (Ajuste 1): valida el formulario y calcula el nivel de riesgo con
   // los valores ACTUALES, sin crear todavía. Muestra la confirmación de riesgo.
@@ -844,9 +845,9 @@ export default function NewCampaignPage() {
                 📆 Días de evaluación recomendados: <strong>{suggestion.analysis.evaluation_window_days}</strong> — deja correr la campaña ese tiempo antes de juzgar su rendimiento.
               </p>
               <p style={{ marginTop: "10px", marginBottom: 0 }}>
-                <a href="/campaigns/learning" style={{ color: "var(--color-signal-teal)", fontSize: "13px" }}>
+                <Link href="/campaigns/learning" style={{ color: "var(--color-signal-teal)", fontSize: "13px" }}>
                   Ver el historial completo de aprendizaje de la IA →
-                </a>
+                </Link>
               </p>
             </div>
           )}

@@ -175,6 +175,68 @@ export default function DashboardPage() {
     }
   }, [lastEvent]);
 
+  // H8: Polling de respaldo para sincronización si el WebSocket se desconecta o no emite
+  useEffect(() => {
+    if (!syncing) return;
+
+    const startTime = Date.now();
+    const MAX_SYNC_TIMEOUT_MS = 180000; // 3 minutos de timeout de seguridad
+
+    const interval = setInterval(async () => {
+      // Timeout de seguridad
+      if (Date.now() - startTime > MAX_SYNC_TIMEOUT_MS) {
+        setSyncing(false);
+        setSyncProgress(null);
+        setSyncError({
+          code: 408,
+          detail: "La sincronización tardó demasiado. Si sigue corriendo en segundo plano, los datos aparecerán al recargar.",
+        });
+        setSyncMessage("Tiempo de espera agotado al sincronizar.");
+        clearInterval(interval);
+        return;
+      }
+
+      try {
+        const statusRes = await api.getSyncStatus();
+        if (!statusRes) return;
+
+        if (statusRes.status === "RUNNING") {
+          if (statusRes.step && statusRes.total_steps) {
+            setSyncProgress({
+              step: statusRes.step,
+              total: statusRes.total_steps,
+              message: statusRes.message || statusRes.step_name || "Sincronizando...",
+            });
+          }
+          if (statusRes.message) {
+            setSyncMessage(statusRes.message);
+          }
+        } else if (statusRes.status === "COMPLETED") {
+          setSyncing(false);
+          setSyncProgress(null);
+          setSyncError(null);
+          const countText = statusRes.records_synced ? ` (${statusRes.records_synced} registros actualizados)` : "";
+          setSyncMessage(`✓ Sincronización completada exitosamente${countText}.`);
+          fetchData();
+          clearInterval(interval);
+        } else if (statusRes.status === "FAILED") {
+          setSyncing(false);
+          setSyncProgress(null);
+          setSyncError({
+            code: statusRes.error_code ?? undefined,
+            detail: statusRes.error_detail || "Error en la sincronización.",
+          });
+          setSyncMessage(statusRes.error_detail || "Error en la sincronización.");
+          clearInterval(interval);
+        }
+      } catch (err) {
+        console.error("Error en polling de sync:", err);
+      }
+    }, 2500);
+
+    return () => clearInterval(interval);
+  }, [syncing]);
+
   const handleSync = async () => {
     setSyncing(true);
     setSyncProgress({ step: 1, total: 5, message: "Encolando sincronización..." });
