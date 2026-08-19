@@ -250,6 +250,7 @@ export const api = {
   connectAdAccount: (data: any) => apiRequest<AdAccount>("/api/v1/organizations/my/ad-accounts", "POST", data),
   archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),
   restoreAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/restore`, "POST"),
+  deleteAdAccount: (id: string) => apiRequest<{ message: string }>(`/api/v1/organizations/my/ad-accounts/${id}`, "DELETE"),
 
   // --- CAMPAIGNS ---
   getRecentCampaigns: () => apiRequest<CampaignSnapshot[]>("/api/v1/campaigns/recent", "GET"),

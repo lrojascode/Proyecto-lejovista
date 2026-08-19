@@ -44,12 +44,21 @@ export default function Settings() {
   const [numberEdits, setNumberEdits] = useState<Record<string, string>>({});
   const [numberSavingId, setNumberSavingId] = useState<string | null>(null);
 
+  // Cuentas archivadas (0.4)
+  const [archivedAccounts, setArchivedAccounts] = useState<AdAccount[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteInputName, setDeleteInputName] = useState("");
+
   const fetchData = async () => {
     try {
       const orgData = await api.getOrg();
-      const accountsData = await api.getAdAccounts(true); // incluye archivadas, para poder restaurarlas
+      const allAccounts = await api.getAdAccounts(true);
+      const activeList = allAccounts.filter((a) => a.status !== "ARCHIVED");
+      const archivedList = allAccounts.filter((a) => a.status === "ARCHIVED");
       setOrg(orgData);
-      setAccounts(accountsData);
+      setAccounts(activeList);
+      setArchivedAccounts(archivedList);
       setMaxBudget(orgData.max_budget);
       setIndustry(orgData.industry || "");
 
@@ -108,6 +117,19 @@ export default function Settings() {
     setArchiveMsg("");
     try {
       await api.restoreAdAccount(accId);
+      await fetchData();
+    } catch (err: any) {
+      setArchiveMsg(`Error: ${err.message}`);
+    }
+  };
+
+  const handleDeleteAccount = async (accId: string) => {
+    setArchiveMsg("");
+    try {
+      await api.deleteAdAccount(accId);
+      setDeleteConfirmId(null);
+      setDeleteInputName("");
+      if (activeAdAccountId === accId) setActiveAdAccountId("");
       await fetchData();
     } catch (err: any) {
       setArchiveMsg(`Error: ${err.message}`);
@@ -356,24 +378,22 @@ export default function Settings() {
               </div>
             )}
             {accounts.length === 0 ? (
-              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No tienes ninguna cuenta conectada.</p>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>No tienes ninguna cuenta activa conectada.</p>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
                 {accounts.map((acc) => {
                   const isActive = acc.id === activeAdAccountId;
-                  const isArchived = acc.status === "ARCHIVED";
                   return (
                     <div
                       key={acc.id}
                       className="card-subtle"
-                      onClick={() => !isArchived && setActiveAdAccountId(acc.id)}
-                      title={isArchived ? undefined : "Establecer como cuenta activa"}
+                      onClick={() => setActiveAdAccountId(acc.id)}
+                      title="Establecer como cuenta activa"
                       style={{
                         display: "flex",
                         justifyContent: "space-between",
                         alignItems: "center",
-                        cursor: isArchived ? "default" : "pointer",
-                        opacity: isArchived ? 0.6 : 1,
+                        cursor: "pointer",
                         borderColor: isActive ? "var(--color-signal-teal)" : undefined,
                         flexWrap: "wrap",
                         gap: "0.75rem",
@@ -396,17 +416,10 @@ export default function Settings() {
                             El token expiró. Reconecta la cuenta abajo con un token nuevo.
                           </p>
                         )}
-                        {isArchived && (
-                          <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "0.35rem" }}>
-                            Archivada — oculta del selector y de "Crear campaña". Su historial se conserva intacto.
-                          </p>
-                        )}
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                        {isArchived ? (
-                          <span className="badge">Archivada</span>
-                        ) : acc.status === "EXPIRED" ? (
+                        {acc.status === "EXPIRED" ? (
                           <span className="badge badge-danger">{badgeIcon("badge-danger")} Token expirado</span>
                         ) : acc.status === "SUSPENDED" ? (
                           <span className="badge badge-warning">{badgeIcon("badge-warning")} Suspendida</span>
@@ -414,15 +427,7 @@ export default function Settings() {
                           <span className="badge badge-success">{badgeIcon("badge-success")} Activo</span>
                         )}
 
-                        {isArchived ? (
-                          <button
-                            type="button"
-                            className="btn-secondary btn-sm"
-                            onClick={(e) => { e.stopPropagation(); handleRestoreAccount(acc.id); }}
-                          >
-                            Restaurar
-                          </button>
-                        ) : confirmArchiveId === acc.id ? (
+                        {confirmArchiveId === acc.id ? (
                           <>
                             <span style={{ fontSize: "12px", color: "var(--color-coral-red)" }}>¿Archivar {acc.name}?</span>
                             <button
@@ -453,6 +458,115 @@ export default function Settings() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Cuentas archivadas (0.4) */}
+            {archivedAccounts.length > 0 && (
+              <div style={{ marginTop: "1.25rem", borderTop: "1px solid var(--color-graphite)", paddingTop: "1rem" }}>
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  onClick={() => setShowArchived(!showArchived)}
+                  style={{ width: "100%", justifyContent: "space-between", display: "flex", alignItems: "center" }}
+                >
+                  <span>Cuentas archivadas ({archivedAccounts.length})</span>
+                  <span>{showArchived ? "▲ Ocultar" : "▼ Ver"}</span>
+                </button>
+
+                {showArchived && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1rem" }}>
+                    {archivedAccounts.map((acc) => {
+                      const isDeleting = deleteConfirmId === acc.id;
+                      return (
+                        <div
+                          key={acc.id}
+                          className="card-subtle"
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "0.5rem",
+                            padding: "0.75rem 1rem",
+                            opacity: 0.85,
+                          }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem" }}>
+                            <div>
+                              <strong style={{ color: "var(--color-paper)", fontWeight: 510, fontSize: "14px" }}>
+                                {acc.name}
+                              </strong>
+                              <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                                Meta Ads ID: <code>{acc.external_account_id}</code> · <span className="badge">Archivada</span>
+                              </p>
+                            </div>
+                            <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                onClick={() => handleRestoreAccount(acc.id)}
+                              >
+                                Restaurar
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-secondary btn-sm"
+                                onClick={() => {
+                                  setDeleteConfirmId(acc.id);
+                                  setDeleteInputName("");
+                                }}
+                                style={{ borderColor: "rgba(235, 87, 87, 0.3)", color: "var(--color-coral-red)" }}
+                              >
+                                Eliminar definitivamente
+                              </button>
+                            </div>
+                          </div>
+
+                          {isDeleting && (
+                            <div style={{
+                              marginTop: "0.5rem",
+                              padding: "0.75rem",
+                              background: "rgba(235, 87, 87, 0.08)",
+                              borderRadius: "6px",
+                              border: "1px solid rgba(235, 87, 87, 0.2)"
+                            }}>
+                              <p style={{ fontSize: "13px", color: "var(--color-coral-red)", marginBottom: "0.5rem" }}>
+                                ⚠️ Esta acción es irreversible y eliminará todo el historial asociado. Escribe <strong>{acc.name}</strong> para confirmar:
+                              </p>
+                              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                                <input
+                                  type="text"
+                                  className="form-input"
+                                  style={{ padding: "4px 8px", fontSize: "13px", maxWidth: "220px" }}
+                                  placeholder={acc.name}
+                                  value={deleteInputName}
+                                  onChange={(e) => setDeleteInputName(e.target.value)}
+                                />
+                                <button
+                                  type="button"
+                                  className="btn-danger btn-sm"
+                                  disabled={deleteInputName !== acc.name}
+                                  onClick={() => handleDeleteAccount(acc.id)}
+                                >
+                                  Confirmar eliminación
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-secondary btn-sm"
+                                  onClick={() => {
+                                    setDeleteConfirmId(null);
+                                    setDeleteInputName("");
+                                  }}
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

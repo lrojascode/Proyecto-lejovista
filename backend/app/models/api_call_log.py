@@ -8,7 +8,7 @@ class APICallLog(Base):
     __tablename__ = "api_call_logs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"), nullable=True)
+    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id", ondelete="SET NULL"), nullable=True)
     method: Mapped[str] = mapped_column(String)  # GET, POST
     endpoint: Mapped[str] = mapped_column(String)
     params: Mapped[dict] = mapped_column(JSON, default=dict)

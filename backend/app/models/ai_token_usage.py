@@ -23,7 +23,7 @@ class AITokenUsage(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
-    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id"), nullable=True, index=True)
+    ad_account_id: Mapped[str] = mapped_column(String, ForeignKey("ad_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Funcionalidad/página que originó la llamada (desglose "por página").
     feature: Mapped[str] = mapped_column(String, index=True)

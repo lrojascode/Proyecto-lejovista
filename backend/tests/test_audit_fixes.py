@@ -1380,3 +1380,71 @@ async def test_superseded_actions_lifecycle(async_client: AsyncClient, db_sessio
     assert history_statuses.get("act-old-prop") == "SUPERSEDED"
 
 
+# --- 0.4: borrado definitivo de cuentas archivadas ---
+@pytest.mark.asyncio
+async def test_delete_archived_ad_account(async_client: AsyncClient, db_session: AsyncSession):
+    from sqlalchemy import select
+    from app.models.api_call_log import APICallLog
+    from app.models.ai_token_usage import AITokenUsage
+    from app.models.account_learning_snapshot import AccountLearningSnapshot
+    from app.models.campaign_learning_log import CampaignLearningLog
+
+    org, acc = await _make_org_and_account(db_session, slug="del-org")
+    await db_session.commit()
+    headers = await _auth_headers_for_org(async_client, db_session, org, "deladmin@example.com")
+
+    # Crear registros en las 4 tablas con FK nullable/SET NULL
+    log = APICallLog(ad_account_id=acc.id, method="GET", endpoint="/test", status_code=200)
+    tok = AITokenUsage(organization_id=org.id, ad_account_id=acc.id, feature="test", provider="openai", model="gpt-4o")
+    snap = AccountLearningSnapshot(organization_id=org.id, ad_account_id=acc.id)
+    clog = CampaignLearningLog(organization_id=org.id, ad_account_id=acc.id)
+    db_session.add_all([log, tok, snap, clog])
+    await db_session.commit()
+
+    log_id = log.id
+    tok_id = tok.id
+    snap_id = snap.id
+    clog_id = clog.id
+    acc_id = acc.id
+
+    # 1. Intentar borrar mientras está ACTIVE -> 400
+    res_active = await async_client.delete(f"/api/v1/organizations/my/ad-accounts/{acc_id}", headers=headers)
+    assert res_active.status_code == 400
+
+    # 2. Archivar la cuenta
+    res_arch = await async_client.post(f"/api/v1/organizations/my/ad-accounts/{acc_id}/archive", headers=headers)
+    assert res_arch.status_code == 200
+
+    # 3. Borrar definitivamente -> 200
+    res_del = await async_client.delete(f"/api/v1/organizations/my/ad-accounts/{acc_id}", headers=headers)
+    assert res_del.status_code == 200
+
+    await db_session.commit()
+
+    # Verificar que la cuenta no existe en DB
+    res_acc = await db_session.execute(
+        select(AdAccount).where(AdAccount.id == acc_id).execution_options(populate_existing=True)
+    )
+    assert res_acc.scalar_one_or_none() is None
+
+    # Verificar que los logs asociados permanecen pero con ad_account_id = None
+    log_db = (await db_session.execute(
+        select(APICallLog).where(APICallLog.id == log_id).execution_options(populate_existing=True)
+    )).scalar_one()
+    tok_db = (await db_session.execute(
+        select(AITokenUsage).where(AITokenUsage.id == tok_id).execution_options(populate_existing=True)
+    )).scalar_one()
+    snap_db = (await db_session.execute(
+        select(AccountLearningSnapshot).where(AccountLearningSnapshot.id == snap_id).execution_options(populate_existing=True)
+    )).scalar_one()
+    clog_db = (await db_session.execute(
+        select(CampaignLearningLog).where(CampaignLearningLog.id == clog_id).execution_options(populate_existing=True)
+    )).scalar_one()
+
+    assert log_db.ad_account_id is None
+    assert tok_db.ad_account_id is None
+    assert snap_db.ad_account_id is None
+    assert clog_db.ad_account_id is None
+
+
+

@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
 from app.models.whatsapp_number import WhatsAppNumber
+from app.models.api_call_log import APICallLog
+from app.models.ai_token_usage import AITokenUsage
+from app.models.account_learning_snapshot import AccountLearningSnapshot
+from app.models.campaign_learning_log import CampaignLearningLog
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, AdAccountCreate, AdAccountResponse,
     AdAccountDefaultPageUpdate, MetaPageResponse, MetaPageWhatsAppUpdate,
@@ -139,6 +143,34 @@ async def restore_ad_account(
     await db.commit()
     await db.refresh(acc)
     return acc
+
+@router.delete("/my/ad-accounts/{ad_account_id}", response_model=MessageResponse)
+async def delete_ad_account(
+    ad_account_id: str,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Eliminación definitiva de una cuenta publicitaria archivada.
+    Exige status == 'ARCHIVED' (no se borra una cuenta activa).
+    """
+    acc = await db.get(AdAccount, ad_account_id)
+    if not acc or acc.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+    if acc.status != "ARCHIVED":
+        raise HTTPException(status_code=400, detail="Solo se pueden eliminar definitivamente cuentas previamente archivadas.")
+
+    acc_name = acc.name
+
+    # Desvincular tablas de auditoría/consumo/aprendizaje que conservan registros históricos (SET NULL)
+    await db.execute(update(APICallLog).where(APICallLog.ad_account_id == acc.id).values(ad_account_id=None))
+    await db.execute(update(AITokenUsage).where(AITokenUsage.ad_account_id == acc.id).values(ad_account_id=None))
+    await db.execute(update(AccountLearningSnapshot).where(AccountLearningSnapshot.ad_account_id == acc.id).values(ad_account_id=None))
+    await db.execute(update(CampaignLearningLog).where(CampaignLearningLog.ad_account_id == acc.id).values(ad_account_id=None))
+
+    await db.delete(acc)
+    await db.commit()
+    return {"message": f"Cuenta '{acc_name}' eliminada definitivamente con éxito."}
 
 @router.patch("/my/ad-accounts/{ad_account_id}/default-page", response_model=AdAccountResponse)
 async def set_ad_account_default_page(
