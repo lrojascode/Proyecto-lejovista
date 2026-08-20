@@ -225,7 +225,11 @@ NO_DATA_TEXT = (
 
 
 def _money(value: Optional[float]) -> str:
-    return f"S/. {float(value or 0):.2f}"
+    v = float(value or 0)
+    sign = "-" if v < 0 else ""
+    entero, dec = f"{abs(v):.2f}".split(".")
+    entero_agrupado = f"{int(entero):,}".replace(",", ".")
+    return f"S/. {sign}{entero_agrupado},{dec}"
 
 
 def _fmt_int(value: Optional[int]) -> str:

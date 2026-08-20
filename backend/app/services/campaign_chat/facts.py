@@ -627,4 +627,4 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
     spend = kpis.get("spend", 0.0)
     convs = kpis.get("conversations", 0)
     cpl = kpis.get("cost_per_conv", 0.0)
-    return f"Resumen de {ventana}: S/. {spend:.2f} invertidos, {convs} conversaciones y un costo promedio de S/. {cpl:.2f} por lead."
+    return f"Resumen de {ventana}: {_money(spend)} invertidos, {convs} conversaciones y un costo promedio de {_money(cpl)} por lead."
