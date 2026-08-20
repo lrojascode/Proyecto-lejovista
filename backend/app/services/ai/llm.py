@@ -358,9 +358,20 @@ class OpenRouterClient:
         if self.is_gemini_direct and target_model.startswith("google/"):
             target_model = target_model.replace("google/", "")
 
+        # OpenAI dejo de aceptar `max_tokens` en los modelos de razonamiento
+        # (gpt-5.x, o1): responde 400 pidiendo `max_completion_tokens`. Los
+        # endpoints compatibles de OpenRouter y Gemini siguen usando el
+        # nombre viejo, asi que se elige por proveedor.
+        #
+        # 16 y no 5 en OpenAI: en un modelo de razonamiento el presupuesto lo
+        # consume primero la cadena de pensamiento, y un tope demasiado chico
+        # puede devolver contenido vacio. Para validar la credencial alcanza
+        # con que responda 200, pero no hay motivo para ajustarlo al limite.
+        limite = ({"max_completion_tokens": 16} if self.provider == "openai"
+                  else {"max_tokens": 5})
         payload = {
             "model": target_model,
-            "max_tokens": 5,
+            **limite,
             "messages": [
                 {"role": "user", "content": "ping"}
             ]
