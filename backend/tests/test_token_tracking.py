@@ -65,19 +65,25 @@ async def test_record_token_usage_noop_without_usage(db_session, monkeypatch):
     await record_token_usage(None, "openai", "gpt-5.4", {"prompt_tokens": 1})
 
 
-def test_los_modelos_sin_precio_no_reportan_costo_cero():
-    """`gpt-5.6-luna` y `gpt-5.6-sol` todavía no tienen precio en la tabla.
+def test_los_cuatro_modelos_permitidos_tienen_precio():
+    """Un modelo sin precio reporta costo `None`, que en Uso de IA se ve como
+    sin dato. Los cuatro que el cliente puede elegir tienen que estar."""
+    from app.services.ai.llm import MODELS_BY_PROVIDER
+    from app.services.ai.token_tracking import estimate_cost_usd
 
-    Lo importante es que eso se note: un 0 en la pantalla de Uso de IA se lee
-    como "no gastaste nada", que es falso. `None` se muestra como sin dato.
+    for modelo in MODELS_BY_PROVIDER["openai"]:
+        costo = estimate_cost_usd(modelo["value"], 1_000, 1_000)
+        assert costo is not None, f"{modelo['value']} no tiene precio cargado"
 
-    Si alguien agrega esos precios, este test empieza a fallar — y ahí hay que
-    borrarlo, no parchearlo.
+
+def test_las_tarifas_de_gpt_5_6():
+    """Un millón de tokens de cada lado, para que el número sea legible.
+
+    OJO: el input cacheado es ~10x más barato y el `usage` que guardamos no lo
+    separa, así que todo el input se cobra a tarifa plena. La estimación queda
+    POR ENCIMA del costo real, nunca por debajo.
     """
     from app.services.ai.token_tracking import estimate_cost_usd
 
-    for modelo in ("gpt-5.6-luna", "gpt-5.6-sol"):
-        assert estimate_cost_usd(modelo, 1_000, 1_000) is None, modelo
-
-    # Y que no se cuelen por el emparejado de prefijos con gpt-5.4.
-    assert estimate_cost_usd("gpt-5.4-mini", 1_000, 1_000) is not None
+    assert estimate_cost_usd("gpt-5.6-luna", 1_000_000, 1_000_000) == pytest.approx(1.40)
+    assert estimate_cost_usd("gpt-5.6-sol", 1_000_000, 1_000_000) == pytest.approx(35.00)

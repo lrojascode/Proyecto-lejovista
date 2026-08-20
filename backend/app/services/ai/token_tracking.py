@@ -21,6 +21,13 @@ logger = logging.getLogger("lejovista.tokens")
 # Las claves se comparan por prefijo, tolerando sufijos de fecha/región y el
 # prefijo "google/" que usa OpenRouter.
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
+    # El input cacheado es ~10x mas barato (Luna: 0.02 contra 0.20), pero el
+    # `usage` que guardamos no separa los tokens cacheados de los normales, asi
+    # que todo el input se cobra a tarifa plena. La estimacion queda POR ENCIMA
+    # del costo real, nunca por debajo -- que es la direccion segura para un
+    # numero que el cliente usa para decidir cuanto gastar.
+    "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
+    "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
     "gpt-5.4-nano": {"input": 0.05, "output": 0.40},
     "gpt-5.4-mini": {"input": 0.25, "output": 2.00},
     "gpt-5.4": {"input": 1.25, "output": 10.00},
