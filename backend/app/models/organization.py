@@ -13,7 +13,12 @@ class Organization(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     slug: Mapped[str] = mapped_column(String, unique=True, index=True)
     name: Mapped[str] = mapped_column(String)
-    ai_model: Mapped[str] = mapped_column(String, default="google/gemini-3.5-flash")
+    # Default para organizaciones nuevas. Es un default de APLICACION, no de la
+    # base: las organizaciones existentes conservan el suyo.
+    # OJO: el modelo tiene que corresponder al proveedor que realmente atiende
+    # las llamadas. `gpt-5.6-luna` asume OpenAI; una org que use OpenRouter
+    # tiene que cambiarlo en Configuracion.
+    ai_model: Mapped[str] = mapped_column(String, default="gpt-5.6-luna")
     llm_provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # openai | gemini_direct | openrouter
     llm_api_key_encrypted: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     max_budget: Mapped[float] = mapped_column(Float, default=1000.0)  # Límite financiero mensual de seguridad

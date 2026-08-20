@@ -87,3 +87,67 @@ def test_las_tarifas_de_gpt_5_6():
 
     assert estimate_cost_usd("gpt-5.6-luna", 1_000_000, 1_000_000) == pytest.approx(1.40)
     assert estimate_cost_usd("gpt-5.6-sol", 1_000_000, 1_000_000) == pytest.approx(35.00)
+
+
+def test_el_input_cacheado_se_cobra_a_su_tarifa():
+    """Los `cached_tokens` vienen DENTRO de `prompt_tokens`, no aparte. Se
+    restan para cobrar solo la parte no cacheada a tarifa plena."""
+    from app.services.ai.token_tracking import estimate_cost_usd
+
+    # Luna: 0.20 normal, 0.02 cacheado -- 10x de diferencia.
+    assert estimate_cost_usd("gpt-5.6-luna", 1_000_000, 0, 0) == pytest.approx(0.20)
+    assert estimate_cost_usd("gpt-5.6-luna", 1_000_000, 0, 1_000_000) == pytest.approx(0.02)
+    # Mitad y mitad cae justo en el medio.
+    assert estimate_cost_usd("gpt-5.6-luna", 1_000_000, 0, 500_000) == pytest.approx(0.11)
+
+
+def test_un_modelo_sin_tarifa_de_cache_cobra_todo_a_tarifa_plena():
+    """Sobrestimar es la direccion segura: este numero se usa para decidir
+    cuanto gastar, y quedarse corto seria peor que pasarse."""
+    from app.services.ai.token_tracking import estimate_cost_usd
+
+    sin_cache = estimate_cost_usd("gpt-5.4-mini", 1_000_000, 0, 0)
+    con_cache = estimate_cost_usd("gpt-5.4-mini", 1_000_000, 0, 1_000_000)
+    assert sin_cache == con_cache == pytest.approx(0.25)
+
+
+def test_mas_cacheados_que_prompt_no_baja_el_costo():
+    """Si el proveedor reportara un dato incoherente, restarlo daria un input
+    negativo y un costo POR DEBAJO del real."""
+    from app.services.ai.token_tracking import estimate_cost_usd
+
+    assert estimate_cost_usd("gpt-5.6-luna", 100, 0, 999_999) > 0
+
+
+@pytest.mark.asyncio
+async def test_se_persisten_los_tokens_cacheados_de_openai(db_session, monkeypatch):
+    """OpenAI los reporta en `prompt_tokens_details.cached_tokens`."""
+    import app.services.ai.token_tracking as tt
+
+    class _CtxSession:
+        def __init__(self, session):
+            self._session = session
+        async def __aenter__(self):
+            return self._session
+        async def __aexit__(self, *a):
+            return False
+
+    monkeypatch.setattr(tt, "async_session", lambda: _CtxSession(db_session))
+
+    await record_token_usage(
+        UsageContext(feature="test-cache"), "openai", "gpt-5.6-luna",
+        {
+            "prompt_tokens": 1000,
+            "completion_tokens": 100,
+            "total_tokens": 1100,
+            "prompt_tokens_details": {"cached_tokens": 800},
+        },
+    )
+    fila = (await db_session.execute(
+        select(AITokenUsage).where(AITokenUsage.feature == "test-cache")
+    )).scalar_one()
+
+    assert fila.cached_tokens == 800
+    # 200 a 0.20 + 800 a 0.02 + 100 de output a 1.20
+    esperado = (200 / 1e6) * 0.20 + (800 / 1e6) * 0.02 + (100 / 1e6) * 1.20
+    assert fila.estimated_cost_usd == pytest.approx(esperado, abs=1e-9)
