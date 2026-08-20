@@ -13,6 +13,7 @@ from app.services.history_reconciliation import get_history_status
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List, Optional
+from app.utils.formatting import money
 import datetime
 import io
 import logging
@@ -610,6 +611,38 @@ async def upload_campaign_video(
     return {"video_path": f"{current_user.organization_id}/{filename}"}
 
 
+def _preflight_warnings(request, rules) -> List[Dict[str, str]]:
+    """Avisos que NO bloquean: la campaña se crea igual.
+
+    El piso de presupuesto por conjunto es una regla operativa con fundamento,
+    no una preferencia: por debajo del umbral el conjunto no junta los ~50
+    eventos por semana que Meta necesita y nunca sale de la fase de
+    aprendizaje. Explicar el porqué es lo que convierte un número en una
+    decisión informada — por eso avisa y deja continuar.
+    """
+    avisos: List[Dict[str, str]] = []
+
+    piso = float(rules.get("min_daily_budget_for_learning") or 0)
+    if piso > 0 and request.days > 0:
+        diario = (
+            float(request.budget) if request.budget_type == "DAILY"
+            else float(request.budget) / request.days
+        )
+        if diario < piso:
+            avisos.append({
+                "code": "presupuesto_bajo_umbral_aprendizaje",
+                "title": f"El presupuesto diario queda en {money(diario)}",
+                "detail": (
+                    f"Por debajo de {money(piso)} por día, el conjunto no junta los ~50 eventos "
+                    "semanales que Meta necesita para salir de la fase de aprendizaje, y el costo "
+                    "por resultado se queda alto sin llegar a estabilizarse. Antes que repartir el "
+                    "presupuesto en dos conjuntos chicos, conviene uno solo por encima del piso. "
+                    "Podés continuar igual."
+                ),
+            })
+    return avisos
+
+
 @router.post("/preflight", response_model=CampaignPreflightResponse)
 async def preflight_campaign(
     request: CampaignPreflightRequest,
@@ -664,6 +697,8 @@ async def preflight_campaign(
         best_device=suggestion.get("best_device"),
         excluded_placements=suggestion.get("excluded_placements") or [],
     )
+
+    result["warnings"] = _preflight_warnings(request, rules)
     return result
 
 

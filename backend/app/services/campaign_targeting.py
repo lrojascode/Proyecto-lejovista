@@ -144,6 +144,21 @@ def _instagram_positions(excluded_placements: List[str], rules: Optional[Dict[st
     return out
 
 
+def _geo_locations(rules: Dict[str, Any]) -> Dict[str, Any]:
+    """Geografía del targeting: países o región.
+
+    La app entendía SOLO una clave de región (Lima), así que una campaña LATAM
+    era imposible de armar. Ahora `geo_countries` —códigos ISO de dos letras—
+    gana cuando está configurada, y si no se usa la región de siempre. Las dos
+    formas conviven porque las dos hacen falta: hay clientes locales y hay
+    campañas regionales.
+    """
+    paises = [c.strip().upper() for c in (rules.get("geo_countries") or []) if c and c.strip()]
+    if paises:
+        return {"countries": paises}
+    return {"regions": [{"key": rules["default_geo_region_key"]}]}
+
+
 def build_targeting(
     *,
     best_age_range: Optional[str] = None,
@@ -157,12 +172,19 @@ def build_targeting(
     `rules` (M-2): reglas resueltas para la org (`get_campaign_rules_for_org`);
     por defecto usa `TENANT_CAMPAIGN_RULES` (compat con llamadas existentes)."""
     rules = rules or TENANT_CAMPAIGN_RULES
+
+    # Por defecto NO se segmenta por edad (execution/05 §3): la data es plana
+    # entre rangos y hacerlo obliga a apagar Advantage+, que es justo lo que
+    # conviene usar. `use_age_targeting` lo reactiva por organización.
+    if not rules.get("use_age_targeting", False):
+        best_age_range = None
+
     age_min, age_max = parse_age_range(best_age_range)
     if age_min is None:
         age_min, age_max = _DEFAULT_AGE_MIN, _DEFAULT_AGE_MAX
 
     targeting: Dict[str, Any] = {
-        "geo_locations": {"regions": [{"key": rules["default_geo_region_key"]}]},
+        "geo_locations": _geo_locations(rules),
         "age_min": age_min,
         "age_max": age_max,
         # Facebook + Instagram. Antes era solo facebook: la campaña nunca se

@@ -155,13 +155,55 @@ class MetaCampaignModifier:
         else:
             raise ValueError(f"Acción de modificación no soportada: {action_type}")
 
-        # Ejecutar la llamada POST
+        # 3. Pausar ANTES de editar una campaña que está al aire.
+        #
+        # Es regla dura del documento de ITS: editar presupuesto, segmentación
+        # o posiciones mientras el objeto entrega deja a Meta reoptimizando con
+        # la configuración a medio cambiar, y ese gasto sale de la cuenta del
+        # cliente. Se pausa, se edita, se devuelve al estado que tenía.
+        #
+        # No aplica a PAUSE/RESUME: ahí el cambio de estado ES la acción.
+        estaba_activo = (
+            backup_state.get("status") == "ACTIVE"
+            and action_type not in ("PAUSE_CAMPAIGN", "RESUME_CAMPAIGN")
+        )
+        if estaba_activo:
+            logger.info("Pausando %s antes de editar (%s).", target_id, action_type)
+            pausa = await limiter.call_api(endpoint, {"status": "PAUSED"}, method="POST", access_token=token)
+            if "ERROR" in pausa or "error" in pausa:
+                # Si no se pudo pausar, NO se edita. Editar igual es
+                # exactamente lo que esta regla evita.
+                raise Exception(f"No se pudo pausar {target_id} antes de editar: {pausa}")
+
+        # 4. Ejecutar la modificación
         logger.info(f"Modificando {target_id} - Acción: {action_type} - Params: {post_data}")
         result = await limiter.call_api(endpoint, post_data, method="POST", access_token=token)
-        
+
         if "ERROR" in result or "error" in result:
+            # Se deja PAUSADO a propósito: pausado no gasta. Reactivar un objeto
+            # cuya edición acaba de fallar es reactivarlo con la configuración
+            # en un estado que no se sabe cuál es.
+            if estaba_activo:
+                logger.error(
+                    "La edición de %s falló y queda PAUSADO. Revisar antes de reactivar.", target_id
+                )
             raise Exception(f"Meta API falló al aplicar la modificación: {result}")
-            
+
+        # 5. Devolver al estado que tenía. La compuerta humana ya se pasó al
+        # aprobar la acción, y esto no ACTIVA nada nuevo: restaura lo que ya
+        # estaba al aire hace un instante.
+        if estaba_activo:
+            reanudar = await limiter.call_api(endpoint, {"status": "ACTIVE"}, method="POST", access_token=token)
+            if "ERROR" in reanudar or "error" in reanudar:
+                # La edición SÍ se aplicó; lo que falló es la reactivación. No
+                # se lanza excepción —eso dispararía el rollback de una
+                # modificación que quedó bien— pero tiene que quedar visible.
+                logger.error(
+                    "%s quedó PAUSADO tras editarlo: falló la reactivación (%s). Reactivar a mano.",
+                    target_id, reanudar,
+                )
+                result = {**result, "advertencia": "quedo_pausado_reactivar_a_mano"}
+
         return result
 
     async def rollback(self, ad_account: AdAccount, action: AIAction) -> Dict[str, Any]:

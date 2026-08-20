@@ -43,6 +43,28 @@ def normalize_product_name(raw: Optional[str]) -> str:
     return _WHITESPACE_RE.sub(" ", cleaned).strip()
 
 
+# Acortadores conocidos. La lista es cerrada a proposito: detectar "cualquier
+# dominio corto" daria falsos positivos con dominios legitimos de clientes.
+_ACORTADORES = (
+    "bit.ly", "bitly.com", "tinyurl.com", "goo.gl", "ow.ly", "t.co",
+    "buff.ly", "rebrand.ly", "cutt.ly", "shorturl.at", "is.gd", "s.id",
+    "linktr.ee", "acortar.link",
+)
+
+
+def _detectar_acortador(texto: Optional[str]) -> Optional[str]:
+    """Devuelve el acortador encontrado, o None."""
+    if not texto:
+        return None
+    plano = texto.lower()
+    for dominio in _ACORTADORES:
+        # Se busca el dominio precedido de un separador de URL o de espacio,
+        # para no marcar una palabra que lo contenga por casualidad.
+        if re.search(rf"(^|[\s/@.]){re.escape(dominio)}\b", plano):
+            return dominio
+    return None
+
+
 class CampaignValidator:
     """
     Ejecuta validaciones síncronas antes de encolar la creación de una campaña.
@@ -115,6 +137,28 @@ class CampaignValidator:
                 detail=f"headline excede el límite de Meta de {META_HEADLINE_MAX_CHARS} caracteres "
                        f"({len(request.headline)}).",
             )
+        # 4. Acortadores de enlaces en el copy. El documento de ITS es
+        # explicito: "todos los ganadores los llevan y rompen la atribucion de
+        # Meta". Un clic que pasa por bit.ly pierde el parametro de seguimiento,
+        # asi que la conversion no vuelve a la campana que la genero y el CPL
+        # que se muestra queda inflado sin razon visible.
+        #
+        # Se rechaza y se explica el porque: un "no" sin motivo se lee como un
+        # capricho del sistema y el usuario lo esquiva.
+        acortador = _detectar_acortador(
+            " ".join(filter(None, [request.copy_text, request.headline, request.description]))
+        )
+        if acortador:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"El texto del anuncio usa un acortador ({acortador}). Los acortadores rompen la "
+                    "atribución de Meta: el clic pierde el parámetro de seguimiento y la conversión no "
+                    "vuelve a esta campaña, así que su costo se ve más caro de lo que realmente es. "
+                    "Poné el enlace completo."
+                ),
+            )
+
         if request.description and len(request.description) > META_DESCRIPTION_MAX_CHARS:
             raise HTTPException(
                 status_code=400,

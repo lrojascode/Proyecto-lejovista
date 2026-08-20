@@ -426,9 +426,23 @@ class PreflightCheck(BaseModel):
     parent_campaign: Optional[Dict[str, Any]] = None
 
 
+class PreflightWarning(BaseModel):
+    """Aviso que NO bloquea la creación.
+
+    Se separa de `checks` a propósito: un check fallido significa que Meta va a
+    rechazar el payload; un aviso significa que la campaña se va a crear igual
+    pero hay algo que conviene saber antes. Mezclarlos haría que un consejo
+    parezca un error y que el usuario deje de leer los dos.
+    """
+    code: str
+    title: str
+    detail: str
+
+
 class CampaignPreflightResponse(BaseModel):
     ok: bool
     checks: List[PreflightCheck]
+    warnings: List[PreflightWarning] = []
 
 
 # --- Chat de creación de campañas (CH-1..CH-5) ---
