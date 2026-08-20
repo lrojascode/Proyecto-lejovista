@@ -21,7 +21,7 @@ Tres frentes que llegaron juntos y conviene no mezclar:
 
 | # | Archivo | Qué cubre | Depende de | Estado |
 |---|---|---|---|---|
-| 01 | [marca-y-vista-cliente](01-marca-y-vista-cliente.md) | Rebrand a Agente DX IA, acento celeste, ocultar módulos, solo campañas al aire, formato de moneda único | 06 (§5) | |
+| 01 | [marca-y-vista-cliente](01-marca-y-vista-cliente.md) | Rebrand a Agente DX IA, acento celeste, ocultar módulos, solo campañas al aire, formato de moneda único | 06 (§5) | ✅ **hecho** |
 | 02 | [panel-admin-y-modulos](02-panel-admin-y-modulos.md) | Alta de clientes, roles de plataforma, toggles de módulos | 01 | |
 | 03 | [sync-historico-completo](03-sync-historico-completo.md) | Primer sync total + estimación de tiempo + incrementales | — | |
 | 04 | [chat-consultas](04-chat-consultas.md) | Brechas contra `PROMPT-CONSULTAS-ITS.md` | 03 | |
@@ -32,7 +32,7 @@ Tres frentes que llegaron juntos y conviene no mezclar:
 
 ```
 06  bugs pendientes        → HECHO (eaf5eb8)
-01  marca y vista cliente  → mayormente frontend; §5 (moneda) toca PDF y report_builder
+01  marca y vista cliente  → HECHO
 03  sync histórico         → habilita casi todo lo del chat
 04  chat consultas         → el mayor salto de calidad percibida
 02  panel admin            → cuando ya haya módulos que valga la pena apagar

@@ -567,7 +567,7 @@ export default function DashboardPage() {
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Campaña</th>
-                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>CPL 7d (S/)</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>CPL 7d</th>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>Inversión</th>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "center" }}>Estado</th>
                   </tr>
@@ -580,8 +580,8 @@ export default function DashboardPage() {
                           {campaign.campaign_name}
                         </Link>
                       </td>
-                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{(campaign.cost_per_conv_7d ?? campaign.cpl).toFixed(2)}</td>
-                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{(campaign.spend_7d ?? campaign.spend).toFixed(2)}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{money(campaign.cost_per_conv_7d ?? campaign.cpl)}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{money(campaign.spend_7d ?? campaign.spend)}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>
                         <StatusBadge status={campaign.status} />
                       </td>

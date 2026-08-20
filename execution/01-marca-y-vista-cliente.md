@@ -212,12 +212,29 @@ Y no aplicar `.replace(",", ".")` sobre una cadena que ya contenga un monto
 formateado: convierte `S/. 7.417,19` en `S/. 7.417.19`. Por eso `fmt_int` recibe un
 entero y no un string.
 
-### Decisión pendiente
+### Corrección al ejecutar: la convención elegida era la equivocada
 
-Doy por hecho que se alinea **el producto al chat** (es-PE con separador), que es
-lo coherente para un cliente peruano. Si preferís lo inverso —volver el chat a
-`S/.7417.19`— es cambiar `formatting.py` y los tests que fijan la convención, y no
-tocar nada más. Conviene decidirlo antes de empezar, no a mitad de los 31 sitios.
+Al implementarlo apareció algo que este plan daba por sentado y estaba mal.
+
+El chat había adoptado `S/. 7.417,19` —miles con punto, decimales con coma— y lo
+llamaba "es-PE". **No lo es.** Esa es la convención de Argentina, España y
+Colombia. Perú agrupa los miles con **coma** y separa los decimales con **punto**,
+igual que México y Estados Unidos:
+
+```
+Intl.NumberFormat("es-PE").format(7417.19)  ->  "7,417.19"
+Intl.NumberFormat("es-AR").format(7417.19)  ->  "7.417,19"
+```
+
+Así que el formato unificado del producto es **`S/. 7,417.19`**, y el que se
+corrigió fue el del chat, no el del resto. El formato viejo del producto
+(`S/.7417.19`) tenía el separador decimal correcto — solo le faltaban los miles.
+
+El frontend lo obtiene de `Intl` con locale `es-PE` en vez de armarlo a mano.
+Ambas lecturas siguen pasando el grounding, que ya soportaba las dos.
+
+El símbolo se dejó como `S/.` porque es el que usa todo el producto. El oficial
+peruano es `S/` sin punto, pero eso es una decisión de marca aparte.
 
 ---
 
