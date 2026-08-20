@@ -7,6 +7,7 @@ import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { CampaignSnapshot } from "@/lib/types";
+import { money } from "@/lib/format";
 
 export default function CampaignsList() {
   const { lastEvent } = useWebSocket();
@@ -131,10 +132,10 @@ export default function CampaignsList() {
                           {c.campaign_name}
                         </Link>
                       </td>
-                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>S/.{c.budget.toFixed(2)}</td>
-                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>S/.{c.spend.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>{money(c.budget)}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px" }}>{money(c.spend)}</td>
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.conversions}</td>
-                      <td style={{ padding: "12px 8px", fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
+                      <td style={{ padding: "12px 8px", fontSize: "14px", fontWeight: 510, color: "var(--color-paper)" }}>{money(cpl)}</td>
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.frequency.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px" }}>
                         <StatusBadge status={c.status} />

@@ -11,6 +11,7 @@ escritura real a Meta; nunca es "sin riesgo". Nunca es CRITICAL porque la
 campaña se crea PAUSADA (no gasta hasta activarse a mano).
 """
 from typing import Any, Dict, List, Optional
+from app.utils.formatting import money
 
 # Términos que Meta suele rechazar en anuncios (rubro farmacéutico/salud). Mismo
 # criterio que el system prompt del copywriter en llm.py — aquí se usa para
@@ -52,13 +53,13 @@ def assess_campaign_risk(
         if ratio > 2.0:
             escalate_high = True
             reasons.append(
-                f"El presupuesto (S/.{budget:.0f}) es más del doble de lo que sugiere el "
-                f"histórico de la cuenta (S/.{suggested_budget:.0f}). Riesgo de sobregasto."
+                f"El presupuesto ({money(budget)}) es más del doble de lo que sugiere el "
+                f"histórico de la cuenta ({money(suggested_budget)}). Riesgo de sobregasto."
             )
         elif ratio > 1.2:
             can_be_low = False
             reasons.append(
-                f"El presupuesto (S/.{budget:.0f}) supera lo sugerido (S/.{suggested_budget:.0f}) "
+                f"El presupuesto ({money(budget)}) supera lo sugerido ({money(suggested_budget)}) "
                 "en más del 20%."
             )
     else:
@@ -71,7 +72,7 @@ def assess_campaign_risk(
 
     if budget >= _HIGH_ABSOLUTE_BUDGET:
         escalate_high = True
-        reasons.append(f"Presupuesto alto en términos absolutos (S/.{budget:.0f}).")
+        reasons.append(f"Presupuesto alto en términos absolutos ({money(budget)}).")
 
     # 2. Copy con lenguaje que Meta suele rechazar.
     lowered = (copy_text or "").lower()

@@ -2,6 +2,7 @@ import '@testing-library/jest-dom'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import Diagnostics from '../app/(dashboard)/diagnostics/page'
 import { api } from '../lib/api'
+import { money } from '../lib/format'
 
 // Mock the API module
 jest.mock('../lib/api', () => ({
@@ -56,7 +57,7 @@ describe('Diagnostics Page', () => {
     // Check native brief sections load with correct content
     expect(screen.getByText('Narrativa de IA de prueba nativa')).toBeInTheDocument()
     expect(screen.getByText('Campaña de Prueba')).toBeInTheDocument()
-    expect(screen.getAllByText('S/.120.00')[0]).toBeInTheDocument()
+    expect(screen.getAllByText(money(120))[0]).toBeInTheDocument()
   })
 
   it('handles dismissing an insight', async () => {

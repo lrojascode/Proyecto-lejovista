@@ -17,6 +17,7 @@ Dos piezas DETERMINISTAS (sin LLM, sin inventar cifras — regla AI-1):
 """
 import statistics
 from typing import Any, Dict, List, Optional
+from app.utils.formatting import money
 
 # Umbral de coeficiente de variación del costo por conversación por debajo del
 # cual se considera que el CPL de la cuenta es "estable".
@@ -186,7 +187,7 @@ def _own_failure_notes(results: Optional[List[Dict[str, Any]]]) -> List[str]:
         if params.get("best_device"):
             config_bits.append(f"dispositivo {params['best_device']}")
         if params.get("budget"):
-            config_bits.append(f"presupuesto S/.{params['budget']:.0f}")
+            config_bits.append(f"presupuesto {money(params['budget'])}")
         config = ", ".join(config_bits) if config_bits else "configuración registrada"
         notes.append(
             f"Una campaña propia con {config} no rindió: {outcome.get('reason', 'sin detalle')} "
@@ -240,7 +241,7 @@ def build_analysis(
 
     if best:
         strengths.append(
-            f"Campaña más eficiente '{best['name']}': S/.{best['cost_per_conv']:.2f} por "
+            f"Campaña más eficiente '{best['name']}': {money(best['cost_per_conv'])} por "
             f"conversación, CTR {best['ctr']:.2f}%."
         )
     if best_device:
@@ -255,7 +256,7 @@ def build_analysis(
     for c in campaigns:
         if c.get("spend", 0) > 0 and c.get("conversations", 0) == 0:
             past_failures.append(
-                f"'{c['name']}' gastó S/.{c['spend']:.2f} sin ninguna conversación en los últimos "
+                f"'{c['name']}' gastó {money(c['spend'])} sin ninguna conversación en los últimos "
                 f"{window} días — se evita repetir su configuración."
             )
 
@@ -280,7 +281,7 @@ def build_analysis(
         })
     if calibrated_cost:
         why_budget = (
-            f"Colchón de ~20 conversaciones a S/.{calibrated_cost:.2f} — el costo real que la IA "
+            f"Colchón de ~20 conversaciones a {money(calibrated_cost)} — el costo real que la IA "
             "ha logrado en esta cuenta, no el mejor caso histórico."
         )
     elif best:
@@ -291,7 +292,7 @@ def build_analysis(
     else:
         why_budget = "Valor por defecto conservador: aún no hay histórico con qué calibrar."
     changes.append({
-        "change": f"Presupuesto de partida S/.{suggested_budget:.0f}",
+        "change": f"Presupuesto de partida {money(suggested_budget)}",
         "why": why_budget,
     })
 

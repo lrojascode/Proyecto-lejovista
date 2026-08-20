@@ -12,6 +12,7 @@ import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { CampaignSnapshot, ApiCallHistoryEntry, SpendHistoryMonth, BusinessPolicies, KpisSummary, AIInsight } from "@/lib/types";
+import { money } from "@/lib/format";
 
 // Acentos de apoyo del design system — nunca acid-lime (reservado para acciones)
 const COLORS = ['#6366f1', '#02b8cc', '#27a644', '#8b5cf6', '#f2994a'];
@@ -403,7 +404,7 @@ export default function DashboardPage() {
           <div className="glass-card" style={{ padding: 20 }}>
             <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Gasto (7d)</p>
             <p style={{ fontSize: 22, fontWeight: 590 }}>
-              S/. {kpisSummary.kpis_7d.spend.toFixed(2)}
+              {money(kpisSummary.kpis_7d.spend)}
               <DeltaBadge pct={kpisSummary.deltas_pct.spend} goodWhen="neutral" />
             </p>
           </div>
@@ -417,7 +418,7 @@ export default function DashboardPage() {
           <div className="glass-card" style={{ padding: 20 }}>
             <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Costo/Conv. (7d)</p>
             <p style={{ fontSize: 22, fontWeight: 590 }}>
-              S/. {kpisSummary.kpis_7d.cost_per_conv.toFixed(2)}
+              {money(kpisSummary.kpis_7d.cost_per_conv)}
               <DeltaBadge pct={kpisSummary.deltas_pct.cost_per_conv} goodWhen="down" />
             </p>
           </div>

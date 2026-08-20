@@ -8,10 +8,24 @@ import datetime
 import re
 from typing import Any, Dict, Optional
 
-from jinja2 import Template
+from jinja2 import Environment
+
+from app.utils.formatting import money
 from weasyprint import HTML
 
-_TEMPLATE = Template("""
+# El PDF y el chat hablan del mismo dinero: el mismo monto tiene que escribirse
+# igual en los dos. Antes el chat decia "S/. 7.417,19" y este PDF "S/.7417.19".
+# El filtro se registra en el Environment ANTES de compilar: Jinja compila al
+# construir la plantilla y no encontraria un filtro agregado despues.
+#
+# autoescape=True es un cambio respecto a Template(), que no escapa: los nombres
+# de campana y de organizacion venian de Meta y del usuario y se inyectaban
+# crudos en el HTML. La narrativa sigue pasando como HTML porque ya estaba
+# marcada `|safe` explicitamente.
+_ENV = Environment(autoescape=True)
+_ENV.filters["money"] = money
+
+_TEMPLATE = _ENV.from_string("""
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -42,9 +56,9 @@ _TEMPLATE = Template("""
 
   <h2>Resumen Ejecutivo</h2>
   <div class="kpis">
-    <div class="kpi"><div class="label">Total invertido</div><div class="value">S/.{{ "%.2f"|format(report.kpis.total_spend) }}</div></div>
+    <div class="kpi"><div class="label">Total invertido</div><div class="value">{{ report.kpis.total_spend|money }}</div></div>
     <div class="kpi"><div class="label">Conversaciones</div><div class="value">{{ report.kpis.total_conversations }}</div></div>
-    <div class="kpi"><div class="label">Mejor costo/conv.</div><div class="value">S/.{{ "%.2f"|format(report.kpis.best_cost_per_conv) }}</div></div>
+    <div class="kpi"><div class="label">Mejor costo/conv.</div><div class="value">{{ report.kpis.best_cost_per_conv|money }}</div></div>
     <div class="kpi"><div class="label">CTR promedio</div><div class="value">{{ "%.2f"|format(report.kpis.avg_ctr) }}%</div></div>
   </div>
 
@@ -65,9 +79,9 @@ _TEMPLATE = Template("""
     {% for c in report.campaigns %}
       <tr>
         <td>{{ c.name }}{% if c.created_by_ai %} <span style="color:#6a4bd6;font-size:8px;">(creada por IA)</span>{% endif %}</td>
-        <td>S/.{{ "%.2f"|format(c.spend) }}</td>
+        <td>{{ c.spend|money }}</td>
         <td>{{ c.conversations }}</td>
-        <td>S/.{{ "%.2f"|format(c.cost_per_conv) }}</td>
+        <td>{{ c.cost_per_conv|money }}</td>
         <td>{{ c.ctr }}%</td>
         <td class="label-{{ c.label }}">{{ c.label }}</td>
       </tr>
@@ -92,6 +106,7 @@ _TEMPLATE = Template("""
 </body>
 </html>
 """)
+
 
 
 def _inline_markdown(text: str) -> str:

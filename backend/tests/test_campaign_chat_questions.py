@@ -19,6 +19,7 @@ from app.services.campaign_chat import questions
 from app.services.campaign_chat.extraction import extract_message
 from tests.test_campaign_chat_flow import _mock_side_effects, _signup_with_ad_account_and_page  # noqa: F401
 from tests.test_campaign_chat_gates import _create_session_at_review
+from app.utils import formatting
 
 
 def _turn_id() -> str:
@@ -311,7 +312,7 @@ async def _answer(*args, **kwargs) -> str:
 async def test_answer_spend_uses_real_kpis(_mock_report):
     _mock_report(_fake_report())
     out = await _answer(None, "org", _acc(), "SPEND", {})
-    assert "S/. 300,00" in out
+    assert "S/. 300.00" in out
     assert "+10.0%" in out
 
 
@@ -319,8 +320,8 @@ async def test_answer_spend_uses_real_kpis(_mock_report):
 async def test_answer_spend_cap_uses_real_account_data(_mock_report):
     _mock_report(_fake_report())
     out = await _answer(None, "org", _acc(), "SPEND_CAP", {})
-    assert "S/. 1.000,00" in out
-    assert "S/. 600,00" in out  # tope 1000 - gastado 400 = restante
+    assert "S/. 1,000.00" in out
+    assert "S/. 600.00" in out  # tope 1000 - gastado 400 = restante
 
 
 @pytest.mark.asyncio
@@ -328,14 +329,14 @@ async def test_answer_leads_computes_average_cost(_mock_report):
     _mock_report(_fake_report())
     out = await _answer(None, "org", _acc(), "LEADS", {})
     assert "20 conversaciones" in out
-    assert "S/. 15,00" in out  # 300 / 20
+    assert "S/. 15.00" in out  # 300 / 20
 
 
 @pytest.mark.asyncio
 async def test_answer_cpl_reports_average_and_target(_mock_report):
     _mock_report(_fake_report())
     out = await _answer(None, "org", _acc(), "CPL", {})
-    assert "S/. 15,00" in out and "objetivo" in out
+    assert "S/. 15.00" in out and "objetivo" in out
 
 
 @pytest.mark.asyncio
@@ -388,14 +389,14 @@ async def test_answer_recommendations_and_summary(_mock_report):
     recs = await _answer(None, "org", _acc(), "RECOMMENDATIONS", {})
     assert "Excluir instagram_positions" in recs
     resumen = await _answer(None, "org", _acc(), "SUMMARY", {})
-    assert "S/. 300,00" in resumen and "CAMP_BUENA" in resumen
+    assert "S/. 300.00" in resumen and "CAMP_BUENA" in resumen
 
 
 @pytest.mark.asyncio
 async def test_answer_budget_advice_is_20x_the_best_cost(_mock_report):
     _mock_report(_fake_report())
     out = await _answer(None, "org", _acc(), "BUDGET_ADVICE", {})
-    assert "S/. 12,50" in out and "S/. 250,00" in out  # 12.50 * 20
+    assert "S/. 12.50" in out and "S/. 250.00" in out  # 12.50 * 20
 
 
 @pytest.mark.asyncio
@@ -464,8 +465,8 @@ async def test_h4_reach_question_disambiguated_from_leads(_mock_report):
     assert questions.classify_question("¿A cuánta gente le llegué en los últimos 30 días?") == "REACH"
     _mock_report({"campaigns": [], "kpis": {"total_reach": 15400, "total_impressions": 30800, "avg_ctr": 2.1}})
     out = await _answer(None, "org", _acc(), "REACH", {})
-    assert "15.400 personas" in out
-    assert "30.800 impresiones" in out
+    assert "15,400 personas" in out
+    assert "30,800 impresiones" in out
     assert "conversaciones" not in out
 
 
@@ -475,7 +476,7 @@ async def test_h4_spend_without_spend_cap_is_clean(_mock_report):
     acc_no_cap = types.SimpleNamespace(id="acc_no_cap", name="Cuenta Sin Tope", spend_cap=0.0, amount_spent=250.0, status="ACTIVE")
     _mock_report(_fake_report())
     out = await _answer(None, "org", acc_no_cap, "SPEND", {})
-    assert "S/. 300,00" in out
+    assert "S/. 300.00" in out
     assert "tope" not in out.lower()
     assert "restante" not in out.lower()
 
@@ -537,8 +538,11 @@ async def test_h4bis_pregunta_compuesta_devuelve_las_dos_metricas(mocker):
     assert "account" not in facts
 
     # 3. La narración canónica (sin LLM) contiene AMBAS métricas
-    assert "6466.00" in canonical or "6.466,00" in canonical or "6.466" in canonical
-    assert "45.000 personas" in canonical or "45000 personas" in canonical
+    # Contra el formateador canónico, no contra una lista de formatos posibles:
+    # lo que este test cuida es que la respuesta traiga LAS DOS métricas, no
+    # cómo se escribe cada una.
+    assert formatting.money(6466.0) in canonical
+    assert f"{formatting.fmt_int(45000)} personas" in canonical
 
 
 @pytest.mark.asyncio
@@ -576,6 +580,6 @@ async def test_h4bis_chat_session_compound_question_endpoint(
     assert res.status_code == 200
     messages = res.json()["messages"]
     answer_text = messages[-2]["text"]
-    assert "6466" in answer_text or "6.466" in answer_text
-    assert "45.000" in answer_text or "45000" in answer_text
+    assert formatting.money(6466.0) in answer_text
+    assert formatting.fmt_int(45000) in answer_text
     assert "tope" not in answer_text.lower()

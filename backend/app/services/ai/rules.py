@@ -6,6 +6,7 @@ from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
 from app.services.ai.thresholds import get_thresholds_for_org, compute_target_cpl
+from app.utils.formatting import money
 
 class Capa1Rules:
     def __init__(self, db: AsyncSession):
@@ -39,7 +40,7 @@ class Capa1Rules:
                 level="CRITICAL",
                 category="ACCOUNT",
                 title="Límite de gasto (spend cap) casi agotado",
-                description=f"El saldo restante en el límite de la cuenta es de S/.{(ad_account.spend_cap - ad_account.amount_spent):.2f}. Las campañas podrían detenerse pronto.",
+                description=f"El saldo restante en el límite de la cuenta es de {money((ad_account.spend_cap - ad_account.amount_spent))}. Las campañas podrían detenerse pronto.",
                 suggested_action_type=None
             ))
 
@@ -119,7 +120,7 @@ class Capa1Rules:
                     level="CRITICAL",
                     category="PERFORMANCE",
                     title="Costo por Lead (CPL) crítico",
-                    description=f"La campaña '{data['name']}' tiene un CPL promedio de S/.{cpl:.2f} en los últimos 7 días, lo cual excede el doble del objetivo de S/.{target_cpl:.2f}.",
+                    description=f"La campaña '{data['name']}' tiene un CPL promedio de {money(cpl)} en los últimos 7 días, lo cual excede el doble del objetivo de {money(target_cpl)}.",
                     suggested_action_type="PAUSE_CAMPAIGN"
                 ))
 
@@ -181,7 +182,7 @@ class Capa1Rules:
                                 level="WARNING",
                                 category="PLACEMENT",
                                 title=f"Placement ineficiente en Instagram: {pl_name}",
-                                description=f"El placement '{pl_name}' tiene un CPL de S/.{pl_cpl:.2f}. Se recomienda remover este placement de la campaña.",
+                                description=f"El placement '{pl_name}' tiene un CPL de {money(pl_cpl)}. Se recomienda remover este placement de la campaña.",
                                 suggested_action_type="MODIFY_PLACEMENTS"
                             ))
                             
@@ -196,7 +197,7 @@ class Capa1Rules:
                                     level="INFO",
                                     category="PLACEMENT",
                                     title="Oportunidad detectada en Facebook Reels",
-                                    description=f"El CPL en Facebook Reels es de S/.{pl_cpl:.2f}, significativamente más barato que el feed (S/.{feed_cpl:.2f}). Se recomienda priorizar este placement.",
+                                    description=f"El CPL en Facebook Reels es de {money(pl_cpl)}, significativamente más barato que el feed ({money(feed_cpl)}). Se recomienda priorizar este placement.",
                                     suggested_action_type="MODIFY_PLACEMENTS"
                                 ))
 

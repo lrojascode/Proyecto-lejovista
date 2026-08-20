@@ -29,9 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
-from app.services.campaign_chat import formatting
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat.slots import strip_accents
+from app.utils import formatting
 from app.services.kpi_period import days_of_history, get_kpis_with_deltas
 from app.services.report_cache import get_report
 

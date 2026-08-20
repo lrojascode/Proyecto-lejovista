@@ -8,6 +8,7 @@ import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import type { MetaPage, WhatsAppNumber, Suggestion } from "@/lib/types";
 import { RISK_STYLES } from "@/lib/badge";
+import { money } from "@/lib/format";
 
 type DraftStatus = "idle" | "submitting" | "polling" | "success" | "error";
 
@@ -672,7 +673,7 @@ export default function NewCampaignPage() {
               <input type="number" name="budget" required min={1} step="0.01" value={formData.budget} onChange={handleChange} className="form-input" />
               {formData.budget_type === "DAILY" && (
                 <span style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "4px", display: "block" }}>
-                  Total en {formData.days} días: <strong>S/. {totalBudget.toFixed(2)}</strong>
+                  Total en {formData.days} días: <strong>{money(totalBudget)}</strong>
                 </span>
               )}
             </div>

@@ -17,10 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.meta_page import MetaPage
-from app.services.campaign_chat import formatting
 from app.services.campaign_chat.grounding import GroundingSet, MAX_GROUNDING_VALUES
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat import questions
+from app.utils import formatting
 from app.services.kpi_period import days_of_history, get_kpis_with_deltas
 from app.services.report_cache import get_report
 

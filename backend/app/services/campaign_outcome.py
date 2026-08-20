@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.outcome")
 
@@ -59,7 +60,7 @@ def compute_verdict(
         return {
             "verdict": "LOSS",
             "cost_per_conv": None,
-            "reason": f"Gastó S/.{spend:.2f} sin generar ninguna conversación.",
+            "reason": f"Gastó {money(spend)} sin generar ninguna conversación.",
         }
 
     cost = round(spend / conversations, 2)
@@ -69,25 +70,25 @@ def compute_verdict(
             "verdict": "NEUTRAL",
             "cost_per_conv": cost,
             "reason": (
-                f"Logró {conversations} conversación(es) a S/.{cost:.2f} cada una, pero no había "
+                f"Logró {conversations} conversación(es) a {money(cost)} cada una, pero no había "
                 "expectativa de costo con qué compararla (cuenta sin histórico al crearla)."
             ),
         }
 
     if cost <= expected_cost_per_conv * WIN_TOLERANCE:
         verdict, reason = "WIN", (
-            f"S/.{cost:.2f} por conversación, dentro del costo esperado "
-            f"(~S/.{expected_cost_per_conv:.2f} +20%)."
+            f"{money(cost)} por conversación, dentro del costo esperado "
+            f"(~{money(expected_cost_per_conv)} +20%)."
         )
     elif cost > expected_cost_per_conv * LOSS_MULTIPLIER:
         verdict, reason = "LOSS", (
-            f"S/.{cost:.2f} por conversación: más del doble del costo esperado "
-            f"(~S/.{expected_cost_per_conv:.2f})."
+            f"{money(cost)} por conversación: más del doble del costo esperado "
+            f"(~{money(expected_cost_per_conv)})."
         )
     else:
         verdict, reason = "NEUTRAL", (
-            f"S/.{cost:.2f} por conversación: por encima del costo esperado "
-            f"(~S/.{expected_cost_per_conv:.2f}) pero sin llegar al doble."
+            f"{money(cost)} por conversación: por encima del costo esperado "
+            f"(~{money(expected_cost_per_conv)}) pero sin llegar al doble."
         )
 
     return {"verdict": verdict, "cost_per_conv": cost, "reason": reason}

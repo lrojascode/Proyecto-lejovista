@@ -10,6 +10,7 @@ from app.models.ad_account import AdAccount
 from app.services.ai.token_tracking import UsageContext, record_token_usage
 from app.services.ai.thresholds import classify_campaign, compute_target_cpl
 from app.services.ai.statistics import INSUFFICIENT_HISTORY_TITLE
+from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.llm")
 
@@ -499,7 +500,7 @@ class OpenRouterClient:
             winning_summary = (
                 f"Contexto de la campaña más eficiente de esta cuenta (úsalo solo para inspirar "
                 f"el tono, NUNCA menciones estas cifras en el copy): '{_delimit_untrusted(str(winning_context.get('name')))}' — "
-                f"S/.{winning_context.get('cost_per_conv', 0):.2f} por conversación, "
+                f"{money(winning_context.get('cost_per_conv', 0))} por conversación, "
                 f"CTR {winning_context.get('ctr', 0):.2f}%."
             )
 
@@ -1217,8 +1218,8 @@ class OpenRouterClient:
             if not items:
                 return "_Ninguna campaña en esta categoría._"
             return "\n".join(
-                f"* **{e['name']}** — Inversión S/.{e['spend']:.2f}, {e['conv']} conversaciones, "
-                f"CPL S/.{e['cpl']:.2f}, CTR {e['ctr']:.2f}%."
+                f"* **{e['name']}** — Inversión {money(e['spend'])}, {e['conv']} conversaciones, "
+                f"CPL {money(e['cpl'])}, CTR {e['ctr']:.2f}%."
                 for e in items
             )
 
@@ -1226,8 +1227,8 @@ class OpenRouterClient:
         pacing = (brief_context or {}).get("pacing") or {}
         if pacing:
             pacing_note = (
-                f" Presupuesto diario configurado S/.{pacing.get('daily_budget_total', 0):.2f} vs "
-                f"gasto real diario promedio S/.{pacing.get('daily_spend_avg', 0):.2f}."
+                f" Presupuesto diario configurado {money(pacing.get('daily_budget_total', 0))} vs "
+                f"gasto real diario promedio {money(pacing.get('daily_spend_avg', 0))}."
             )
 
         delta_note = ""
@@ -1241,7 +1242,7 @@ class OpenRouterClient:
         if fallidas:
             worst = max(fallidas, key=lambda e: e["cpl"])
             priorities.append(
-                f"Pausar o rediseñar **{worst['name']}** (CPL S/.{worst['cpl']:.2f} vs objetivo S/.{target_cpl:.2f})."
+                f"Pausar o rediseñar **{worst['name']}** (CPL {money(worst['cpl'])} vs objetivo {money(target_cpl)})."
             )
         if alertas:
             priorities.append(f"Revisar creativo/segmentación de **{alertas[0]['name']}** antes de que empeore.")
@@ -1254,7 +1255,7 @@ class OpenRouterClient:
         priorities_md = "\n".join(f"{i + 1}. {p}" for i, p in enumerate(priorities[:3]))
 
         return f"""## Resumen
-Cuenta **{ad_account.name}** ({org.name}). Inversión últimos 7 días: S/.{total_spend:.2f}, {total_conv} conversaciones, CPL promedio S/.{avg_cpl:.2f} (objetivo: S/.{target_cpl:.2f}).{pacing_note}{delta_note}
+Cuenta **{ad_account.name}** ({org.name}). Inversión últimos 7 días: {money(total_spend)}, {total_conv} conversaciones, CPL promedio {money(avg_cpl)} (objetivo: {money(target_cpl)}).{pacing_note}{delta_note}
 
 ## Ganadoras
 {_fmt(ganadoras)}

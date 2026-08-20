@@ -9,8 +9,8 @@ import datetime
 import uuid
 from typing import Any, Dict, List, Optional
 
-from app.services.campaign_chat import formatting
 from app.services.campaign_chat.markdown_utils import normalize_markdown
+from app.utils import formatting
 
 GREETING_TEXT = (
     "¡Hola! Te ayudo a armar una campaña de anuncios en un par de minutos, y también "

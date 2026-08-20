@@ -8,6 +8,7 @@ from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
 from app.services.ai.thresholds import get_thresholds_for_org
+from app.utils.formatting import money
 
 INSUFFICIENT_HISTORY_TITLE = "Histórico insuficiente para análisis estadístico"
 
@@ -83,8 +84,8 @@ class Capa2Statistics:
                         category="PERFORMANCE",
                         title="Tendencia alcista de CPL detectada",
                         description=(
-                            f"En los últimos 3 días, el CPL promedio de '{history[0].campaign_name}' subió a S/.{latest_cpl:.2f}, "
-                            f"un aumento del {percent_increase:.1f}% respecto al promedio anterior de S/.{base_cpl:.2f}."
+                            f"En los últimos 3 días, el CPL promedio de '{history[0].campaign_name}' subió a {money(latest_cpl)}, "
+                            f"un aumento del {percent_increase:.1f}% respecto al promedio anterior de {money(base_cpl)}."
                         ),
                         suggested_action_type="MODIFY_BUDGET" # Reducir budget
                     ))
@@ -98,7 +99,7 @@ class Capa2Statistics:
                         title="Excelente rendimiento: CPL a la baja",
                         description=(
                             f"El CPL promedio de '{history[0].campaign_name}' bajó un {abs(percent_increase):.1f}% "
-                            f"en los últimos 3 días (S/.{latest_cpl:.2f} vs base de S/.{base_cpl:.2f}). Se sugiere ampliar presupuesto."
+                            f"en los últimos 3 días ({money(latest_cpl)} vs base de {money(base_cpl)}). Se sugiere ampliar presupuesto."
                         ),
                         suggested_action_type="MODIFY_BUDGET" # Aumentar budget
                     ))
@@ -133,8 +134,8 @@ class Capa2Statistics:
                             category="PERFORMANCE",
                             title="Anomalía de costo detectada hoy",
                             description=(
-                                f"El CPL de hoy para '{history[0].campaign_name}' es de S/.{today_cpl:.2f}, "
-                                f"lo cual es una anomalía positiva (Z-Score = {z_score:.2f}) respecto a la media habitual de S/.{mean_cpl:.2f}."
+                                f"El CPL de hoy para '{history[0].campaign_name}' es de {money(today_cpl)}, "
+                                f"lo cual es una anomalía positiva (Z-Score = {z_score:.2f}) respecto a la media habitual de {money(mean_cpl)}."
                             ),
                             suggested_action_type="PAUSE_CAMPAIGN"
                         ))

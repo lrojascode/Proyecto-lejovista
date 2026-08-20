@@ -84,10 +84,13 @@ async def test_mock_narrative_uses_real_numbers():
     raw = {"c1": {"name": "Campania1", "spend": 100.0, "conversions": 50,
                   "impressions": 1000, "clicks": 20, "ctr": 2.0, "budget": 30.0}}
     text = OpenRouterClient()._generate_mock_narrative(org, acc, raw)
+    from app.utils.formatting import money
     assert "Campania1" in text
-    assert "S/.2.00" in text          # CPL real = 100/50
-    assert "S/.1.45" not in text      # ya no se inventan cifras
-    assert "S/.12.00" not in text
+    # Se compara contra el formateador canonico: lo que este test cuida es que la
+    # cifra salga de los datos, no como se escribe.
+    assert money(2.00) in text          # CPL real = 100/50
+    assert money(1.45) not in text      # ya no se inventan cifras
+    assert money(12.00) not in text
 
 
 # --- Routing multi-proveedor: OpenAI > Gemini directo > OpenRouter (fallback) ---

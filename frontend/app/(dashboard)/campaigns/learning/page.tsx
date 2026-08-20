@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { money } from "@/lib/format";
 
 // E-1 (auditoría): el backend ya registraba el aprendizaje de la IA en cada
 // creación (GET /campaigns/learning-history) pero ninguna pantalla lo mostraba.
@@ -80,13 +81,13 @@ function OutcomeBlock({ outcome, windowDays }: { outcome?: Record<string, any> |
         <span className={`badge ${badge}`}>{label}</span>
         {outcome.cost_per_conv != null && (
           <span style={{ fontSize: "13px", color: "var(--color-mist)" }}>
-            S/.{Number(outcome.cost_per_conv).toFixed(2)} por conversación
-            {outcome.expected_cost_per_conv != null && ` (esperado ~S/.${Number(outcome.expected_cost_per_conv).toFixed(2)})`}
+            {money(Number(outcome.cost_per_conv))} por conversación
+            {outcome.expected_cost_per_conv != null && ` (esperado ~${money(Number(outcome.expected_cost_per_conv))})`}
           </span>
         )}
         {outcome.conversations != null && outcome.spend != null && (
           <span style={{ fontSize: "13px", color: "var(--color-fog)" }}>
-            · {outcome.conversations} conversación(es) con S/.{Number(outcome.spend).toFixed(2)} de gasto
+            · {outcome.conversations} conversación(es) con {money(Number(outcome.spend))} de gasto
           </span>
         )}
       </div>
