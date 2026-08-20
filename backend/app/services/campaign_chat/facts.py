@@ -21,7 +21,8 @@ from app.services.campaign_chat.grounding import GroundingSet, MAX_GROUNDING_VAL
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat import questions
 from app.utils import formatting
-from app.services.kpi_period import days_of_history, get_kpis_with_deltas
+from app.services.data_coverage import get_account_coverage, narrate_coverage
+from app.services.kpi_period import get_kpis_with_deltas
 from app.services.report_cache import get_report
 
 logger = logging.getLogger("lejovista.facts")
@@ -30,6 +31,9 @@ RANKING_TOP_K = 8
 BREAKDOWN_TOP_K = 3
 
 BLOCK_PRIORITY: List[str] = [
+    # Primero a proposito: si la pregunta ES sobre cobertura, este bloque no
+    # puede ser el que se descarta al llegar al tope de grounding.
+    "cobertura",
     "kpis",
     "reach",
     "ranking",
@@ -152,17 +156,36 @@ async def resolve_facts(
     if window_days is None:
         window_days = slots.get("window_days") or DEFAULT_WINDOW_DAYS
     
-    available_days = await days_of_history(db, ad_account.id) if db is not None else window_days
+    # La cobertura se calculaba ya (para acotar la ventana) y se TIRABA: nunca
+    # entraba a los facts. Por eso, preguntado "¿hasta que dia tenes acceso?",
+    # el modelo contestaba con la ventana de la pregunta —7 dias— y el grounding
+    # lo aprobaba, porque ese 7 si estaba en los facts.
+    coverage = None
+    if db is not None:
+        coverage = await get_account_coverage(db, organization_id, ad_account)
+        available_days = coverage.dias_con_datos
+    else:
+        available_days = window_days
+
     raw_period = Period(window_days, f"los últimos {window_days} días")
     clamped_period = clamp_to_available(raw_period, available_days)
     effective_days = clamped_period.days
     window_label = clamped_period.label
 
-    facts: Dict[str, Any] = {
-        "ventana": window_label,
-        "dias_analizados": effective_days,
-        "topic": topic,
-    }
+    pregunta_de_cobertura = "COVERAGE" in topics_to_check
+
+    facts: Dict[str, Any] = {"topic": topic}
+    if not pregunta_de_cobertura:
+        # `ventana_analizada` y no `ventana`: una clave autodescriptiva vale mas
+        # que cualquier instruccion de prompt. Y si la pregunta ES sobre
+        # cobertura no se emite: no hay nada que confundir.
+        facts["ventana_analizada"] = window_label
+        facts["dias_analizados"] = effective_days
+    if coverage is not None:
+        # Resumen en TODOS los turnos (3 campos, ~6 entradas de grounding): que
+        # el modelo tenga siempre delante la diferencia entre "analice 7 dias" y
+        # "tengo 890".
+        facts["cobertura_resumen"] = coverage.resumen()
     if isinstance(topic, list):
         facts["topics"] = topic
 
@@ -171,6 +194,8 @@ async def resolve_facts(
     priority_map = {b: i for i, b in enumerate(BLOCK_PRIORITY)}
     active_blocks = set(blocks)
     for t in topics_to_check:
+        if t == "COVERAGE":
+            active_blocks.add("cobertura")
         if t in ("SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE", "BEST_CAMPAIGN", "WORST_CAMPAIGN"):
             active_blocks.add("kpis")
         if t in ("REACH", "CTR", "SUMMARY"):
@@ -247,6 +272,12 @@ async def resolve_facts(
                     }
                 }
                 _safe_add_block(facts, reach_dict, "reach")
+
+        elif b == "cobertura":
+            # `coverage` ya se calculo arriba para acotar la ventana: esto no
+            # agrega ni una query.
+            if coverage is not None and "cobertura" not in facts:
+                _safe_add_block(facts, {"cobertura": coverage.as_facts()}, "cobertura")
 
         elif b == "account":
             if "account" not in facts:
@@ -518,6 +549,9 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             daily = kpis.get("gasto_promedio_diario", 0.0)
             cpl = kpis.get("cost_per_conv", 0.0)
             return f"En {ventana} gastaste {_money(spend)} (promedio {_money(daily)}/día) con un CPL de {_money(cpl)}. Te sugiero mantener un ritmo similar o ajustar según tus objetivos de ventas."
+
+        if single_topic == "COVERAGE":
+            return narrate_coverage(facts)
 
         if single_topic == "SCHEDULE":
             con_fechas = [c for c in estructura if c.get("created_time") or c.get("start_time") or c.get("stop_time")]

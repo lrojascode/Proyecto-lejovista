@@ -32,7 +32,8 @@ from app.models.meta_page import MetaPage
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat.slots import strip_accents
 from app.utils import formatting
-from app.services.kpi_period import days_of_history, get_kpis_with_deltas
+from app.services.data_coverage import days_of_history, get_account_coverage, narrate_coverage
+from app.services.kpi_period import get_kpis_with_deltas
 from app.services.report_cache import get_report
 
 # Ventana por defecto cuando la pregunta no menciona ningún período. 7 días es
@@ -59,7 +60,7 @@ _NEEDS_KPIS = {"SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE"}
 _NEEDS_REPORT = {
     "BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "ALERTS",
     "RECOMMENDATIONS", "AUDIENCE", "CTR", "SUMMARY", "CPL", "BUDGET_ADVICE",
-    "REACH", "SPEND_CAP", "SPEND", "SCHEDULE", "OBJECTIVE",
+    "REACH", "SPEND_CAP", "SPEND", "SCHEDULE", "OBJECTIVE", "COVERAGE",
 }
 
 # Forma de pregunta: abre con "¿", cierra con "?", o arranca con una palabra
@@ -76,9 +77,46 @@ _TOPIC_PATTERNS: List[tuple] = [
     ("HOW_IT_WORKS", re.compile(
         r"como funciona|que pod(e|é)s hacer|que haces|para que servis|para que sirve|"
         r"en que me ayudas|que sabes hacer|quien sos|que es esto", re.IGNORECASE)),
+    # NOT_MEASURED y OUT_OF_ACCOUNT van casi primero a proposito. "¿cuanto
+    # vendi?" caeria en SPEND y contestaria con la INVERSION, que es otra cosa.
+    # Las dos son preguntas que el producto NO puede responder, y decirlo es
+    # mejor que improvisar con la metrica mas parecida.
+    ("OUT_OF_ACCOUNT", re.compile(
+        r"(otra|otras) (cuenta|marca|empresa)|"
+        r"(la )?competencia|mis? (otras?|demas) (cuenta|marca)|"
+        r"comparad?[oa] con (el mercado|la industria|otros)|"
+        r"promedio (del|de la) (mercado|industria|rubro)|"
+        r"benchmark", re.IGNORECASE)),
+    ("NOT_MEASURED", re.compile(
+        r"\broas\b|\broi\b|retorno de (la )?inversion|"
+        r"cuant[oa]s? (vend|venta|matricul|alumno|client|inscri)|"
+        r"\bventas?\b|\bingresos?\b|\bfacturacion\b|\brentabilidad\b|"
+        r"cuanto (gane|ganamos|factur)|"
+        r"valor de (vida|cliente)|\bltv\b|ticket promedio", re.IGNORECASE)),
     ("WHY_PAUSED", re.compile(
         r"por que.{0,20}pausad|queda.{0,10}pausad|se activa sola|activar la campana|"
         r"quien la activa|se prende sola", re.IGNORECASE)),
+    # COVERAGE va ANTES que SCHEDULE a proposito. "desde cuando" y "hasta
+    # cuando" matchean los dos, y hoy SCHEDULE se los quedaba: preguntar "¿hasta
+    # que dia tenes datos?" devolvia la fecha de fin de una CAMPANA. El
+    # discriminador es el SUJETO -- datos, informacion, historial, registros,
+    # sincronizado -- no la forma de la pregunta.
+    #
+    # Si tocas este orden, el test que lo cuida es
+    # test_campaign_chat_coverage.py::test_coverage_le_gana_a_schedule.
+    ("COVERAGE", re.compile(
+        r"(hasta|desde) (que|cuando).{0,25}(dato|informacion|historial|registro|base|sincroniz)|"
+        r"(que|cuanto|cuanta).{0,20}(dato|informacion|historial).{0,20}(tenes|tienes|hay|guardas)|"
+        r"tenes.{0,15}(datos|historial|informacion)|"
+        r"(desde cuando|hasta cuando).{0,20}(tenes|tienes|hay)|"
+        r"cuanto (historial|historico)|"
+        r"que (periodo|rango).{0,20}(cubr|abarc|tenes)|"
+        r"(cuantos|cuantas) (dias|meses|anos) (de|con) (datos|historial|informacion)|"
+        r"(cuantos|cuantas) anos.{0,20}(activa|antiguedad|tiene la cuenta)|"
+        r"antiguedad de la cuenta|"
+        r"esta(n)? (todo|todos)? ?(los )?dato|"
+        r"cuando (fue (el|la) )?ultim[oa] (sincroniz|actualiz)|"
+        r"(datos|informacion).{0,12}(actualizad|al dia)", re.IGNORECASE)),
     ("SCHEDULE", re.compile(
         r"cuando (fue|fueron) creada|fecha de (creacion|finalizacion|inicio)|"
         r"cuando (empieza|termina|vence)|hasta cuando|desde cuando|cuanto lleva corriendo",
@@ -141,6 +179,9 @@ _TOPIC_PATTERNS: List[tuple] = [
 TOPIC_DESCRIPTIONS: Dict[str, str] = {
     "HOW_IT_WORKS": "qué es este asistente y qué puede hacer",
     "WHY_PAUSED": "por qué las campañas se crean pausadas y cómo activarlas",
+    "NOT_MEASURED": "ventas, ingresos, ROAS, retorno, matrículas o alumnos — datos que esta cuenta no mide",
+    "OUT_OF_ACCOUNT": "otra cuenta, otra marca, la competencia o promedios del mercado",
+    "COVERAGE": "hasta qué fecha llegan los datos, cuánto historial hay, cuándo fue la última sincronización, qué antigüedad tiene la cuenta",
     "SCHEDULE": "cuándo se crearon las campañas, cuándo empiezan o terminan, cuánto llevan corriendo",
     "OBJECTIVE": "qué objetivo o tipo tiene cada campaña",
     "CPL": "costo por lead / por conversación / por mensaje",
@@ -225,6 +266,23 @@ NO_DATA_TEXT = (
 )
 
 
+NOT_MEASURED_TEXT = (
+    "Eso no lo puedo saber con los datos de esta cuenta, y prefiero decírtelo antes que "
+    "estimarlo.\n\n"
+    "El píxel mide contactos —formularios enviados y conversaciones de WhatsApp iniciadas— "
+    "pero no registra ventas ni matrículas, y el CRM no está conectado. Sin ese dato no hay "
+    "forma de calcular ROAS ni retorno: sería inventarlo.\n\n"
+    "Lo que sí te puedo dar es el costo por contacto, que es distinto del costo por venta: "
+    "cuánto te cuesta cada persona que levanta la mano. ¿Querés verlo?"
+)
+
+OUT_OF_ACCOUNT_TEXT = (
+    "Solo puedo responder sobre {cuenta}; no tengo acceso a otras cuentas, a las de la "
+    "competencia ni a promedios del mercado.\n\n"
+    "Si me preguntás por algo de esta cuenta, con gusto."
+)
+
+
 _money = formatting.money
 _fmt_int = formatting.fmt_int
 
@@ -254,14 +312,37 @@ def _answer_spend(period: Period, kpis: Dict[str, Any], report: Optional[Dict[st
 
 
 def _answer_leads(period: Period, kpis: Dict[str, Any], report: Optional[Dict[str, Any]]) -> str:
+    """Resultados = formularios + conversaciones de WhatsApp, nombrados por lo
+    que son.
+
+    Antes esto decia "conversaciones por WhatsApp" para TODO, incluso en una
+    cuenta que solo corre formularios: el cliente leia una palabra que no
+    correspondia a su dato. Y el total elegia una de las dos metricas en vez de
+    sumarlas, asi que en una cuenta que corre las dos el numero no era
+    "resultados", era "lo que haya".
+    """
     actual = kpis.get("current") or {}
-    conv = actual.get("conversations", 0)
+    total = actual.get("results", actual.get("conversations", 0))
+    leads = actual.get("leads")
+    whatsapp = actual.get("whatsapp")
     delta = (kpis.get("deltas_pct") or {}).get("conversations")
-    linea = f"En {period.label} trajiste {conv} conversaciones por WhatsApp."
+
+    # Solo se desglosa si la cuenta corre LOS DOS tipos. Con uno solo, decir
+    # "35 resultados: 0 formularios y 35 conversaciones" es ruido.
+    if leads and whatsapp:
+        linea = (
+            f"En {period.label} trajiste {total} resultados: "
+            f"{leads} por formulario y {whatsapp} conversaciones de WhatsApp."
+        )
+    elif leads and not whatsapp:
+        linea = f"En {period.label} trajiste {total} leads por formulario."
+    else:
+        linea = f"En {period.label} trajiste {total} conversaciones por WhatsApp."
+
     if delta is not None:
         linea += f" ({_pct(delta)} vs. el período anterior.)"
-    if conv:
-        linea += f"\n\nTe salieron a {_money(actual.get('cost_per_conv'))} cada una en promedio."
+    if total:
+        linea += f"\n\nTe salieron a {_money(actual.get('cost_per_conv'))} cada uno en promedio."
     return linea
 
 
@@ -578,15 +659,31 @@ async def answer_question(
         return HOW_IT_WORKS_TEXT, None
     if topic == "WHY_PAUSED":
         return WHY_PAUSED_TEXT, None
+    if topic == "NOT_MEASURED":
+        return NOT_MEASURED_TEXT, None
+    if topic == "OUT_OF_ACCOUNT":
+        # Nombrar la cuenta activa importa: deja claro sobre QUE si se puede
+        # preguntar, en vez de un "no" a secas.
+        return OUT_OF_ACCOUNT_TEXT.format(cuenta=f"la cuenta {ad_account.name}"), None
     if topic == "DESTINATION":
         return await _answer_destination(db, organization_id, slots), None
+    if topic == "COVERAGE":
+        # No pasa por report ni por KPIs: la pregunta no es sobre el
+        # rendimiento de un periodo, es sobre QUE hay en la base.
+        cov = await get_account_coverage(db, organization_id, ad_account)
+        facts = {"cobertura": cov.as_facts()}
+        return narrate_coverage(facts), facts
 
     if topic not in _KPI_ANSWERS and topic not in _REPORT_ANSWERS:
         return OUT_OF_SCOPE_TEXT, None
 
+    # Cobertura con scope de organizacion. La anterior
+    # (`kpi_period.days_of_history`) asumia continuidad --un rango con huecos
+    # reportaba dias que no tenia-- y era la unica query del modulo sin filtro
+    # por organizacion.
     periodo = clamp_to_available(
         period or Period(ANSWER_WINDOW_DAYS, f"los últimos {ANSWER_WINDOW_DAYS} días"),
-        await days_of_history(db, ad_account.id),
+        await days_of_history(db, organization_id, ad_account.id),
     )
 
     report = None

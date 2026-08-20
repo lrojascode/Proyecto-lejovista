@@ -22,6 +22,26 @@ from tests.test_campaign_chat_gates import _create_session_at_review
 from app.utils import formatting
 
 
+def _coverage(dias: int):
+    """Cobertura falsa con N dias de datos.
+
+    `facts` dejo de usar `days_of_history` (que asumia continuidad y no
+    filtraba por organizacion) y ahora pide la cobertura completa, que ademas
+    entra a los facts en vez de calcularse y tirarse.
+    """
+    from app.services.data_coverage import Coverage
+    import datetime as _dt
+    hoy = _dt.date.today()
+    return Coverage(
+        primer_dia=hoy - _dt.timedelta(days=max(0, dias - 1)),
+        ultimo_dia=hoy,
+        dias_con_datos=dias,
+        detalle_diario_desde=hoy - _dt.timedelta(days=max(0, dias - 1)),
+        backfill_completo=True,
+    )
+
+
+
 def _turn_id() -> str:
     return str(uuid.uuid4())
 
@@ -290,10 +310,16 @@ def _mock_report(mocker):
                 f"app.services.campaign_chat.{mod}.get_report",
                 autospec=True, return_value=report,
             )
-            mocker.patch(
-                f"app.services.campaign_chat.{mod}.days_of_history",
-                autospec=True, return_value=365,
-            )
+            if mod == "facts":
+                mocker.patch(
+                    f"app.services.campaign_chat.{mod}.get_account_coverage",
+                    return_value=_coverage(365),
+                )
+            else:
+                mocker.patch(
+                    f"app.services.campaign_chat.{mod}.days_of_history",
+                    autospec=True, return_value=365,
+                )
             mocker.patch(
                 f"app.services.campaign_chat.{mod}.get_kpis_with_deltas",
                 autospec=True, return_value=kpis if kpis is not None else _fake_kpis(),
@@ -455,7 +481,11 @@ def test_llm_catalog_matches_the_topics_the_code_can_answer():
         _KPI_ANSWERS, _REPORT_ANSWERS, _TOPIC_PATTERNS, TOPIC_DESCRIPTIONS,
     )
     assert {t for t, _ in _TOPIC_PATTERNS} == set(TOPIC_DESCRIPTIONS)
-    estaticos = {"HOW_IT_WORKS", "WHY_PAUSED", "DESTINATION"}
+    # COVERAGE se responde fuera de los dos mapas, igual que DESTINATION: la
+    # pregunta no es sobre el rendimiento de un periodo sino sobre QUE hay en la
+    # base, asi que no pasa ni por el reporte ni por los KPIs.
+    estaticos = {"HOW_IT_WORKS", "WHY_PAUSED", "DESTINATION", "COVERAGE",
+                 "NOT_MEASURED", "OUT_OF_ACCOUNT"}
     assert set(TOPIC_DESCRIPTIONS) == estaticos | set(_KPI_ANSWERS) | set(_REPORT_ANSWERS)
 
 
@@ -506,7 +536,7 @@ async def test_h4bis_pregunta_compuesta_devuelve_las_dos_metricas(mocker):
     from app.models.ad_account import AdAccount
     from app.services.campaign_chat.facts import resolve_facts
 
-    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=90)
+    mocker.patch("app.services.campaign_chat.facts.get_account_coverage", return_value=_coverage(90))
     mocker.patch(
         "app.services.campaign_chat.facts.get_kpis_with_deltas",
         return_value={
@@ -550,7 +580,7 @@ async def test_h4bis_chat_session_compound_question_endpoint(
     async_client: AsyncClient, db_session: AsyncSession, mocker
 ):
     """H4-bis: Mensaje compuesto a través del endpoint HTTP responde con ambas métricas en modo MOCK."""
-    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=90)
+    mocker.patch("app.services.campaign_chat.facts.get_account_coverage", return_value=_coverage(90))
     mocker.patch(
         "app.services.campaign_chat.facts.get_kpis_with_deltas",
         return_value={

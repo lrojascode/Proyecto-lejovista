@@ -531,11 +531,22 @@ async def test_mock_sync_creates_reporting_entities(db_session: AsyncSession):
     assert await _count(MetaCreative) == 3
     assert await _count(CustomAudience) == 3
 
-    snap = (await db_session.execute(
-        select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id).limit(1)
-    )).scalar_one()
-    assert snap.reach > 0
-    assert snap.conversations == snap.conversions
+    snaps = (await db_session.execute(
+        select(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id)
+    )).scalars().all()
+    assert all(s.reach > 0 for s in snaps)
+
+    # resultados = leads + WhatsApp, contado sobre valores crudos. Antes este
+    # test exigia `conversations == conversions`, que se cumplia solo porque
+    # TODAS las campanas mock eran de WhatsApp y `conversations` traia los leads
+    # como proxy. Con una cuenta de un solo tipo, la diferencia entre "elegir
+    # uno" y "sumar" no se ve nunca -- que es justo el bug que esto cubre.
+    assert all(s.results is not None for s in snaps)
+    assert all(s.results >= s.conversions for s in snaps)
+
+    # El mock tiene que producir una cuenta MIXTA: alguna campana donde
+    # resultados sea estrictamente mayor que los leads.
+    assert any(s.results > s.conversions for s in snaps)
 
 
 # --- P-2.2: el sync real parsea adsets/ads/creativos/audiencias desde Meta ---
