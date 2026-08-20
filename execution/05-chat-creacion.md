@@ -1,5 +1,39 @@
 # 05 · La creación de campañas, contra `ORDEN-CAMPANA-ITS.md`
 
+> **Estado: hecho del 1 al 4 y parte del 5. El bloque de plantillas de
+> formulario nativo queda pendiente, a propósito.**
+>
+> | # | Qué | Estado |
+> |---|---|---|
+> | 1 | Verificar tras crear (`issues_info`) | ✅ paso 6 de la Saga |
+> | 6 | Pausar antes de editar | ✅ |
+> | 9 | Prohibir acortadores | ✅ con explicación del porqué |
+> | 3 | Edad/género configurable, apagado por defecto | ✅ |
+> | 4 | Piso de presupuesto por aprendizaje | ✅ avisa, no bloquea |
+> | 2 | Geo por países | ✅ conviven países y región |
+> | 7 | Token de tipo en el nombre | ✅ sale de las reglas |
+> | 1 (plantillas) | **Formulario nativo y LATAM** | ❌ **pendiente** |
+> | 8 | Fórmula de copy por organización | ❌ pendiente (material de prompt) |
+> | 10 | Revisar exclusión de Audience Network | ❌ pendiente |
+> | 11 | Token de System User | ❌ pendiente (documentación) |
+>
+> **Por qué las plantillas quedaron afuera, y no es pereza.** Un formulario de
+> leads nativo no es un parámetro distinto: es otra forma de creativo. Hay que
+> sincronizar los formularios de la cuenta (`/leadgen_forms`), poder elegir uno,
+> y hacer que `CreativeBuilder` ramifique — hoy arma el `object_story_spec`
+> asumiendo WhatsApp, con `call_to_action` fijo, `page_welcome_message`
+> obligatorio y el deep link de WhatsApp en `link_data.link`.
+>
+> Eso es un pase propio, y **el write-back está encendido en producción** con la
+> cuenta piloto en el allowlist. Dejar a medias un camino de creación que
+> escribe con dinero real es peor que dejarlo sin empezar: media plantilla no
+> falla al crearla, falla al entregar, y eso se descubre gastando.
+>
+> Decisión de producto ya tomada: la plantilla es **fija por organización**, no
+> elegible en el chat. El propio archivo lo recomienda —"un cliente de cursos
+> SAP siempre hace lo mismo"— y el terreno ya está listo: `geo_countries`,
+> `campaign_name_type_token` y `use_age_targeting` son reglas por organización.
+
 ## Contexto
 
 `ORDEN-CAMPANA-ITS.md` es la orden de trabajo con la que hoy se arman campañas a
