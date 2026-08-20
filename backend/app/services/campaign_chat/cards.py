@@ -9,6 +9,8 @@ import datetime
 import uuid
 from typing import Any, Dict, List, Optional
 
+from app.services.campaign_chat.markdown_utils import normalize_markdown
+
 GREETING_TEXT = (
     "¡Hola! Te ayudo a armar una campaña de anuncios en un par de minutos, y también "
     "te respondo cómo van las que ya tenés (gasto, leads, cuál rinde mejor).\n\n"
@@ -56,6 +58,11 @@ def _base(role: str) -> Dict[str, Any]:
 
 
 def text_message(text: str, role: str = "assistant", quick_replies: Optional[List[str]] = None) -> Dict[str, Any]:
+    # Solo el texto del asistente pasa por el normalizador: es el único que se
+    # renderiza como markdown generado (canónico o reescrito por el LLM). El
+    # texto del usuario se muestra tal cual lo escribió.
+    if role == "assistant":
+        text = normalize_markdown(text)
     msg = {**_base(role), "type": "text", "text": text}
     if quick_replies:
         msg["quick_replies"] = quick_replies

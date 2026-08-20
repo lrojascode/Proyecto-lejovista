@@ -119,7 +119,7 @@ async def test_ask_mode_answering_questions_does_not_push_creation(
     # La respuesta no debe tener el remate "¿Qué querés promocionar?"
     all_text = " ".join(m.get("text", "") for m in msg_data["messages"])
     assert "¿Qué querés promocionar?" not in all_text
-    assert "S/. 800.00" in all_text
+    assert "S/. 800,00" in all_text
 
 
 @pytest.mark.asyncio

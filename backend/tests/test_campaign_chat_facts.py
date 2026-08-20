@@ -41,10 +41,10 @@ async def test_resolve_facts_kpis_and_calculator(mocker):
     assert facts["account"]["tope_restante"] == 3000.0
     assert facts["account"]["dias_para_agotar_tope"] == 75.0  # 3000 / 40.0
 
-    # Texto canónico
-    assert "S/. 1200.00" in canonical
+    # Texto canónico (formato local: separador de miles con punto, decimales con coma)
+    assert "S/. 1.200,00" in canonical
     assert "+20.0%" in canonical
-    assert "S/. 3000.00" in canonical
+    assert "S/. 3.000,00" in canonical
 
 
 @pytest.mark.asyncio

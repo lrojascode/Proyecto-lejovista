@@ -162,11 +162,24 @@ class ReportBuilder:
         for s in snaps:
             a = agg.setdefault(s.campaign_id, {
                 "name": s.campaign_name, "status": s.status, "budget": s.budget,
+                "objective": s.objective, "created_time": s.created_time,
+                "start_time": s.start_time, "stop_time": s.stop_time,
                 "spend": 0.0, "impressions": 0, "reach": 0, "clicks": 0,
                 "conversions": 0, "conversations": 0, "freqs": [],
             })
             a["name"] = s.campaign_name
             a["status"] = s.status
+            # Estructurales (constantes por campaña): nos quedamos con el valor
+            # del snapshot más reciente que sí lo trajo — Meta no siempre lo
+            # devuelve, y no queremos que un día sin dato pise uno con dato.
+            if s.objective:
+                a["objective"] = s.objective
+            if s.created_time:
+                a["created_time"] = s.created_time
+            if s.start_time:
+                a["start_time"] = s.start_time
+            if s.stop_time:
+                a["stop_time"] = s.stop_time
             a["spend"] += s.spend
             a["impressions"] += s.impressions
             a["reach"] += s.reach
@@ -184,6 +197,10 @@ class ReportBuilder:
             freq = (sum(a["freqs"]) / len(a["freqs"])) if a["freqs"] else 0
             out.append({
                 "campaign_id": cid, "name": a["name"], "status": a["status"], "budget": a["budget"],
+                "objective": a["objective"],
+                "created_time": a["created_time"].isoformat() if a["created_time"] else None,
+                "start_time": a["start_time"].isoformat() if a["start_time"] else None,
+                "stop_time": a["stop_time"].isoformat() if a["stop_time"] else None,
                 "spend": round(a["spend"], 2), "reach": a["reach"], "impressions": a["impressions"],
                 "frequency": round(freq, 2), "ctr": round(ctr, 2), "conversations": conv,
                 "cost_per_conv": round(cost, 2), "label": classify_campaign(cost, conv, target_cpl),

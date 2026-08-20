@@ -32,6 +32,7 @@ BLOCK_PRIORITY: List[str] = [
     "kpis",
     "reach",
     "ranking",
+    "estructura",
     "account",
     "alerts",
     "recommendations",
@@ -43,12 +44,24 @@ BLOCK_DESCRIPTIONS: Dict[str, str] = {
     "kpis": "métricas clave: inversión, conversaciones, costo por lead y variaciones",
     "reach": "alcance de personas, impresiones, frecuencia y CPM",
     "ranking": "ranking de campañas ordenadas por rendimiento",
+    "estructura": "objetivo, estado y fechas (creación, inicio, fin) de cada campaña",
     "account": "datos de la cuenta publicitaria, estado, tope de gasto y saldo restante",
     "alerts": "alertas y desvíos detectados en la cuenta",
     "recommendations": "sugerencias y recomendaciones optimizadas",
     "breakdowns": "desglose por ubicación/placement y datos demográficos",
     "destination": "página de Facebook y número de WhatsApp de destino",
 }
+
+def _money(value: Optional[float]) -> str:
+    """Formatea un monto con la convención del resto del producto: separador
+    de miles con punto, decimales con coma (`S/. 2.399,97`). El fact numérico
+    detrás (`2399.97`) no cambia — solo el texto canónico que lo muestra."""
+    v = float(value or 0)
+    sign = "-" if v < 0 else ""
+    entero, dec = f"{abs(v):.2f}".split(".")
+    entero_agrupado = f"{int(entero):,}".replace(",", ".")
+    return f"S/. {sign}{entero_agrupado},{dec}"
+
 
 def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
     """Verifica si anadir block_dict mantiene el total dentro de MAX_GROUNDING_VALUES.
@@ -77,6 +90,8 @@ PLAN_BY_TOPIC: Dict[str, List[str]] = {
     "ALERTS": ["alerts", "kpis"],
     "RECOMMENDATIONS": ["recommendations", "kpis"],
     "AUDIENCE": ["breakdowns", "ranking"],
+    "SCHEDULE": ["estructura"],
+    "OBJECTIVE": ["estructura"],
     "DESTINATION": ["destination"],
     "HOW_IT_WORKS": ["destination"],
     "WHY_PAUSED": [],
@@ -164,6 +179,8 @@ async def resolve_facts(
             active_blocks.add("ranking")
         if t in ("AUDIENCE", "SUMMARY"):
             active_blocks.add("breakdowns")
+        if t in ("SCHEDULE", "OBJECTIVE"):
+            active_blocks.add("estructura")
         if t in ("ALERTS", "SUMMARY"):
             active_blocks.add("alerts")
         if t in ("RECOMMENDATIONS", "SUMMARY", "BUDGET_ADVICE"):
@@ -272,6 +289,50 @@ async def resolve_facts(
                 }
                 _safe_add_block(facts, rank_dict, "ranking")
 
+        elif b == "estructura":
+            if "campanas_estructura" not in facts and db is not None:
+                latest_dates = (
+                    select(
+                        CampaignSnapshot.campaign_id,
+                        func.max(CampaignSnapshot.date).label("max_date"),
+                    )
+                    .where(CampaignSnapshot.ad_account_id == ad_account.id)
+                    .group_by(CampaignSnapshot.campaign_id)
+                    .subquery()
+                )
+                q = select(CampaignSnapshot).join(
+                    latest_dates,
+                    (CampaignSnapshot.campaign_id == latest_dates.c.campaign_id)
+                    & (CampaignSnapshot.date == latest_dates.c.max_date),
+                ).where(CampaignSnapshot.ad_account_id == ad_account.id)
+                rows = (await db.execute(q)).scalars().all()
+                today_d = date.today()
+                estructura = []
+                for r in rows:
+                    created = r.created_time.date() if r.created_time else None
+                    start = r.start_time.date() if r.start_time else None
+                    stop = r.stop_time.date() if r.stop_time else None
+                    ref_start = start or created
+                    # "Días corriendo" precalculado en Python: el modelo cita, no calcula (AI-1).
+                    if ref_start and stop:
+                        dias_corriendo = (stop - ref_start).days
+                    elif ref_start and r.status == "ACTIVE":
+                        dias_corriendo = (today_d - ref_start).days
+                    else:
+                        dias_corriendo = None
+                    estructura.append({
+                        "name": r.campaign_name,
+                        "status": r.status,
+                        "objective": r.objective,
+                        "created_time": created.isoformat() if created else None,
+                        "start_time": start.isoformat() if start else None,
+                        "stop_time": stop.isoformat() if stop else None,
+                        "dias_corriendo": dias_corriendo,
+                    })
+                estructura.sort(key=lambda c: c["name"] or "")
+                est_dict = {"campanas_estructura": estructura}
+                _safe_add_block(facts, est_dict, "estructura")
+
         elif b == "breakdowns" and report:
             if "placements" not in facts:
                 bk_dict = {
@@ -312,6 +373,43 @@ async def resolve_facts(
     return facts, canonical_text
 
 
+_OBJECTIVE_LABELS: Dict[str, str] = {
+    "OUTCOME_ENGAGEMENT": "Mensajes / interacción",
+    "OUTCOME_LEADS": "Generación de leads",
+    "OUTCOME_SALES": "Ventas",
+    "OUTCOME_TRAFFIC": "Tráfico",
+    "OUTCOME_AWARENESS": "Reconocimiento de marca",
+    "OUTCOME_APP_PROMOTION": "Promoción de app",
+    "MESSAGES": "Mensajes / interacción",
+    "LEAD_GENERATION": "Generación de leads",
+}
+
+
+def _objective_label(objective: Optional[str]) -> str:
+    if not objective:
+        return "sin objetivo registrado"
+    return _OBJECTIVE_LABELS.get(objective, objective)
+
+
+def _no_estructura_text(facts: Dict[str, Any], reason: str) -> str:
+    """"No sé" honesto para el bloque `estructura`: dice qué falta y ofrece lo
+    que sí hay (cuántas campañas y cuántas activas), sin tocar `account` — así
+    nunca puede colarse el tope de gasto en una respuesta que no lo pidió."""
+    campanas = facts.get("campanas_estructura", [])
+    if reason == "fechas":
+        detalle = "las fechas de creación y finalización de tus campañas todavía no se sincronizan desde Meta"
+    elif reason == "objetivo":
+        detalle = "el objetivo de tus campañas todavía no se sincroniza desde Meta"
+    else:
+        detalle = "todavía no tengo datos estructurales de tus campañas sincronizados desde Meta"
+    if campanas:
+        activas = sum(1 for c in campanas if c.get("status") == "ACTIVE")
+        extra = f" Sí puedo decirte que tenés {len(campanas)} campañas ({activas} activas)."
+    else:
+        extra = " Sincronizá desde el Resumen y volvé a preguntarme."
+    return f"Por ahora {detalle}.{extra}"
+
+
 def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> str:
     """Genera texto canónico determinista según el tema y los facts pre-computados."""
     ventana = facts.get("ventana", "el período analizado")
@@ -319,6 +417,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
     acc = facts.get("account", {})
     alc = facts.get("alcance", {})
     camps = facts.get("campaigns", [])
+    estructura = facts.get("campanas_estructura", [])
 
     if topic == "HOW_IT_WORKS":
         return questions.HOW_IT_WORKS_TEXT
@@ -341,7 +440,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
 
         if single_topic == "SPEND_CAP":
             if acc.get("spend_cap", 0) > 0:
-                return f"Tu tope de gasto en la cuenta es S/. {acc['spend_cap']:.2f} y te quedan S/. {acc['tope_restante']:.2f} disponibles."
+                return f"Tu tope de gasto en la cuenta es {_money(acc['spend_cap'])} y te quedan {_money(acc['tope_restante'])} disponibles."
             return f"Tu cuenta {ad_account.name} no tiene un tope de gasto (spend cap) configurado en Meta Ads."
 
         if single_topic == "SPEND":
@@ -351,9 +450,9 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
                 return questions.NO_DATA_TEXT
             delta = kpis.get("delta_spend_pct")
             delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
-            text = f"En {ventana} llevás S/. {spend:.2f} de inversión{delta_str}."
+            text = f"En {ventana} llevás {_money(spend)} de inversión{delta_str}."
             if "account" in facts and acc.get("spend_cap", 0) > 0:
-                text += f" Tu tope de gasto en la cuenta es S/. {acc['spend_cap']:.2f} y te quedan S/. {acc['tope_restante']:.2f}."
+                text += f" Tu tope de gasto en la cuenta es {_money(acc['spend_cap'])} y te quedan {_money(acc['tope_restante'])}."
             return text
 
         if single_topic == "REACH":
@@ -390,20 +489,20 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             delta = kpis.get("delta_cpl_pct")
             delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
             best_cpl = camps[0] if camps else None
-            best_str = f" La más eficiente es {best_cpl['name']} con S/. {best_cpl['cost_per_conv']:.2f} por lead." if best_cpl else ""
-            return f"Tu costo por conversación promedio en {ventana} es de S/. {cpl:.2f}{delta_str}.{best_str}"
+            best_str = f" La más eficiente es {best_cpl['name']} con {_money(best_cpl['cost_per_conv'])} por lead." if best_cpl else ""
+            return f"Tu costo por conversación promedio en {ventana} es de {_money(cpl)}{delta_str}.{best_str}"
 
         if single_topic == "BEST_CAMPAIGN":
             if not camps:
                 return f"No hay campañas activas con métricas registradas en {ventana}."
             best = camps[0]
-            return f"Tu mejor campaña en {ventana} es {best['name']} con {best['conversations']} conversaciones a un costo de S/. {best['cost_per_conv']:.2f} por contacto."
+            return f"Tu mejor campaña en {ventana} es {best['name']} con {best['conversations']} conversaciones a un costo de {_money(best['cost_per_conv'])} por contacto."
 
         if single_topic == "WORST_CAMPAIGN":
             if not camps:
                 return f"No hay campañas registradas en {ventana}."
             worst = camps[-1]
-            return f"La campaña con menor rendimiento en {ventana} es {worst['name']} con un costo por contacto de S/. {worst['cost_per_conv']:.2f} ({worst['conversations']} conversaciones)."
+            return f"La campaña con menor rendimiento en {ventana} es {worst['name']} con un costo por contacto de {_money(worst['cost_per_conv'])} ({worst['conversations']} conversaciones)."
 
         if single_topic == "CAMPAIGNS_OVERVIEW":
             total_act = facts.get("total_campanas_activas", 0)
@@ -415,7 +514,35 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             spend = kpis.get("spend", 0.0)
             daily = kpis.get("gasto_promedio_diario", 0.0)
             cpl = kpis.get("cost_per_conv", 0.0)
-            return f"En {ventana} gastaste S/. {spend:.2f} (promedio S/. {daily:.2f}/día) con un CPL de S/. {cpl:.2f}. Te sugiero mantener un ritmo similar o ajustar según tus objetivos de ventas."
+            return f"En {ventana} gastaste {_money(spend)} (promedio {_money(daily)}/día) con un CPL de {_money(cpl)}. Te sugiero mantener un ritmo similar o ajustar según tus objetivos de ventas."
+
+        if single_topic == "SCHEDULE":
+            con_fechas = [c for c in estructura if c.get("created_time") or c.get("start_time") or c.get("stop_time")]
+            if not con_fechas:
+                return _no_estructura_text(facts, reason="fechas")
+            lineas = ["Fechas de tus campañas:"]
+            for c in estructura[:RANKING_TOP_K]:
+                creada = c.get("created_time") or c.get("start_time")
+                creada_txt = f"creada el {creada}" if creada else "sin fecha de creación registrada"
+                stop = c.get("stop_time")
+                if stop:
+                    fin_txt = f"finalizó el {stop}"
+                elif c.get("status") == "ACTIVE":
+                    dias = c.get("dias_corriendo")
+                    fin_txt = f"sigue activa ({dias} días corriendo)" if dias is not None else "sigue activa, sin fecha de fin"
+                else:
+                    fin_txt = "sin fecha de finalización registrada"
+                lineas.append(f"• {c['name']}: {creada_txt}, {fin_txt}.")
+            return "\n".join(lineas)
+
+        if single_topic == "OBJECTIVE":
+            con_objetivo = [c for c in estructura if c.get("objective")]
+            if not con_objetivo:
+                return _no_estructura_text(facts, reason="objetivo")
+            lineas = [f"Objetivos de tus campañas ({len(estructura)} en total):"]
+            for c in estructura[:RANKING_TOP_K]:
+                lineas.append(f"• {c['name']}: {_objective_label(c.get('objective'))} ({c.get('status')}).")
+            return "\n".join(lineas)
 
     # Multi-tema o CUSTOM_PLAN: recorremos los bloques presentes en facts según BLOCK_PRIORITY
     parts: List[str] = []
@@ -429,13 +556,13 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
         delta = kpis.get("delta_spend_pct")
         delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
         if "SPEND" in topics_set and "LEADS" not in topics_set and "CPL" not in topics_set:
-            parts.append(f"En {ventana} llevás S/. {spend:.2f} de inversión{delta_str}.")
+            parts.append(f"En {ventana} llevás {_money(spend)} de inversión{delta_str}.")
         elif "LEADS" in topics_set and "SPEND" not in topics_set:
             parts.append(f"En {ventana} lograste {convs} conversaciones iniciadas.")
         elif "CPL" in topics_set and "SPEND" not in topics_set:
-            parts.append(f"En {ventana} tu costo por conversación promedio es S/. {cpl:.2f}.")
+            parts.append(f"En {ventana} tu costo por conversación promedio es {_money(cpl)}.")
         else:
-            parts.append(f"En {ventana} llevás S/. {spend:.2f} invertidos y {convs} conversaciones (CPL promedio S/. {cpl:.2f}){delta_str}.")
+            parts.append(f"En {ventana} llevás {_money(spend)} invertidos y {convs} conversaciones (CPL promedio {_money(cpl)}){delta_str}.")
 
     # Bloque 2: reach
     if "alcance" in facts:
@@ -444,22 +571,45 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
         freq = alc.get("frecuencia", 0.0)
         parts.append(f"Alcanzaste a {personas:,} personas con {impresiones:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", "."))
 
-    # Bloque 3: account
-    if "account" in facts and acc.get("spend_cap", 0) > 0:
-        parts.append(f"Tu tope de gasto en la cuenta es S/. {acc['spend_cap']:.2f} y te quedan S/. {acc['tope_restante']:.2f} disponibles.")
+    # Bloque 3: estructura (objetivo / fechas). Si el tema se pidió pero el
+    # dato no está, lo decimos explícitamente en vez de dejar que otro bloque
+    # (ej. ranking) quede como única respuesta y tape el "no sé" (punto 2).
+    if "campanas_estructura" in facts:
+        con_fechas = [c for c in estructura if c.get("created_time") or c.get("start_time") or c.get("stop_time")]
+        con_objetivo = [c for c in estructura if c.get("objective")]
+        if "SCHEDULE" in topics_set:
+            if con_fechas:
+                c = con_fechas[0]
+                creada = c.get("created_time") or c.get("start_time")
+                parts.append(f"{c['name']} se creó el {creada}." if creada else f"No tengo fecha de creación para {c['name']}.")
+            else:
+                parts.append(_no_estructura_text(facts, reason="fechas"))
+        if "OBJECTIVE" in topics_set:
+            if con_objetivo:
+                c = con_objetivo[0]
+                parts.append(f"El objetivo de {c['name']} es {_objective_label(c.get('objective'))}.")
+            else:
+                parts.append(_no_estructura_text(facts, reason="objetivo"))
 
-    # Bloque 4: ranking
+    # Bloque 4: account (solo si el propio tema lo pidió — nunca de relleno)
+    if "account" in facts and acc.get("spend_cap", 0) > 0 and ("SPEND_CAP" in topics_set or "BUDGET_ADVICE" in topics_set):
+        parts.append(f"Tu tope de gasto en la cuenta es {_money(acc['spend_cap'])} y te quedan {_money(acc['tope_restante'])} disponibles.")
+
+    # Bloque 5: ranking
     if "campaigns" in facts and camps:
         best = camps[0]
-        parts.append(f"Tu mejor campaña es {best['name']} con {best['conversations']} conversaciones a S/. {best['cost_per_conv']:.2f} por contacto.")
+        parts.append(f"Tu mejor campaña es {best['name']} con {best['conversations']} conversaciones a {_money(best['cost_per_conv'])} por contacto.")
 
-    # Bloque 5: destino
+    # Bloque 6: destino
     if "destino" in facts and facts["destino"]:
         d = facts["destino"]
         parts.append(f"Destino: página {d.get('name')}.")
 
     if parts:
         return " ".join(parts)
+
+    if "campanas_estructura" in facts:
+        return _no_estructura_text(facts, reason="estructura")
 
     # Fallback si no hay bloques reconocidos
     spend = kpis.get("spend", 0.0)

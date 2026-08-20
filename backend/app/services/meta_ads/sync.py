@@ -175,6 +175,11 @@ class MetaAdsSyncService:
             ad_account.organization_id, ad_account.id, 2, 5, "campaigns", "Sincronizando campañas e insights..."
         )
 
+        today = datetime.date.today()
+
+        def _mock_dt(days_ago: int) -> datetime.datetime:
+            return datetime.datetime.combine(today - datetime.timedelta(days=days_ago), datetime.time(10, 30))
+
         # Definir campañas mockeadas
         campaign_definitions = [
             {
@@ -192,6 +197,10 @@ class MetaAdsSyncService:
                     "📲 Escríbenos por WhatsApp y cotiza sin compromiso."
                 ),
                 "creative_cta_type": "WHATSAPP_MESSAGE",
+                "objective": "OUTCOME_ENGAGEMENT",
+                "created_time": _mock_dt(60),
+                "start_time": _mock_dt(60),
+                "stop_time": None,
             },
             {
                 "id": "camp_vulcanizado",
@@ -200,7 +209,11 @@ class MetaAdsSyncService:
                 "budget": 50.0,
                 "ctr_base": 0.6,
                 "cpl_target": 4.50,
-                "high_frequency": True
+                "high_frequency": True,
+                "objective": "OUTCOME_ENGAGEMENT",
+                "created_time": _mock_dt(40),
+                "start_time": _mock_dt(40),
+                "stop_time": None,
             },
             {
                 "id": "camp_thhn",
@@ -209,9 +222,31 @@ class MetaAdsSyncService:
                 "budget": 40.0,
                 "ctr_base": 0.25,
                 "cpl_target": 12.00,
-                "failing": True
+                "failing": True,
+                "objective": "OUTCOME_LEADS",
+                "created_time": _mock_dt(20),
+                "start_time": _mock_dt(20),
+                "stop_time": None,
             }
         ]
+
+        # Objetivo y fechas son estructurales (de la campaña, no del día): un
+        # solo UPDATE por campaña alcanza para poner al día TODOS sus snapshots
+        # históricos ya guardados, igual que en `_sync_real_data`.
+        for c in campaign_definitions:
+            await self.db.execute(
+                update(CampaignSnapshot)
+                .where(
+                    CampaignSnapshot.ad_account_id == ad_account.id,
+                    CampaignSnapshot.campaign_id == c["id"],
+                )
+                .values(
+                    objective=c["objective"],
+                    created_time=c["created_time"],
+                    start_time=c["start_time"],
+                    stop_time=c["stop_time"],
+                )
+            )
 
         # Determinar el rango de días a sincronizar
         # En FULL creamos 30 días. En INCREMENTAL sólo ayer y hoy. El
@@ -220,8 +255,7 @@ class MetaAdsSyncService:
             days_to_sync = settings.SNAPSHOT_RETENTION_DAYS
         else:
             days_to_sync = 30 if sync_type == "FULL" else 2
-        today = datetime.date.today()
-        
+
         records_created = 0
         
         for c in campaign_definitions:
@@ -327,6 +361,10 @@ class MetaAdsSyncService:
                     campaign_id=c["id"],
                     campaign_name=c["name"],
                     status=c["status"],
+                    objective=c["objective"],
+                    created_time=c["created_time"],
+                    start_time=c["start_time"],
+                    stop_time=c["stop_time"],
                     budget=c["budget"],
                     spend=spend,
                     impressions=impressions,
@@ -513,7 +551,7 @@ class MetaAdsSyncService:
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/campaigns",
                 {
-                    "fields": "id,name,status,daily_budget,lifetime_budget",
+                    "fields": "id,name,status,objective,daily_budget,lifetime_budget,created_time,start_time,stop_time",
                     "limit": 200,
                 },
                 access_token=token
@@ -544,8 +582,30 @@ class MetaAdsSyncService:
             campaigns_map[c["id"]] = {
                 "name": c.get("name", "Unknown"),
                 "status": c.get("status", "UNKNOWN"),
-                "budget": budget
+                "budget": budget,
+                "objective": c.get("objective"),
+                "created_time": self._parse_meta_datetime(c.get("created_time")),
+                "start_time": self._parse_meta_datetime(c.get("start_time")),
+                "stop_time": self._parse_meta_datetime(c.get("stop_time")),
             }
+
+        # Objetivo y fechas son datos de la CAMPAÑA, no del día: un solo UPDATE
+        # por campaña alcanza para poner al día TODOS sus snapshots históricos
+        # ya guardados, sin recorrer 180 días de insights (no son backfill diario).
+        for camp_id, info in campaigns_map.items():
+            await self.db.execute(
+                update(CampaignSnapshot)
+                .where(
+                    CampaignSnapshot.ad_account_id == ad_account.id,
+                    CampaignSnapshot.campaign_id == camp_id,
+                )
+                .values(
+                    objective=info.get("objective"),
+                    created_time=info.get("created_time"),
+                    start_time=info.get("start_time"),
+                    stop_time=info.get("stop_time"),
+                )
+            )
 
         if "ERROR" in campaigns_insights or "error" in campaigns_insights:
             self._maybe_mark_expired(ad_account, campaigns_insights)
@@ -584,6 +644,10 @@ class MetaAdsSyncService:
             snapshot.campaign_name = camp_info["name"]
             snapshot.status = camp_info["status"]
             snapshot.budget = camp_info["budget"]
+            snapshot.objective = camp_info.get("objective")
+            snapshot.created_time = camp_info.get("created_time")
+            snapshot.start_time = camp_info.get("start_time")
+            snapshot.stop_time = camp_info.get("stop_time")
             snapshot.spend = spend
             snapshot.impressions = impressions
             snapshot.reach = reach
@@ -680,6 +744,28 @@ class MetaAdsSyncService:
         except Exception:
             return None
 
+    @staticmethod
+    def _parse_meta_datetime(value):
+        """Parsea las fechas ISO 8601 con offset que devuelve Meta
+        (`2026-01-15T10:30:00-0500`, sin los dos puntos del offset que exige
+        `datetime.fromisoformat` antes de Python 3.11).
+
+        Campo opcional en la respuesta de Meta: si no viene o no se puede
+        parsear, devuelve `None` sin romper el sync.
+        """
+        if not value or not isinstance(value, str):
+            return None
+        normalized = value.strip()
+        if len(normalized) >= 5 and normalized[-5] in "+-" and normalized[-3] != ":":
+            normalized = f"{normalized[:-2]}:{normalized[-2:]}"
+        try:
+            dt = datetime.datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+        return dt
+
     # Whitelist explícita de action types que representan un "lead de formulario".
     # Antes se usaba un fallback difuso (`"lead" in at or "conversion" in at`) que
     # agarraba de casualidad los leads de esta cuenta
@@ -745,13 +831,14 @@ class MetaAdsSyncService:
         budget_map: Dict[str, float] = {}      # adset_id -> presupuesto diario nominal
         status_map: Dict[str, str] = {}        # adset_id -> status
         campaign_of: Dict[str, str] = {}       # adset_id -> campaign_id
+        end_time_map: Dict[str, Any] = {}      # adset_id -> end_time (datetime u None)
 
         # P-1: estructura e insights son lecturas independientes (insights no
         # depende de la estructura para pedirse, solo para combinarse después).
         structure, insights = await asyncio.gather(
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/adsets",
-                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status",
+                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status,end_time",
                  "limit": 200},
                 access_token=token,
             ),
@@ -771,6 +858,7 @@ class MetaAdsSyncService:
                 budget_map[aid] = float(a.get("daily_budget") or a.get("lifetime_budget") or 0) / 100.0
                 status_map[aid] = a.get("status")
                 campaign_of[aid] = a.get("campaign_id")
+                end_time_map[aid] = self._parse_meta_datetime(a.get("end_time"))
         else:
             self._maybe_mark_expired(ad_account, structure)
 
@@ -811,6 +899,7 @@ class MetaAdsSyncService:
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
             row.targeting_summary = targeting_map.get(adset_id, {})
             row.budget = budget_map.get(adset_id, 0.0)
+            row.end_time = end_time_map.get(adset_id)
 
         return dict(adset_budget_by_campaign)
 

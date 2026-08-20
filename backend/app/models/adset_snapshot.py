@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from typing import Optional
 import uuid
 from sqlalchemy import String, Integer, Float, DateTime, Date, ForeignKey, JSON, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -30,6 +31,10 @@ class AdsetSnapshot(Base):
 
     # Resumen del targeting (geo, edad, placements, tipo de audiencia)
     targeting_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    # Fecha de fin del adset en Meta. Nullable: no siempre viene, y su ausencia
+    # no puede romper el sync.
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     date: Mapped[date] = mapped_column(Date, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

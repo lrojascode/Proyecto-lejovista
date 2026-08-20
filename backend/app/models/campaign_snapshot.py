@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from typing import Optional
 import uuid
 from sqlalchemy import String, Integer, Float, DateTime, Date, ForeignKey, JSON, Index, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -14,6 +15,12 @@ class CampaignSnapshot(Base):
     campaign_id: Mapped[str] = mapped_column(String, index=True)
     campaign_name: Mapped[str] = mapped_column(String)
     status: Mapped[str] = mapped_column(String)  # ACTIVE, PAUSED, ARCHIVED
+    # Datos estructurales de Meta (objetivo declarado y calendario de la campaña).
+    # Nullable: Meta no siempre los devuelve, y un campo ausente no puede romper el sync.
+    objective: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    stop_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     budget: Mapped[float] = mapped_column(Float, default=0.0)
     spend: Mapped[float] = mapped_column(Float, default=0.0)
     impressions: Mapped[int] = mapped_column(Integer, default=0)

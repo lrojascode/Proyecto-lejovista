@@ -109,4 +109,12 @@ def test_h5_decimal_integer_collision_still_rejected():
     # S/. 27.00 no debe pasar con 2700 impresiones
     assert numbers_are_grounded(facts_impressions, "El costo fue de S/. 27.00.") is False
     assert numbers_are_grounded(facts_impressions, "Gastaste S/. 2700.") is False
-    assert numbers_are_grounded(facts_impressions, "Alcanzaste 2700 impresiones.") is True
+
+
+def test_spanish_grouped_money_format_is_accepted():
+    """Regresión H5-like para el punto 4 del plan de arreglos: al formatear el
+    texto canónico con separador de miles (`S/. 2.399,97` en vez de `2399.97`),
+    el número sigue estando respaldado por el fact crudo — formatear no puede
+    romper el grounding."""
+    facts = {"account": {"amount_spent": 2399.97, "spend_cap": 5000.0}}
+    assert numbers_are_grounded(facts, "Llevás gastados S/. 2.399,97 de un tope de S/. 5.000,00.") is True

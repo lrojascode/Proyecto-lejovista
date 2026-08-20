@@ -21,6 +21,7 @@ La clasificación es por regex sobre el texto sin tildes y en minúsculas: son
 preguntas básicas y repetitivas, no hace falta un modelo para entenderlas.
 """
 import re
+from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
@@ -57,7 +58,7 @@ _NEEDS_KPIS = {"SPEND", "LEADS", "CPL", "SUMMARY", "BUDGET_ADVICE"}
 _NEEDS_REPORT = {
     "BEST_CAMPAIGN", "WORST_CAMPAIGN", "CAMPAIGNS_OVERVIEW", "ALERTS",
     "RECOMMENDATIONS", "AUDIENCE", "CTR", "SUMMARY", "CPL", "BUDGET_ADVICE",
-    "REACH", "SPEND_CAP", "SPEND",
+    "REACH", "SPEND_CAP", "SPEND", "SCHEDULE", "OBJECTIVE",
 }
 
 # Forma de pregunta: abre con "¿", cierra con "?", o arranca con una palabra
@@ -77,6 +78,11 @@ _TOPIC_PATTERNS: List[tuple] = [
     ("WHY_PAUSED", re.compile(
         r"por que.{0,20}pausad|queda.{0,10}pausad|se activa sola|activar la campana|"
         r"quien la activa|se prende sola", re.IGNORECASE)),
+    ("SCHEDULE", re.compile(
+        r"cuando (fue|fueron) creada|fecha de (creacion|finalizacion|inicio)|"
+        r"cuando (empieza|termina|vence)|hasta cuando|desde cuando|cuanto lleva corriendo",
+        re.IGNORECASE)),
+    ("OBJECTIVE", re.compile(r"\bobjetivo\b|tipos? de campanas?", re.IGNORECASE)),
     ("CPL", re.compile(
         r"\bcpl\b|costo por (lead|conversacion|mensaje)|cuanto (me )?(cuesta|sale) cada|"
         r"precio por lead|costo por contacto", re.IGNORECASE)),
@@ -134,6 +140,8 @@ _TOPIC_PATTERNS: List[tuple] = [
 TOPIC_DESCRIPTIONS: Dict[str, str] = {
     "HOW_IT_WORKS": "qué es este asistente y qué puede hacer",
     "WHY_PAUSED": "por qué las campañas se crean pausadas y cómo activarlas",
+    "SCHEDULE": "cuándo se crearon las campañas, cuándo empiezan o terminan, cuánto llevan corriendo",
+    "OBJECTIVE": "qué objetivo o tipo tiene cada campaña",
     "CPL": "costo por lead / por conversación / por mensaje",
     "BEST_CAMPAIGN": "cuál campaña rinde mejor",
     "WORST_CAMPAIGN": "cuál campaña rinde peor o está fallando",
@@ -364,6 +372,67 @@ def _answer_campaigns_overview(period: Period, report: Dict[str, Any]) -> str:
     return "\n".join(lineas)
 
 
+_OBJECTIVE_LABELS: Dict[str, str] = {
+    "OUTCOME_ENGAGEMENT": "Mensajes / interacción",
+    "OUTCOME_LEADS": "Generación de leads",
+    "OUTCOME_SALES": "Ventas",
+    "OUTCOME_TRAFFIC": "Tráfico",
+    "OUTCOME_AWARENESS": "Reconocimiento de marca",
+    "OUTCOME_APP_PROMOTION": "Promoción de app",
+    "MESSAGES": "Mensajes / interacción",
+    "LEAD_GENERATION": "Generación de leads",
+}
+
+
+def _objective_label(objective: Optional[str]) -> str:
+    if not objective:
+        return "sin objetivo registrado"
+    return _OBJECTIVE_LABELS.get(objective, objective)
+
+
+def _answer_schedule(period: Period, report: Dict[str, Any]) -> str:
+    campaigns = report.get("campaigns") or []
+    if not campaigns:
+        return NO_DATA_TEXT
+    con_fechas = [c for c in campaigns if c.get("created_time") or c.get("start_time") or c.get("stop_time")]
+    if not con_fechas:
+        return (
+            "Todavía no tengo las fechas de creación ni de finalización de tus campañas "
+            "sincronizadas desde Meta. Sí puedo decirte cuáles están activas y cuánto gastaron."
+        )
+    hoy = date.today()
+    lineas = ["Fechas de tus campañas:"]
+    for c in campaigns[:8]:
+        creada = (c.get("created_time") or c.get("start_time") or "")[:10]
+        creada_txt = f"creada el {creada}" if creada else "sin fecha de creación registrada"
+        stop = (c.get("stop_time") or "")[:10]
+        if stop:
+            fin_txt = f"finalizó el {stop}"
+        elif c.get("status") == "ACTIVE" and creada:
+            dias = (hoy - date.fromisoformat(creada)).days
+            fin_txt = f"sigue activa ({dias} días corriendo)"
+        else:
+            fin_txt = "sin fecha de finalización registrada"
+        lineas.append(f"• {c['name']}: {creada_txt}, {fin_txt}.")
+    return "\n".join(lineas)
+
+
+def _answer_objective(period: Period, report: Dict[str, Any]) -> str:
+    campaigns = report.get("campaigns") or []
+    if not campaigns:
+        return NO_DATA_TEXT
+    con_objetivo = [c for c in campaigns if c.get("objective")]
+    if not con_objetivo:
+        return (
+            "Todavía no tengo el objetivo de tus campañas sincronizado desde Meta. "
+            "Sí puedo decirte cuáles están activas y cuánto gastaron."
+        )
+    lineas = [f"Objetivos de tus campañas ({len(campaigns)} en total):"]
+    for c in campaigns[:8]:
+        lineas.append(f"• {c['name']}: {_objective_label(c.get('objective'))} ({c.get('status')}).")
+    return "\n".join(lineas)
+
+
 def _answer_alerts(period: Period, report: Dict[str, Any]) -> str:
     alerts = report.get("alerts") or {}
     red = alerts.get("red") or []
@@ -459,6 +528,8 @@ _REPORT_ANSWERS = {
     "ALERTS": _answer_alerts,
     "RECOMMENDATIONS": _answer_recommendations,
     "AUDIENCE": _answer_audience,
+    "SCHEDULE": _answer_schedule,
+    "OBJECTIVE": _answer_objective,
 }
 
 
