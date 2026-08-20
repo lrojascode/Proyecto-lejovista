@@ -31,6 +31,7 @@ from app.schemas.response_schemas import (
     AiModelsResponse, BusinessPoliciesResponse, MessageResponse, InvitationResponse,
     CampaignRulesConfigResponse, AIThresholdsConfigResponse,
 )
+from app.utils.urls import invitation_url
 from app.utils.security import get_current_user, require_role
 from app.utils.throttle import enforce_cooldown
 from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
@@ -756,7 +757,7 @@ async def list_org_invitations(
     invitations = res.scalars().all()
     out = []
     for inv in invitations:
-        invite_url = f"http://{org.slug}.{settings.BASE_DOMAIN}/invitations/{inv.token}"
+        invite_url = invitation_url(inv.token)
         out.append(
             InvitationResponse(
                 id=inv.id,
@@ -811,7 +812,7 @@ async def create_org_invitation(
     await db.commit()
     await db.refresh(inv)
 
-    invite_url = f"http://{org.slug}.{settings.BASE_DOMAIN}/invitations/{token}"
+    invite_url = invitation_url(token)
 
     # 3. Enviar email de invitación
     subject = f"Has sido invitado a unirte a {org.name} en LejoVista"
