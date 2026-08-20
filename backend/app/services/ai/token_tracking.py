@@ -21,13 +21,12 @@ logger = logging.getLogger("lejovista.tokens")
 # Las claves se comparan por prefijo, tolerando sufijos de fecha/región y el
 # prefijo "google/" que usa OpenRouter.
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    # El input cacheado es ~10x mas barato (Luna: 0.02 contra 0.20), pero el
-    # `usage` que guardamos no separa los tokens cacheados de los normales, asi
-    # que todo el input se cobra a tarifa plena. La estimacion queda POR ENCIMA
-    # del costo real, nunca por debajo -- que es la direccion segura para un
-    # numero que el cliente usa para decidir cuanto gastar.
-    "gpt-5.6-luna": {"input": 0.20, "output": 1.20},
-    "gpt-5.6-sol": {"input": 5.00, "output": 30.00},
+    # `cached` es la tarifa del input que OpenAI sirve desde su cache: ~10x mas
+    # barato. Es opcional -- un modelo sin `cached` cobra TODO el input a tarifa
+    # plena, que sobrestima el costo. Se prefiere sobrestimar antes que
+    # subestimar: este numero se usa para decidir cuanto gastar.
+    "gpt-5.6-luna": {"input": 0.20, "cached": 0.02, "output": 1.20},
+    "gpt-5.6-sol": {"input": 5.00, "cached": 0.50, "output": 30.00},
     "gpt-5.4-nano": {"input": 0.05, "output": 0.40},
     "gpt-5.4-mini": {"input": 0.25, "output": 2.00},
     "gpt-5.4": {"input": 1.25, "output": 10.00},
@@ -52,10 +51,23 @@ def _normalize_model(model: str) -> str:
     return model.split("/", 1)[1] if "/" in model else model
 
 
-def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) -> Optional[float]:
-    """Costo estimado en USD. Los tokens de razonamiento facturan como output y
-    ya vienen incluidos en `completion_tokens` en las APIs compatibles, así que
-    no se suman aparte. Devuelve None si el modelo no está en la tabla."""
+def estimate_cost_usd(
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cached_tokens: int = 0,
+) -> Optional[float]:
+    """Costo estimado en USD. Devuelve None si el modelo no está en la tabla.
+
+    Tres detalles que hacen que el número sea el real y no uno aproximado:
+
+    * Los tokens de razonamiento facturan como output y ya vienen incluidos en
+      `completion_tokens` en las APIs compatibles, así que no se suman aparte.
+    * `cached_tokens` viene DENTRO de `prompt_tokens` (no se suma al total): se
+      resta para cobrar solo la parte no cacheada a tarifa plena.
+    * Si el modelo no declara tarifa de cacheado, todo el input va a tarifa
+      plena — sobrestima, que es la dirección segura.
+    """
     key = _normalize_model(model)
     price = MODEL_PRICING.get(key)
     if not price:
@@ -63,7 +75,18 @@ def estimate_cost_usd(model: str, prompt_tokens: int, completion_tokens: int) ->
         price = next((v for k, v in MODEL_PRICING.items() if key.startswith(k)), None)
     if not price:
         return None
-    cost = (prompt_tokens / 1_000_000) * price["input"] + (completion_tokens / 1_000_000) * price["output"]
+
+    # Clamp defensivo: si el proveedor reportara mas cacheados que prompt
+    # tokens, restarlos daria un input negativo y un costo por debajo del real.
+    cached = max(0, min(int(cached_tokens or 0), int(prompt_tokens or 0)))
+    sin_cachear = max(0, int(prompt_tokens or 0) - cached)
+    tarifa_cache = price.get("cached", price["input"])
+
+    cost = (
+        (sin_cachear / 1_000_000) * price["input"]
+        + (cached / 1_000_000) * tarifa_cache
+        + (completion_tokens / 1_000_000) * price["output"]
+    )
     return round(cost, 6)
 
 
@@ -85,6 +108,15 @@ async def record_token_usage(
         details = usage.get("completion_tokens_details") or {}
         reasoning_tokens = int(details.get("reasoning_tokens", 0) or 0)
 
+        # Input servido desde la cache del proveedor. Viene DENTRO de
+        # `prompt_tokens`, no aparte. Gemini lo llama `cached_content_token_count`.
+        prompt_details = usage.get("prompt_tokens_details") or {}
+        cached_tokens = int(
+            prompt_details.get("cached_tokens")
+            or usage.get("cached_content_token_count")
+            or 0
+        )
+
         row = AITokenUsage(
             organization_id=ctx.organization_id,
             ad_account_id=ctx.ad_account_id,
@@ -94,9 +126,12 @@ async def record_token_usage(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             reasoning_tokens=reasoning_tokens,
+            cached_tokens=cached_tokens,
             total_tokens=total_tokens,
             used_cot=reasoning_tokens > 0,
-            estimated_cost_usd=estimate_cost_usd(model, prompt_tokens, completion_tokens),
+            estimated_cost_usd=estimate_cost_usd(
+                model, prompt_tokens, completion_tokens, cached_tokens
+            ),
         )
         async with async_session() as session:
             session.add(row)

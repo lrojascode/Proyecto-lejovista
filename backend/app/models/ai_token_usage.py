@@ -33,6 +33,9 @@ class AITokenUsage(Base):
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     reasoning_tokens: Mapped[int] = mapped_column(Integer, default=0)  # cadena de pensamiento
+    # Input servido desde la cache del proveedor, ~10x mas barato. Viene DENTRO
+    # de `prompt_tokens`, no aparte: sumarlo al total contaria doble.
+    cached_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     used_cot: Mapped[bool] = mapped_column(Boolean, default=False)
 
