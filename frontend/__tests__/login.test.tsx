@@ -2,13 +2,14 @@ import '@testing-library/jest-dom'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import Login from '../app/(auth)/login/page'
 import { api } from '../lib/api'
+import { APP_NAME } from '../lib/config'
 
 // Mock the API module
 jest.mock('../lib/api', () => ({
   api: {
     login: jest.fn(),
     signup: jest.fn(),
-    getTenantBrand: jest.fn().mockResolvedValue({ name: "LejoVista", display_name: "LejoVista", logo_url: null, accent_color: null }),
+    getTenantBrand: jest.fn().mockResolvedValue({ name: "cliente-demo", display_name: "Cliente Demo", logo_url: null, accent_color: null }),
   }
 }))
 
@@ -28,7 +29,10 @@ describe('Login Page', () => {
 
   it('renders login form by default', () => {
     render(<Login />)
-    expect(screen.getByRole('heading', { name: /LejoVista/i })).toBeInTheDocument()
+    // Sin marca de tenant cargada todavia, el encabezado muestra el nombre del
+    // producto. Se compara contra la constante y no contra el literal: asi un
+    // rebrand no vuelve a romper este test por una razon que no es la suya.
+    expect(screen.getByRole('heading', { name: APP_NAME })).toBeInTheDocument()
     expect(screen.getByPlaceholderText('correo@empresa.com')).toBeInTheDocument()
     expect(screen.getByPlaceholderText('••••••••')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Iniciar Sesión/i })).toBeInTheDocument()

@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { getTenantSlugFromHostname } from "@/lib/config";
+import { APP_NAME, getTenantSlugFromHostname } from "@/lib/config";
 
 import type { TenantBrand } from "@/lib/types";
 
@@ -88,7 +88,7 @@ export default function Login() {
             </div>
           ) : null}
           <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em", marginBottom: "0.25rem" }}>
-            {brand?.display_name || brand?.name || "LejoVista"}
+            {brand?.display_name || brand?.name || APP_NAME}
           </h2>
           {tenantSlug ? (
             <p style={{ color: "var(--color-fog)", fontSize: "14px" }}>

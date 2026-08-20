@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
-import { getTenantSlugFromHostname } from "@/lib/config";
+import { APP_NAME, getTenantSlugFromHostname } from "@/lib/config";
 import { api, hasAccessToken } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 import { AdAccountProvider, useAdAccount } from "@/components/providers/AdAccountProvider";
@@ -128,6 +128,18 @@ function AccountScopedContent({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Acento de la organizacion como variable CSS inline.
+ *
+ * Se valida el hex aca ademas de en el backend: este valor viaja desde la BD
+ * hasta una propiedad CSS, y el dia que alguien agregue otra via de escritura
+ * que no pase por el schema, esta guarda sigue en pie. Si no es un hex valido
+ * se devuelve undefined y manda el default del design system.
+ */
+function accentStyle(color?: string | null): React.CSSProperties | undefined {
+  if (!color || !/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) return undefined;
+  return { ["--color-accent" as string]: color } as React.CSSProperties;
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
@@ -187,7 +199,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         fontSize: "1.2rem",
         color: "var(--text-secondary)"
       }}>
-        Cargando LejoVista...
+        Cargando {APP_NAME}...
       </div>
     );
   }
@@ -205,7 +217,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <AdAccountProvider orgId={orgId}>
-      <div className="dashboard-wrapper">
+      <div className="dashboard-wrapper" style={accentStyle(brand?.accent_color)}>
         {/* Botón de Menú Móvil */}
         <button
           className="menu-toggle-btn"
@@ -229,7 +241,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </div>
               ) : null}
               <h1 style={{ fontSize: "18px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.011em" }}>
-                {brand?.display_name || brand?.name || "LejoVista"}
+                {brand?.display_name || brand?.name || APP_NAME}
               </h1>
               <span className="mono" style={{ color: "var(--color-ash)" }}>
                 tenant: {orgSlug}

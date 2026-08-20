@@ -1,4 +1,4 @@
-/* LejoVista — Design System "Midnight Precision Instrument" (estilo Linear)
+/* Agente DX IA — Design System "Midnight Precision Instrument" (estilo Linear)
    Tokens según DESIGN.md. Fuentes: Inter Variable + JetBrains Mono vía next/font (app/layout.tsx). */
 
 :root {
@@ -19,6 +19,16 @@
   --color-signal-teal: #02b8cc;
   --color-iris-violet: #6366f1;
   --color-lavender: #8b5cf6;
+
+  /* ===== Acento de acción =====
+     Token SEMANTICO: las piezas de accion se refieren a `--color-accent`, nunca
+     al color por su nombre. Eso es lo que permite que una organizacion pise su
+     acento (Organization.accent_color, inyectado inline por el layout) sin
+     tocar una sola regla de CSS ni redesplegar.
+     `--color-accent-ink` es el texto SOBRE el acento: va junto, porque un
+     acento oscuro con tinta oscura queda ilegible. */
+  --color-accent: var(--color-signal-teal);
+  --color-accent-ink: var(--color-void);
   /* Extensión de la guía: tercer estado semántico (alerta). Solo badges/estado, nunca acción. */
   --color-amber: #f2994a;
 
@@ -230,10 +240,11 @@ a {
   border-color: var(--color-mist);
 }
 
-/* Botón primario — acid-lime: LA única pieza cromática de acción (máx. 1 por vista) */
+/* Botón primario — el acento: LA única pieza cromática de acción (máx. 1 por vista).
+   Regla de diseño deliberada; cambiar el color no es excusa para pintar más cosas. */
 .btn-primary {
-  background: var(--color-acid-lime);
-  color: var(--color-void);
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
   border: none;
   border-radius: var(--radius-buttons);
   padding: 10px 16px;

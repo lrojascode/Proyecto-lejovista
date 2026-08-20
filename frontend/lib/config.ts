@@ -1,4 +1,10 @@
-// Configuración de Frontend para LejoVista
+// Configuración de Frontend para Agente DX IA
+
+// Nombre visible del producto. Fuente única: antes estaba repetido literal en 8
+// archivos, que es por lo que renombrarlo tocaba 8 lugares en vez de 1.
+// OJO: no renombrar identificadores técnicos (servicios de Docker, loggers
+// `lejovista.*`, slugs de tenant) — eso rompe despliegue y logs.
+export const APP_NAME = "Agente DX IA";
 
 export const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || "localhost:3000";
 

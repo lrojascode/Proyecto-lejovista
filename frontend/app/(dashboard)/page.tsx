@@ -7,6 +7,7 @@ import {
 } from "recharts";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { api } from "@/lib/api";
+import { APP_NAME } from "@/lib/config";
 import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -480,7 +481,7 @@ export default function DashboardPage() {
           padding: 48, textAlign: "center", display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center", gap: 16
         }}>
-          <h2 style={{ fontSize: 24, fontWeight: 590, letterSpacing: "-0.012em" }}>Bienvenido a LejoVista</h2>
+          <h2 style={{ fontSize: 24, fontWeight: 590, letterSpacing: "-0.012em" }}>Bienvenido a {APP_NAME}</h2>
           <p style={{ color: "var(--color-fog)", maxWidth: 520, fontSize: 15, lineHeight: 1.6 }}>
             Parece que tu cuenta publicitaria aún no tiene datos sincronizados, o acabas de conectarla.
             Inicia la sincronización para extraer las campañas de Meta Ads y generar los primeros diagnósticos con Inteligencia Artificial.
