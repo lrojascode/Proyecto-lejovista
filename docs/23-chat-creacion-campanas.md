@@ -160,3 +160,33 @@ Tras la auditoría exhaustiva del sistema conversacional y de sincronización, s
 ## 10. Verificado manualmente (2026-08-13)
 
 Flujo completo contra el stack local de Docker Compose con `MOCK_SERVICES=true`: sesión → objetivo en texto libre ("quiero vender más cables eléctricos para constructoras en Lima", producto normalizado a "Cables Electricos Constructoras Lima") → foto subida → tarjeta de revisión con evidencia real del histórico sincronizado (mock) → Aceptar → tarjeta de riesgo BAJO con preflight → Aceptar → Saga dispatchada → `CampaignDraft` creado y polling/advance funcionando en vivo. Ver capturas en la sesión de trabajo.
+
+---
+
+## El chat de consultas en 2026-08 (`execution/04`)
+
+- **`resultados = leads + conversaciones de WhatsApp`.** El producto colapsaba
+  las dos métricas con `conversations or conversions` — ELEGÍA una en vez de
+  sumar —, así que en una cuenta que corre los dos tipos el total no era
+  "resultados", era "lo que haya". No se puede sumar las dos columnas viejas:
+  `conversations` trae los leads como proxy cuando no hay mensajería. Por eso
+  hay una columna `results` que el sync llena desde los `actions` crudos, y el
+  WhatsApp real sale de `results - conversions`.
+  El chat nombra cada cosa por lo que es: *"35 resultados: 10 por formulario y
+  25 conversaciones de WhatsApp"*.
+- **Bloque `cobertura`.** La cobertura se calculaba en cada turno para acotar la
+  ventana y se **tiraba**: nunca entraba a los facts. Por eso, preguntado *"¿hasta
+  qué día tenés acceso?"*, el modelo contestaba con la ventana de la pregunta —7
+  días— y el grounding lo aprobaba, porque ese 7 sí estaba en los facts.
+  Ahora hay `app/services/data_coverage.py`, la clave se llama
+  `ventana_analizada`, un `cobertura_resumen` va en todos los turnos, y
+  `cobertura` es el primero de `BLOCK_PRIORITY`.
+- **`COVERAGE` va antes que `SCHEDULE`** en el catálogo de regex: los dos
+  matchean *"desde cuándo"* y `SCHEDULE` se los quedaba, así que la pregunta
+  devolvía la fecha de fin de una campaña. Hay test en las dos direcciones.
+- **Dos temas de honestidad.** `NOT_MEASURED` (ventas, ROAS, matrículas: el
+  píxel mide contactos, no ventas, y el CRM no está conectado) y
+  `OUT_OF_ACCOUNT` (otra cuenta, la competencia, promedios del mercado).
+  *"¿cuánto vendí?"* caía en `SPEND` y contestaba con la **inversión**.
+- **`effective_status`.** Se sincroniza en los tres niveles. `status` dice cómo
+  quedó configurada la campaña; `effective_status` dice si está entregando.

@@ -82,8 +82,11 @@ flowchart LR
 - Cada paso recibe/retorna un `context` dict y persiste su avance con `_merge_draft_result` en `CampaignDraft.payload["result"]` (campaign_id, adset_id, creative_id, ad_id) → el frontend hace un **polling real** (`GET /campaigns/drafts/{id}`).
 - Cada POST está gateado por `simulate_meta_writes_for(cuenta)`: en simulación se generan IDs `mock_*`; en real se toma `result.id` de Meta.
 - Reintentos por paso ante `TransientMetaError` (`autoretry_for`, backoff, `max_retries=3`).
-- **Targeting** (`build_targeting`): edad/dispositivo/placements salen de las señales del histórico ganador (o defaults), no hardcodeados; siempre incluye `facebook_reels` y excluye Instagram.
+- **Targeting** (`build_targeting`): dispositivo y placements salen de las señales del histórico ganador (o defaults); siempre incluye `facebook_reels`.
+  **La edad NO se segmenta por defecto** (2026-08): la data es plana entre rangos y segmentar obliga a apagar Advantage+, así que desactivaba justo lo que conviene usar. Se reactiva por organización con `use_age_targeting`.
+  **Geografía**: `geo_countries` (códigos ISO) cuando está configurada, y si no la región de siempre. Antes solo se entendía una clave de región, así que una campaña LATAM era imposible de armar.
 - **Advantage+ vs edad mínima** (`_ADVANTAGE_AUDIENCE_MAX_AGE_MIN`): Meta impone **dos reglas simultáneas** sobre `targeting_automation.advantage_audience` — (a) `1870188`: no se admite `=1` con `age_min > 25` (con Advantage+ la edad es solo una *sugerencia*, no un control); (b) `1870227`: el campo es **obligatorio**, hay que declararlo explícitamente como `1` o `0` (omitirlo también rechaza el adset). Por eso siempre se envía, y vale `0` cuando el histórico ganador apunta a un público mayor (caso real: 45-54) — se prioriza esa señal como restricción **dura**. Con públicos de 25 o menos —incluido el default sin histórico (`age_min=25`)— vale `1`.
+  **Desde 2026-08 el caso normal es `1`**: al no segmentar por edad, el público queda amplio y Advantage+ deja de ser un caso especial.
 - **Creativo** (`CreativeBuilder`): construye `object_story_spec` con `link_data` (imagen) o `video_data` (UGC), `call_to_action` WhatsApp y `page_welcome_message` obligatorio para destino WhatsApp.
 - **Nomenclatura**: `{MARCA}_MSJ_{PRODUCTO}_{MESAÑO}` con marca derivada de `AdAccount.name` (`derive_brand_code`).
 
@@ -126,3 +129,33 @@ La Saga es el motor; la página de creación es donde el cliente toma la decisi�
 - **Cierre orientado a la acción correcta**: al terminar, recuerda que la campaña quedó **PAUSADA**, que hay que subir el spend cap si está topado, y ofrece un deep-link directo a Ads Manager (`adsmanager.facebook.com/...&selected_campaign_ids=`) para revisarla y activarla manualmente.
 
 > El endpoint `/campaigns/suggestion` devuelve también `objective`, `optimization_goal`, `destination_type` y `winning_ad_copy`, que hoy el tipo `Suggestion` del frontend y la UI **no consumen** (la UI de creación no expone un selector para editarlos). Es una asimetría menor, no un bug: ahora que esos parámetros pueden variar por organización (M-2, resuelto), el contrato ya los transporta — falta solo la superficie de UI si en algún momento un tenant necesita ver/editar sus propias reglas en vez de solo heredarlas.
+
+---
+
+## Disciplinas agregadas en 2026-08 (`execution/05`)
+
+Vienen del documento de trabajo con el que se arman campañas a mano.
+
+- **Verificación posterior (paso 6 de la Saga).** Se releen los cuatro niveles
+  en Meta y se guarda `issues_info` en `payload["result"]["verificacion"]`.
+  Antes, *"creada con éxito"* solo significaba *"Meta aceptó el POST"* — y Meta
+  acepta la creación y después marca el objeto con problemas de política. La
+  verificación no falla la Saga: los objetos ya existen y no poder releerlos no
+  es motivo para disparar el rollback.
+- **Pausar antes de editar.** `MetaCampaignModifier` pausa cualquier objeto
+  `ACTIVE` antes de un cambio estructural y lo devuelve a su estado. Si no se
+  puede pausar, no se edita; si la edición falla, queda pausado a propósito.
+- **Acortadores prohibidos en el copy.** Rompen la atribución: el clic pierde el
+  parámetro de seguimiento y la conversión no vuelve a su campaña, así que el
+  costo se ve más caro sin razón visible. Lista cerrada, con el porqué en el
+  mensaje de error.
+- **Piso de presupuesto por aprendizaje** (`min_daily_budget_for_learning`,
+  S/16/día). **Avisa, no bloquea**: por debajo, el conjunto no junta los ~50
+  eventos semanales que Meta necesita y nunca sale de la fase de aprendizaje.
+  El aviso viaja en `warnings` de `POST /campaigns/preflight`.
+
+**Pendiente y deliberado:** las plantillas de formulario de leads nativo y LATAM.
+Un formulario nativo no es un parámetro distinto, es otra forma de creativo
+(`/leadgen_forms` + ramificación de `CreativeBuilder`). Con el write-back
+encendido en producción, media plantilla no falla al crearla: falla al entregar,
+y eso se descubre gastando. Ver `execution/05-chat-creacion.md`.

@@ -96,3 +96,38 @@ Además de las env vars, hay configuración de dominio en código:
 - `app/services/ai/thresholds.py` — `AIThresholds` (umbrales de las reglas y estadística), con punto de extensión `get_thresholds_for_org`.
 - `app/services/ai/token_tracking.py` — `MODEL_PRICING` (precios por modelo para estimar costo).
 - `app/services/policy_catalog.py` — políticas de Meta por rubro (contenido curado).
+
+---
+
+## Settings agregados en 2026-08
+
+| Setting | Default | Qué gobierna |
+|---|---|---|
+| `HOT_DAILY_RETENTION_DAYS` | 400 | Hasta dónde baja el backfill diario. 12 meses + 1 de margen, para que "este mes contra el mismo del año pasado" se resuelva en caliente |
+| `SNAPSHOT_RETENTION_DAYS` | 400 | A partir de cuándo el archivador mueve filas a las tablas `_archive` |
+| `STATISTICS_WINDOW_DAYS` | 180 | Ventana de la Capa 2 estadística. Series muy largas diluyen las anomalías recientes |
+| `CHAT_MAX_HISTORY_DAYS` | 400 | Techo de la ventana de consulta con detalle diario en el chat |
+
+Los cuatro eran **un solo número** (`SNAPSHOT_RETENTION_DAYS = 180`) que
+gobernaba cuatro decisiones que no tienen por qué coincidir, así que cambiar una
+arrastraba las otras tres.
+
+### Reglas por organización (`app/tenant_rules/campaign_defaults.py`)
+
+| Regla | Default | Qué hace |
+|---|---|---|
+| `use_age_targeting` | `False` | Segmentar por edad. Apagado porque la data es plana entre rangos y hacerlo obliga a apagar Advantage+ |
+| `min_daily_budget_for_learning` | `16.0` | Piso diario por conjunto. **Avisa, no bloquea** |
+| `geo_countries` | `[]` | Países (ISO). Vacío = se usa `default_geo_region_key` |
+| `campaign_name_type_token` | `"MSJ"` | Segmento de tipo del nombre de campaña |
+
+### Módulos por organización
+
+`Organization.enabled_modules` (JSON). **NULL o vacío = todos habilitados**,
+mismo contrato que `campaign_rules_overrides`. El catálogo está en
+`app/tenant_rules/modules.py` y se administra desde `/admin` — no desde
+`PATCH /organizations/my`, para que el módulo siga siendo una decisión
+comercial y no una preferencia del cliente.
+
+`User.is_platform_admin` habilita `/admin`. **No da acceso a los datos de
+ningún tenant.**

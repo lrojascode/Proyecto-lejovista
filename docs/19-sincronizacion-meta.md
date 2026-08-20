@@ -18,7 +18,24 @@ La tarea `sync_ad_account` está decorada con `autoretry_for=(TransientMetaError
 |------|-----------|---------|
 | `FULL` | Conexión de una cuenta nueva | 30 días (`last_30d`) |
 | `INCREMENTAL` | Trigger manual + Beat diario 06:00 | ayer (`yesterday`) |
-| `BACKFILL` | Una vez por cuenta, después del primer `FULL` | últimos `SNAPSHOT_RETENTION_DAYS` (180 por defecto) |
+| `BACKFILL` | Los meses que la reconciliación mensual reporta incompletos | un mes calendario por chunk, del más reciente al más viejo |
+
+> **Cómo se decide qué falta (2026-08).** El `BACKFILL` ya no pregunta *"¿corrí
+> alguna vez?"* —un `SyncJob COMPLETED`, que dejaba un backfill cortado marcado
+> como hecho para siempre—. Ahora reconcilia: compara el gasto que Meta reporta
+> por mes (`ad_account_spend_monthly`, bajado con `date_preset=maximum`) contra
+> la suma de los snapshots diarios. La diferencia **es** cuánto falta, medido en
+> plata. Ver `app/services/history_reconciliation.py`.
+>
+> Es idempotente y cuesta **cero llamadas a Meta** sobre una cuenta completa,
+> así que corre a diario desde Beat (4:00) — que es lo que cierra el caso de las
+> cuentas ya conectadas, las que nunca iban a recibir un `BACKFILL` porque solo
+> se encolaba colgado de un `FULL`.
+>
+> `SNAPSHOT_RETENTION_DAYS` se separó en cuatro settings
+> (`HOT_DAILY_RETENTION_DAYS`, `SNAPSHOT_RETENTION_DAYS`,
+> `STATISTICS_WINDOW_DAYS`, `CHAT_MAX_HISTORY_DAYS`): gobernaba cuatro
+> decisiones distintas y cambiar una arrastraba las otras tres.
 
 `BACKFILL` corre en `backfill_ad_account_history`, no dentro del sync diario.
 Consulta Meta con `time_range={since,until}` + `time_increment=1`, pagina la
@@ -60,7 +77,7 @@ flowchart TB
 
 Con `MOCK_SERVICES=true` genera datos realistas para probar todo el pipeline sin credenciales:
 - 3 campañas de ejemplo con perfiles distintos: una **exitosa** (Reels barato), una **saturándose** (frecuencia creciente) y una **fallando** (0 leads los últimos días).
-- 30 días de historia en `FULL`, 2 en `INCREMENTAL` y la ventana de retención completa en `BACKFILL`; genera snapshots de campaña, adsets y anuncios. Los breakdowns históricos quedan vacíos por diseño, igual que en producción.
+- 30 días de historia en `FULL`, 2 en `INCREMENTAL` y los meses faltantes en `BACKFILL`; genera snapshots de campaña, adsets y anuncios. Los breakdowns históricos quedan vacíos por diseño, igual que en producción.
 - Simula las llamadas en el rate limiter para poblar `APICallLog`.
 
 Los datos mock están calibrados para disparar exactamente las reglas de la Capa 1/2 (CPL crítico, saturación, oportunidad en Reels), lo que hace el sistema demostrable end-to-end.
@@ -125,4 +142,4 @@ docker compose exec backend celery -A app.workers call \
 ```
 
 Con `MOCK_SERVICES=true` estos comandos no salen a Meta y generan localmente los
-180 días. Con `MOCK_SERVICES=false` usan el token real de cada cuenta.
+el histórico faltante. Con `MOCK_SERVICES=false` usan el token real de cada cuenta.
