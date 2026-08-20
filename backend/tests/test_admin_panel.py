@@ -76,7 +76,11 @@ async def test_el_admin_de_plataforma_no_ve_los_datos_de_un_cliente(
     assert set(fila) == {
         "id", "slug", "name", "display_name", "status", "industry", "accent_color",
         "enabled_modules", "miembros", "cuentas_publicitarias", "created_at",
+        "invitacion",
     }
+    # El enlace de invitacion solo vuelve al CREARLA. Listar organizaciones no
+    # puede devolver tokens de acceso a los espacios de otros clientes.
+    assert fila["invitacion"] is None
 
     # Y los endpoints de datos siguen acotados a SU organización: pedir la
     # cuenta de otro tenant sigue dando 403, flag o no flag.
@@ -115,6 +119,29 @@ async def test_alta_de_cliente_crea_la_org_e_invita_sin_poner_contrasena(
     assert inv.role == "ADMIN"
     assert inv.token and len(inv.token) > 20
     _no_emails.assert_awaited_once()
+
+    # El enlace vuelve en la respuesta. `send_email` es best-effort: sin
+    # BREVO_API_KEY registra el envio en el log y devuelve exito sin mandar
+    # nada, asi que sin esto el alta decia "invitacion enviada" mientras el
+    # cliente no recibia absolutamente nada.
+    assert body["invitacion"]["invite_url"].endswith(inv.token)
+    assert body["invitacion"]["email"] == "dueno@clientenuevo.com"
+    # Y distingue "se mando" de "se creo y nadie lo mando".
+    assert body["invitacion"]["correo_enviado"] is False   # sin BREVO_API_KEY en tests
+
+
+@pytest.mark.asyncio
+async def test_alta_sin_email_no_crea_invitacion(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    """Se puede dar de alta la organizacion y invitar despues."""
+    headers, _, user_id = await _signup(async_client, "adm-sin-invitado")
+    await _hacer_platform_admin(db_session, user_id)
+
+    res = await async_client.post("/api/v1/admin/organizations", headers=headers,
+                                  json={"slug": "sin-invitado", "name": "Sin Invitado"})
+    assert res.status_code == 201
+    assert res.json()["invitacion"] is None
 
 
 @pytest.mark.asyncio
