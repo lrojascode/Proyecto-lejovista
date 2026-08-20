@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
 import { APP_NAME, getTenantSlugFromHostname } from "@/lib/config";
 import { moduleForPath } from "@/lib/modules";
+import { HistoryBackfillBanner } from "@/components/HistoryBackfillBanner";
 import { api, hasAccessToken } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 import { AdAccountProvider, useAdAccount } from "@/components/providers/AdAccountProvider";
@@ -325,6 +326,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Main Content Container */}
         <main className="main-content">
           <WebSocketProvider tenantId={orgId}>
+            {/* Dentro del WebSocketProvider porque el aviso se refresca con sus
+                eventos; y fuera de AccountScopedContent para que no se
+                desmonte al cambiar de cuenta mientras el backfill corre. */}
+            <HistoryBackfillBanner />
             <AccountScopedContent>{children}</AccountScopedContent>
           </WebSocketProvider>
         </main>

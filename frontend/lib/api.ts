@@ -4,7 +4,7 @@ import type {
   CampaignSnapshot, CampaignDetail, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
-  OrgMember, Invitation, InvitationDetails, TenantBrand, MyModules,
+  OrgMember, Invitation, InvitationDetails, TenantBrand, MyModules, HistoryStatus,
   CampaignRulesConfig, AIThresholdsConfig,
 } from "./types";
 
@@ -309,6 +309,7 @@ export const api = {
   getCampaignHistory: (campaignId: string) => apiRequest<CampaignSnapshot[]>(`/api/v1/campaigns/${campaignId}/history`, "GET"),
   getCampaignDetails: (campaignId: string) => apiRequest<CampaignDetail>(`/api/v1/campaigns/${campaignId}/details`, "GET"),
   triggerSync: () => apiRequest<{ status: string; task_id?: string; message: string }>("/api/v1/campaigns/sync-trigger", "POST"),
+  getHistoryStatus: () => apiRequest<HistoryStatus>("/api/v1/campaigns/history-status", "GET"),
   getSyncStatus: (adAccountId?: string) =>
     apiRequest<SyncStatusResponse>(`/api/v1/campaigns/sync-status${adAccountId ? `?ad_account_id=${encodeURIComponent(adAccountId)}` : ""}`, "GET"),
   getApiCallHistory: (limit: number = 10) => apiRequest<ApiCallHistoryEntry[]>(`/api/v1/campaigns/api-call-history?limit=${limit}`, "GET"),
