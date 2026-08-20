@@ -13,7 +13,7 @@ from app.services.ai.engine import AIEngine
 from app.services.report_cache import get_report
 from app.services.kpi_period import get_kpis_with_deltas
 from app.services.pdf_report import render_report_pdf
-from app.utils.security import get_current_user, get_active_ad_account_id
+from app.utils.security import get_current_user, get_active_ad_account_id, require_module
 from app.schemas.response_schemas import BriefDataResponse, KpisSummaryResponse, SpendHistoryResponse
 from typing import Optional
 
@@ -80,7 +80,7 @@ async def get_master_brief_data(
     }
 
 
-@router.get("/pdf")
+@router.get("/pdf", dependencies=[Depends(require_module("reporte"))])
 async def download_report_pdf(
     window_days: int = 30,
     current_user: User = Depends(get_current_user),

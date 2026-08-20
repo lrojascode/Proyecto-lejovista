@@ -37,6 +37,7 @@ from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
 from app.workers.tasks import sync_ad_account, refresh_org_pages
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
+from app.tenant_rules.modules import AVAILABLE_MODULES, UNDISABLEABLE_MODULES, enabled_modules_for
 from app.services.email_service import send_email
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES, get_campaign_rules_for_org
 from app.services.ai.thresholds import DEFAULT_THRESHOLDS, get_thresholds_for_org, _THRESHOLD_FIELDS
@@ -178,6 +179,30 @@ async def get_my_business_policies(
         "industry": org.industry,
         "policies": get_policies_for_industry(org.industry),
         "available_industries": INDUSTRIES,
+    }
+
+@router.get("/my/modules")
+async def get_my_modules(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Módulos habilitados de la organización activa.
+
+    El frontend lo pide una vez al montar el layout para armar el menú. El
+    catálogo es del backend y no del frontend a propósito: dos listas separadas
+    se desincronizan, y el día que eso pasa un módulo "apagado" sigue
+    respondiendo por la API.
+
+    Devuelve también el catálogo completo para que Configuración pueda mostrar
+    los que están apagados sin pedir otro endpoint.
+    """
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+    return {
+        "enabled": enabled_modules_for(org),
+        "available": AVAILABLE_MODULES,
+        "undisableable": sorted(UNDISABLEABLE_MODULES),
     }
 
 @router.get("/my/ad-accounts", response_model=List[AdAccountResponse])

@@ -26,6 +26,15 @@ export type Organization = Schemas["OrganizationResponse"] & {
   llm_api_key_preview?: string | null;
 };
 
+/** Respuesta de GET /organizations/my/modules.
+ *  El catalogo es del BACKEND: si el frontend tuviera el suyo, los dos se
+ *  desincronizarian y un modulo "apagado" seguiria respondiendo por la API. */
+export type MyModules = {
+  enabled: string[];
+  available: Record<string, string>;
+  undisableable: string[];
+};
+
 export type TenantBrand = {
   name: string;
   display_name?: string | null;
@@ -107,7 +116,12 @@ export type SyncStatusResponse = {
 };
 
 // --- CAMPAIGN SNAPSHOT (/campaigns/recent, /campaigns/{id}/history) ---
-export type CampaignSnapshot = Schemas["CampaignSnapshotResponse"];
+// `effective_status` se agrega a mano hasta la proxima corrida de
+// `pnpm generate-types` (necesita el backend levantado). Mismo patron que
+// AdAccount mas arriba.
+export type CampaignSnapshot = Schemas["CampaignSnapshotResponse"] & {
+  effective_status?: string | null;
+};
 
 // --- INSIGHTS ---
 export type AIInsight = Schemas["AIInsightResponse"];

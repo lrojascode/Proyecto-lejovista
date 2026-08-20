@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
+import { money } from "@/lib/format";
 import type {
   BriefData, ReportCampaign, ReportAdset, ReportAd, ReportAudience, ReportCreative,
   OptimalParam, ReportSegmentationEntry,
@@ -25,7 +26,6 @@ const h2: React.CSSProperties = { fontSize: "16px", fontWeight: 510, color: "var
 const labelBadge = (label: string) =>
   label === "GANADORA" || label === "BUENA" ? "badge-success" : label === "REGULAR" ? "badge-warning" : "badge-danger";
 
-function money(n: number) { return `S/.${(n ?? 0).toFixed(2)}`; }
 function num(n: number) { return (n ?? 0).toLocaleString(); }
 
 // 5.2 (F-3.1): flecha + color de un Δ% vs el período previo del mismo

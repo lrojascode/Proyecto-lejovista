@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { APP_NAME } from "@/lib/config";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
 import type {
@@ -788,6 +789,8 @@ export default function Settings() {
                     value={accentColor}
                     onChange={(e) => setAccentColor(e.target.value)}
                     placeholder="#3b82f6"
+                    pattern="^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$"
+                    title="Un color hexadecimal, por ejemplo #02b8cc"
                     style={{ maxWidth: "120px" }}
                   />
                 </div>
@@ -1085,7 +1088,7 @@ export default function Settings() {
               borderRadius: "4px",
               border: "1px solid var(--border-subtle)",
             }}>
-              <strong>Seguridad:</strong> Por política de LejoVista (Roadmap 9), las campañas se crean siempre en estado <code>PAUSED</code> para requerir activación manual explícita.
+              <strong>Seguridad:</strong> Por política de {APP_NAME} (Roadmap 9), las campañas se crean siempre en estado <code>PAUSED</code> para requerir activación manual explícita.
             </div>
 
             {rulesMsg && (

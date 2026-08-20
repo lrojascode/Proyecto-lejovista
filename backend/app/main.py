@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
@@ -12,6 +12,7 @@ from app.api.v1.reports import router as report_router
 from app.api.v1.ai_usage import router as ai_usage_router
 from app.api.v1.invitations import router as invitations_router
 from app.api.v1.ws import router as ws_router, redis_listener
+from app.utils.security import require_module
 import logging
 import asyncio
 import re
@@ -123,12 +124,22 @@ async def tenant_slug_middleware(request: Request, call_next):
 # Incluir Rutas de la API v1
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(org_router, prefix="/api/v1")
-app.include_router(campaign_chat_router, prefix="/api/v1")
+# Módulos habilitables (execution/01 §3). Ojo con la granularidad: los módulos
+# son PANTALLAS, pero varios endpoints son compartidos entre pantallas. El
+# Resumen consume /reports/brief-data, /reports/kpis-summary, /reports/spend-history
+# e /insights, así que gatear esos routers enteros dejaría el Resumen roto al
+# apagar Reporte o Diagnósticos. Por eso solo se gatea aquí lo que pertenece a
+# una sola pantalla; lo compartido se gatea endpoint por endpoint.
+#
+# Y esto NO es aislamiento de datos: esos endpoints compartidos devuelven los
+# datos de la propia organización, que ya están acotados por tenant. Lo que el
+# módulo decide es qué funcionalidad se contrató, no a qué datos se accede.
+app.include_router(campaign_chat_router, prefix="/api/v1", dependencies=[Depends(require_module("chat"))])
 app.include_router(campaign_router, prefix="/api/v1")
 app.include_router(insight_router, prefix="/api/v1")
-app.include_router(action_router, prefix="/api/v1")
+app.include_router(action_router, prefix="/api/v1", dependencies=[Depends(require_module("acciones"))])
 app.include_router(report_router, prefix="/api/v1")
-app.include_router(ai_usage_router, prefix="/api/v1")
+app.include_router(ai_usage_router, prefix="/api/v1", dependencies=[Depends(require_module("ai_usage"))])
 app.include_router(invitations_router, prefix="/api/v1")
 app.include_router(ws_router) # Not prefixed with api/v1 to keep ws://host/ws/
 

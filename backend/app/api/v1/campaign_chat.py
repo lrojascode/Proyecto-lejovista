@@ -4,7 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.models.organization import Organization
 from app.models.user import User
+from app.tenant_rules.modules import is_module_enabled
 from app.schemas.campaign_schemas import ChatDecisionRequest, ChatMessageRequest, ChatSessionCreateRequest
 from app.schemas.response_schemas import ChatSessionResponse, ChatSessionSummary
 from app.services.campaign_chat import engine
@@ -23,11 +25,22 @@ async def create_chat_session(
 ):
     """Arranca una conversación nueva en modo BUILD o ASK."""
     requested_mode = request.mode or "BUILD"
-    if requested_mode == "BUILD" and not await has_role(db, current_user, "OPERATOR"):
-        raise HTTPException(
-            status_code=403,
-            detail="Esta acción requiere el rol OPERATOR o superior en la organización.",
-        )
+    if requested_mode == "BUILD":
+        # Dos llaves distintas y las dos hacen falta: el ROL dice si esta
+        # persona puede crear campañas, y el MÓDULO dice si la organización
+        # contrató la creación por chat. Un OPERATOR de una org sin el módulo
+        # sigue pudiendo consultar (modo ASK), que es el punto de separarlos.
+        if not await has_role(db, current_user, "OPERATOR"):
+            raise HTTPException(
+                status_code=403,
+                detail="Esta acción requiere el rol OPERATOR o superior en la organización.",
+            )
+        org = await db.get(Organization, current_user.organization_id)
+        if not org or not is_module_enabled(org, "chat_creacion"):
+            raise HTTPException(
+                status_code=403,
+                detail="La creación de campañas por chat no está habilitada para tu organización.",
+            )
     try:
         session = await engine.create_session(
             db, current_user, request.ad_account_id or active_ad_account_id, mode=requested_mode

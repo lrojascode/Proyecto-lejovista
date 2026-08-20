@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.campaign_chat import formatting
+from app.utils import formatting
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.meta_page import MetaPage

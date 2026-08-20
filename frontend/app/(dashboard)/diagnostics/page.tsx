@@ -8,6 +8,7 @@ import { api } from "@/lib/api";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { badgeIcon } from "@/lib/badge";
 import type { AIInsight, BriefData, SyncLearningSnapshot } from "@/lib/types";
+import { money } from "@/lib/format";
 
 // Q2: color/etiqueta del veredicto de tendencia de cada sincronización.
 const VERDICT_META: Record<string, { label: string; badge: string }> = {
@@ -246,13 +247,13 @@ export default function Diagnostics() {
                   <div className="card-subtle" style={{ textAlign: "center" }}>
                     <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Presupuesto Diario Total</div>
                     <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
-                      S/.{Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.budget || 0), 0).toFixed(2)}
+                      {money(Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.budget || 0), 0))}
                     </div>
                   </div>
                   <div className="card-subtle" style={{ textAlign: "center" }}>
                     <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Inversión Total</div>
                     <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
-                      S/.{Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.spend || 0), 0).toFixed(2)}
+                      {money(Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.spend || 0), 0))}
                     </div>
                   </div>
                   <div className="card-subtle" style={{ textAlign: "center" }}>
@@ -266,10 +267,10 @@ export default function Diagnostics() {
                   <div className="card-subtle" style={{ textAlign: "center" }}>
                     <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>Costo por conversación</div>
                     <div style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", marginTop: "0.25rem", letterSpacing: "-0.012em" }}>
-                      S/.{(() => {
+                      {(() => {
                         const totalSpend = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.spend || 0), 0);
                         const totalConvs = Object.values(briefData.campaigns_data || {}).reduce((acc: number, c: any) => acc + (c.conversations ?? c.conversions ?? 0), 0);
-                        return totalConvs > 0 ? (totalSpend / totalConvs).toFixed(2) : totalSpend.toFixed(2);
+                        return money(totalConvs > 0 ? totalSpend / totalConvs : totalSpend);
                       })()}
                     </div>
                   </div>
@@ -300,7 +301,7 @@ export default function Diagnostics() {
                             <span className={`badge ${meta.badge}`}>{badgeIcon(meta.badge)} {meta.label}</span>
                             {latest.kpis && (
                               <span style={{ fontSize: "13px", color: "var(--color-fog)" }}>
-                                S/.{latest.kpis.cost_per_conv.toFixed(2)}/conv · {latest.kpis.conversations} conv · S/.{latest.kpis.spend.toFixed(2)} gasto
+                                {money(latest.kpis.cost_per_conv)}/conv · {latest.kpis.conversations} conv · {money(latest.kpis.spend)} gasto
                               </span>
                             )}
                             {latest.created_at && (
@@ -331,7 +332,7 @@ export default function Diagnostics() {
                               <span className={`badge ${meta.badge}`} style={{ fontSize: "0.65rem" }}>{meta.label}</span>
                               {s.kpis && (
                                 <div style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "0.35rem" }}>
-                                  S/.{s.kpis.cost_per_conv.toFixed(2)}/conv
+                                  {money(s.kpis.cost_per_conv)}/conv
                                 </div>
                               )}
                             </div>
@@ -395,9 +396,9 @@ export default function Diagnostics() {
                                 {c.name}
                               </Link>
                             </td>
-                            <td style={{ padding: "0.75rem 0.5rem" }}>S/.{c.spend.toFixed(2)}</td>
+                            <td style={{ padding: "0.75rem 0.5rem" }}>{money(c.spend)}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>{convs}</td>
-                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510, color: "var(--color-paper)" }}>S/.{cpl.toFixed(2)}</td>
+                            <td style={{ padding: "0.75rem 0.5rem", fontWeight: 510, color: "var(--color-paper)" }}>{money(cpl)}</td>
                             <td style={{ padding: "0.75rem 0.5rem" }}>{c.ctr.toFixed(2)}%</td>
                           </tr>
                         );

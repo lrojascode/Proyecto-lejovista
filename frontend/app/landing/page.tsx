@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { APP_NAME } from "@/lib/config";
 
 export default function Home() {
   const [slug, setSlug] = useState("cliente1");
@@ -32,7 +33,7 @@ export default function Home() {
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <span style={{ fontSize: "20px", fontWeight: 590, color: "var(--color-paper)", letterSpacing: "-0.012em" }}>
-            LejoVista
+            {APP_NAME}
           </span>
           <span style={{
             fontSize: "11px",
@@ -115,7 +116,7 @@ export default function Home() {
           maxWidth: "680px",
           marginTop: "20px",
         }}>
-          LejoVista combina análisis estadístico determinístico en Python con modelos de lenguaje avanzados para auditar, diagnosticar y crear campañas de Meta Ads bajo estrictos límites financieros y aprobación humana.
+          {APP_NAME} combina análisis estadístico determinístico en Python con modelos de lenguaje avanzados para auditar, diagnosticar y crear campañas de Meta Ads bajo estrictos límites financieros y aprobación humana.
         </p>
 
         {/* 4 Pilares de Valor */}
@@ -228,7 +229,7 @@ export default function Home() {
         gap: "1rem",
       }}>
         <div>
-          <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>LejoVista Platform</strong> — Optimización Autónoma de Meta Ads
+          <strong style={{ color: "var(--color-paper)", fontWeight: 510 }}>{APP_NAME}</strong> — Optimización Autónoma de Meta Ads
           <div style={{ fontSize: "12px", marginTop: "4px" }}>© 2026 Todos los derechos reservados.</div>
         </div>
         <div style={{ display: "flex", gap: "20px" }}>

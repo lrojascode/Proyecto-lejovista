@@ -16,6 +16,7 @@ from app.services.campaign_targeting import build_targeting, _facebook_positions
 from app.services.ai.llm import OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
+from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.planner")
 
@@ -192,13 +193,13 @@ class AIPlanner:
             if is_escalation:
                 title = "Incrementar presupuesto en campaña ganadora"
                 new_budget = round(old_budget * 1.25, 2) # +25%
-                description = f"Incrementar presupuesto diario de S/.{old_budget:.2f} a S/.{new_budget:.2f} (+25%) debido a excelente rendimiento de CPL."
+                description = f"Incrementar presupuesto diario de {money(old_budget)} a {money(new_budget)} (+25%) debido a excelente rendimiento de CPL."
                 estimated_impact = "Incrementa la captación de leads manteniendo el CPL bajo."
                 confidence = 0.80
             else:
                 title = "Reducir presupuesto en campaña de CPL alto"
                 new_budget = round(old_budget * 0.70, 2) # -30%
-                description = f"Reducir presupuesto diario de S/.{old_budget:.2f} a S/.{new_budget:.2f} (-30%) debido al alza en la tendencia del CPL."
+                description = f"Reducir presupuesto diario de {money(old_budget)} a {money(new_budget)} (-30%) debido al alza en la tendencia del CPL."
                 estimated_impact = "Reduce el gasto ineficiente en un 30% mientras se optimiza la segmentación."
                 confidence = 0.85
 

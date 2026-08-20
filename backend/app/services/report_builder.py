@@ -21,6 +21,7 @@ from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.campaign_draft import CampaignDraft
 from app.services.ai.thresholds import classify_campaign, compute_target_cpl
 from app.services.kpi_period import get_window_kpis, pct_change
+from app.utils.formatting import money
 
 
 class ReportBuilder:
@@ -309,10 +310,10 @@ class ReportBuilder:
         for c in campaigns:
             if c["label"] in ("CARA", "PAUSAR"):
                 reason = ("0 conversaciones" if c["conversations"] == 0
-                          else f"costo/conversación S/.{c['cost_per_conv']:.2f} (alto)")
+                          else f"costo/conversación {money(c['cost_per_conv'])} (alto)")
                 red.append({"name": c["name"], "reason": reason})
             elif c["label"] in ("GANADORA", "BUENA"):
-                green.append({"name": c["name"], "reason": f"S/.{c['cost_per_conv']:.2f}/conv, CTR {c['ctr']:.2f}%"})
+                green.append({"name": c["name"], "reason": f"{money(c['cost_per_conv'])}/conv, CTR {c['ctr']:.2f}%"})
         return {"red": red, "green": green}
 
     @staticmethod
@@ -327,14 +328,14 @@ class ReportBuilder:
         winners = [c for c in campaigns if c["conversations"] > 0]  # ya ordenados por costo asc
         if winners:
             b = winners[0]
-            out.append(f"{b['name']} es la campaña más eficiente: S/.{b['cost_per_conv']:.2f} por "
+            out.append(f"{b['name']} es la campaña más eficiente: {money(b['cost_per_conv'])} por "
                        f"conversación con CTR {b['ctr']:.2f}% (el mejor de la cuenta).")
 
         expensive = [c for c in campaigns if c["label"] in ("CARA", "PAUSAR") and c["conversations"] > 0]
         if expensive:
             names = " y ".join(c["name"] for c in expensive[:2])
             hi = max(c["cost_per_conv"] for c in expensive)
-            out.append(f"Las campañas más caras ({names}) llegan a S/.{hi:.2f} por conversación, "
+            out.append(f"Las campañas más caras ({names}) llegan a {money(hi)} por conversación, "
                        f"casi el doble de las ganadoras.")
 
         adv = [a for a in adsets if self._is_advantage(a.get("targeting", {})) and a["conversations"] > 0]
@@ -345,8 +346,8 @@ class ReportBuilder:
             lo, hi = sorted([("Advantage+", adv_cost), ("intereses", int_cost)], key=lambda x: x[1])
             if hi[1] > 0:
                 pct = round((1 - lo[1] / hi[1]) * 100)
-                out.append(f"{lo[0].capitalize()} rinde mejor que {hi[0]}: S/.{lo[1]:.2f} vs "
-                           f"S/.{hi[1]:.2f} por conversación ({pct}% más barato).")
+                out.append(f"{lo[0].capitalize()} rinde mejor que {hi[0]}: {money(lo[1])} vs "
+                           f"{money(hi[1])} por conversación ({pct}% más barato).")
 
         placements = segmentation.get("placements", {})
         total_pl = sum(v["spend"] for v in placements.values())
@@ -379,7 +380,7 @@ class ReportBuilder:
         costs = [c["cost_per_conv"] for c in campaigns if c["conversations"] > 0]
         if costs:
             lo, hi = round(min(costs), 2), round(sorted(costs)[len(costs) // 2], 2)
-            out.append(f"Fijar una meta de costo de S/.{lo:.2f}–S/.{hi:.2f} por conversación, "
+            out.append(f"Fijar una meta de costo de {money(lo)}–{money(hi)} por conversación, "
                        f"basada en el rango de las campañas ganadoras.")
 
         out.append("Crear anuncios con objetivo de conversaciones directas a WhatsApp, no boost de "
@@ -417,7 +418,7 @@ class ReportBuilder:
              "justification": "Placement con menor costo por conversión en el período."},
             {"param": "Dispositivo óptimo", "value": best_device or "mobile",
              "justification": "Dispositivo con menor costo por conversión."},
-            {"param": "Meta de costo", "value": f"S/.{cost_lo:.2f} – S/.{cost_hi:.2f} por conversación",
+            {"param": "Meta de costo", "value": f"{money(cost_lo)} – {money(cost_hi)} por conversación",
              "justification": "Rango observado en campañas ganadoras."},
         ]
         return rows

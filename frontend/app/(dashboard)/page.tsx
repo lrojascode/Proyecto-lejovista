@@ -7,10 +7,12 @@ import {
 } from "recharts";
 import { useWebSocket } from "@/components/providers/WebSocketProvider";
 import { api } from "@/lib/api";
+import { APP_NAME } from "@/lib/config";
 import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
 import { StatusBadge } from "@/components/StatusBadge";
 import type { CampaignSnapshot, ApiCallHistoryEntry, SpendHistoryMonth, BusinessPolicies, KpisSummary, AIInsight } from "@/lib/types";
+import { money } from "@/lib/format";
 
 // Acentos de apoyo del design system — nunca acid-lime (reservado para acciones)
 const COLORS = ['#6366f1', '#02b8cc', '#27a644', '#8b5cf6', '#f2994a'];
@@ -402,7 +404,7 @@ export default function DashboardPage() {
           <div className="glass-card" style={{ padding: 20 }}>
             <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Gasto (7d)</p>
             <p style={{ fontSize: 22, fontWeight: 590 }}>
-              S/. {kpisSummary.kpis_7d.spend.toFixed(2)}
+              {money(kpisSummary.kpis_7d.spend)}
               <DeltaBadge pct={kpisSummary.deltas_pct.spend} goodWhen="neutral" />
             </p>
           </div>
@@ -416,7 +418,7 @@ export default function DashboardPage() {
           <div className="glass-card" style={{ padding: 20 }}>
             <p style={{ color: "var(--color-fog)", fontSize: 13, marginBottom: 6 }}>Costo/Conv. (7d)</p>
             <p style={{ fontSize: 22, fontWeight: 590 }}>
-              S/. {kpisSummary.kpis_7d.cost_per_conv.toFixed(2)}
+              {money(kpisSummary.kpis_7d.cost_per_conv)}
               <DeltaBadge pct={kpisSummary.deltas_pct.cost_per_conv} goodWhen="down" />
             </p>
           </div>
@@ -480,7 +482,7 @@ export default function DashboardPage() {
           padding: 48, textAlign: "center", display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center", gap: 16
         }}>
-          <h2 style={{ fontSize: 24, fontWeight: 590, letterSpacing: "-0.012em" }}>Bienvenido a LejoVista</h2>
+          <h2 style={{ fontSize: 24, fontWeight: 590, letterSpacing: "-0.012em" }}>Bienvenido a {APP_NAME}</h2>
           <p style={{ color: "var(--color-fog)", maxWidth: 520, fontSize: 15, lineHeight: 1.6 }}>
             Parece que tu cuenta publicitaria aún no tiene datos sincronizados, o acabas de conectarla.
             Inicia la sincronización para extraer las campañas de Meta Ads y generar los primeros diagnósticos con Inteligencia Artificial.
@@ -565,7 +567,7 @@ export default function DashboardPage() {
                 <thead>
                   <tr style={{ borderBottom: "1px solid var(--color-graphite)" }}>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)" }}>Campaña</th>
-                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>CPL 7d (S/)</th>
+                    <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>CPL 7d</th>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "right" }}>Inversión</th>
                     <th style={{ padding: "12px 24px", fontWeight: 510, fontSize: 13, color: "var(--color-fog)", textAlign: "center" }}>Estado</th>
                   </tr>
@@ -578,8 +580,8 @@ export default function DashboardPage() {
                           {campaign.campaign_name}
                         </Link>
                       </td>
-                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{(campaign.cost_per_conv_7d ?? campaign.cpl).toFixed(2)}</td>
-                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{(campaign.spend_7d ?? campaign.spend).toFixed(2)}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-paper)", fontWeight: 510 }}>{money(campaign.cost_per_conv_7d ?? campaign.cpl)}</td>
+                      <td style={{ padding: "12px 24px", fontSize: 14, textAlign: "right", color: "var(--color-fog)" }}>{money(campaign.spend_7d ?? campaign.spend)}</td>
                       <td style={{ padding: "12px 24px", textAlign: "center" }}>
                         <StatusBadge status={campaign.status} />
                       </td>

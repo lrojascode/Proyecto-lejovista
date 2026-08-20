@@ -14,6 +14,7 @@ from app.services.campaign_learning import (
     assess_maturity, build_analysis, calibrated_cost_per_conv, latest_winning_params,
 )
 from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
+from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.suggester")
 
@@ -122,7 +123,7 @@ class CampaignSuggester:
         if calibrated_cost:
             evidence.append(
                 f"Presupuesto calibrado con el costo real que la IA ha logrado en esta cuenta "
-                f"(S/.{calibrated_cost:.2f} por conversación, mediana de sus campañas ya "
+                f"({money(calibrated_cost)} por conversación, mediana de sus campañas ya "
                 f"evaluadas), no con el mejor caso histórico."
             )
         if replicated_from_win:
@@ -133,7 +134,7 @@ class CampaignSuggester:
         if best:
             evidence.append(
                 f"Campaña más eficiente de la cuenta: '{best['name']}' — "
-                f"S/.{best['cost_per_conv']:.2f} por conversación, CTR {best['ctr']:.2f}% "
+                f"{money(best['cost_per_conv'])} por conversación, CTR {best['ctr']:.2f}% "
                 f"({best['conversations']} conversaciones en los últimos {report['window_days']} días)."
             )
         else:
@@ -154,7 +155,7 @@ class CampaignSuggester:
         if winning_ad:
             evidence.append(
                 f"Copy real capturado del anuncio '{winning_ad['name']}' "
-                f"(S/.{winning_ad['cost_per_conv']:.2f} por conversación) — disponible como inspiración."
+                f"({money(winning_ad['cost_per_conv'])} por conversación) — disponible como inspiración."
             )
 
         # Ajuste 2A: razonamiento explicable de la IA, derivado del mismo

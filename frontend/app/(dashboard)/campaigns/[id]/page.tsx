@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import Link from "next/link";
 import { badgeIcon } from "@/lib/badge";
 import type { CampaignDetail } from "@/lib/types";
+import { money } from "@/lib/format";
 
 function formatSnapshotDate(dateOnly: string): string {
   if (!dateOnly) return "";
@@ -136,7 +137,7 @@ export default function CampaignDetailPage() {
             Inversión Acumulada
           </div>
           <div style={{ fontSize: "24px", fontWeight: 590, marginTop: "6px", color: "var(--color-paper)" }}>
-            S/.{detail.total_spend.toFixed(2)}
+            {money(detail.total_spend)}
           </div>
           <div style={{ fontSize: "12px", color: "var(--color-ash)", marginTop: "4px" }}>
             {fmt(detail.total_impressions)} impresiones
@@ -160,7 +161,7 @@ export default function CampaignDetailPage() {
             CPL Histórico Promedio
           </div>
           <div style={{ fontSize: "24px", fontWeight: 590, marginTop: "6px", color: "var(--color-paper)" }}>
-            S/.{detail.average_cpl.toFixed(2)}
+            {money(detail.average_cpl)}
           </div>
           <div style={{ fontSize: "12px", color: "var(--color-ash)", marginTop: "4px" }}>
             Costo por resultado
@@ -238,10 +239,10 @@ export default function CampaignDetailPage() {
                         <div style={{ fontWeight: 510, color: "var(--color-paper)" }}>{as.name}</div>
                         <div style={{ fontSize: "11px", color: "var(--color-ash)" }}><code>{as.adset_id}</code></div>
                       </td>
-                      <td style={{ padding: "10px 8px" }}>S/.{as.budget.toFixed(2)}/día</td>
-                      <td style={{ padding: "10px 8px", textAlign: "right" }}>S/.{as.spend.toFixed(2)}</td>
+                      <td style={{ padding: "10px 8px" }}>{money(as.budget)}/día</td>
+                      <td style={{ padding: "10px 8px", textAlign: "right" }}>{money(as.spend)}</td>
                       <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 510 }}>{as.conversions}</td>
-                      <td style={{ padding: "10px 8px", textAlign: "right", color: "var(--color-pulse-green)" }}>S/.{as.cpl.toFixed(2)}</td>
+                      <td style={{ padding: "10px 8px", textAlign: "right", color: "var(--color-pulse-green)" }}>{money(as.cpl)}</td>
                       <td style={{ padding: "10px 8px", textAlign: "right" }}>{as.ctr.toFixed(2)}%</td>
                       <td style={{ padding: "10px 8px", fontSize: "12px", color: "var(--color-fog)" }}>
                         {as.targeting_summary?.age_range && <span>Edad: {as.targeting_summary.age_range} · </span>}
@@ -317,9 +318,9 @@ export default function CampaignDetailPage() {
                       fontSize: "12px",
                       color: "var(--color-ash)",
                     }}>
-                      <span>Gasto: <strong style={{ color: "var(--color-paper)" }}>S/.{ad.spend.toFixed(2)}</strong></span>
+                      <span>Gasto: <strong style={{ color: "var(--color-paper)" }}>{money(ad.spend)}</strong></span>
                       <span>Leads: <strong style={{ color: "var(--color-pulse-green)" }}>{ad.conversions}</strong></span>
-                      <span>CPL: <strong style={{ color: "var(--color-paper)" }}>S/.{ad.cpl.toFixed(2)}</strong></span>
+                      <span>CPL: <strong style={{ color: "var(--color-paper)" }}>{money(ad.cpl)}</strong></span>
                       <span>CTR: <strong>{ad.ctr.toFixed(2)}%</strong></span>
                     </div>
                   </div>
@@ -355,10 +356,10 @@ export default function CampaignDetailPage() {
                     <td style={{ padding: "10px 8px", fontWeight: 510, color: "var(--color-paper)" }}>
                       {formatSnapshotDate(s.date)}
                     </td>
-                    <td style={{ padding: "10px 8px", textAlign: "right" }}>S/.{s.spend.toFixed(2)}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right" }}>{money(s.spend)}</td>
                     <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 510 }}>{s.conversions}</td>
                     <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 510, color: "var(--color-pulse-green)" }}>
-                      S/.{dayCpl.toFixed(2)}
+                      {money(dayCpl)}
                     </td>
                     <td style={{ padding: "10px 8px", textAlign: "right" }}>{s.ctr.toFixed(2)}%</td>
                     <td style={{ padding: "10px 8px", textAlign: "right" }}>{s.frequency.toFixed(2)}</td>
@@ -439,11 +440,11 @@ export default function CampaignDetailPage() {
                         {plName.replace(/_/g, " ").toUpperCase()}
                       </span>
                       <span style={{ fontSize: "0.9rem", color: "var(--color-pulse-green)" }}>
-                        CPL: S/.{plData.cpl?.toFixed(2) || "0.00"}
+                        CPL: {money(plData.cpl)}
                       </span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--color-ash)" }}>
-                      <span>Inversión: S/.{plData.spend?.toFixed(2) || "0.00"}</span>
+                      <span>Inversión: {money(plData.spend)}</span>
                       <span>Leads: {plData.conversions || 0}</span>
                     </div>
                   </div>
@@ -468,7 +469,7 @@ export default function CampaignDetailPage() {
                       <span style={{ fontSize: "0.9rem", color: "var(--color-pulse-green)" }}>Leads: {ageData.conversions || 0}</span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--color-ash)" }}>
-                      <span>Inversión: S/.{ageData.spend?.toFixed(2) || "0.00"}</span>
+                      <span>Inversión: {money(ageData.spend)}</span>
                     </div>
                   </div>
                 ))}

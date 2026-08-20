@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.ad_account import AdAccount
 from app.services.kpi_period import pct_change
+from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.account_learning")
 
@@ -90,7 +91,7 @@ def _build_observations(
     if prev is None:
         obs.append(
             f"Primera medición de referencia: {kpis['conversations']} conversaciones a "
-            f"S/.{kpis['cost_per_conv']:.2f} cada una, con S/.{kpis['spend']:.2f} de gasto."
+            f"{money(kpis['cost_per_conv'])} cada una, con {money(kpis['spend'])} de gasto."
         )
         return obs
 
@@ -100,13 +101,13 @@ def _build_observations(
         if abs(d_cost) < 1:
             obs.append(
                 f"El costo por conversación se mantuvo prácticamente igual vs la sincronización anterior "
-                f"(S/.{prev_kpis['cost_per_conv']:.2f} → S/.{kpis['cost_per_conv']:.2f})."
+                f"({money(prev_kpis['cost_per_conv'])} → {money(kpis['cost_per_conv'])})."
             )
         else:
             direction = "bajó" if d_cost < 0 else "subió"
             obs.append(
                 f"El costo por conversación {direction} {abs(d_cost):.0f}% vs la sincronización anterior "
-                f"(S/.{prev_kpis['cost_per_conv']:.2f} → S/.{kpis['cost_per_conv']:.2f})."
+                f"({money(prev_kpis['cost_per_conv'])} → {money(kpis['cost_per_conv'])})."
             )
 
     d_conv = deltas.get("conversations")

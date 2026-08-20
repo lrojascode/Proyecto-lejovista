@@ -186,6 +186,7 @@ class MetaAdsSyncService:
                 "id": "camp_cable_gpt",
                 "name": "MTV_MSJ_CABLE_GPT_CERCADO_JUN2026",
                 "status": "ACTIVE",
+                "effective_status": "ACTIVE",
                 "budget": 70.0,  # Presupuesto diario S/.70
                 "ctr_base": 1.4, # 1.4%
                 "cpl_target": 1.50, # S/.1.50
@@ -206,6 +207,7 @@ class MetaAdsSyncService:
                 "id": "camp_vulcanizado",
                 "name": "MTV_MSJ_VULCANIZADO_SURQUILLO_JUN2026",
                 "status": "ACTIVE",
+                "effective_status": "ACTIVE",
                 "budget": 50.0,
                 "ctr_base": 0.6,
                 "cpl_target": 4.50,
@@ -219,6 +221,11 @@ class MetaAdsSyncService:
                 "id": "camp_thhn",
                 "name": "MTV_MSJ_THHN_LIMA_JUN2026",
                 "status": "ACTIVE",
+                # A proposito: ACTIVE pero SIN ENTREGAR. Es el caso que hace que
+                # filtrar por `status` de una respuesta equivocada, y en
+                # simulacion es la unica forma de probar que el filtro real
+                # (effective_status) funciona.
+                "effective_status": "ADSET_PAUSED",
                 "budget": 40.0,
                 "ctr_base": 0.25,
                 "cpl_target": 12.00,
@@ -361,6 +368,7 @@ class MetaAdsSyncService:
                     campaign_id=c["id"],
                     campaign_name=c["name"],
                     status=c["status"],
+                    effective_status=c.get("effective_status"),
                     objective=c["objective"],
                     created_time=c["created_time"],
                     start_time=c["start_time"],
@@ -551,7 +559,7 @@ class MetaAdsSyncService:
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/campaigns",
                 {
-                    "fields": "id,name,status,objective,daily_budget,lifetime_budget,created_time,start_time,stop_time",
+                    "fields": "id,name,status,effective_status,objective,daily_budget,lifetime_budget,created_time,start_time,stop_time",
                     "limit": 200,
                 },
                 access_token=token
@@ -582,6 +590,7 @@ class MetaAdsSyncService:
             campaigns_map[c["id"]] = {
                 "name": c.get("name", "Unknown"),
                 "status": c.get("status", "UNKNOWN"),
+                "effective_status": c.get("effective_status"),
                 "budget": budget,
                 "objective": c.get("objective"),
                 "created_time": self._parse_meta_datetime(c.get("created_time")),
@@ -643,6 +652,7 @@ class MetaAdsSyncService:
                 self.db.add(snapshot)
             snapshot.campaign_name = camp_info["name"]
             snapshot.status = camp_info["status"]
+            snapshot.effective_status = camp_info.get("effective_status")
             snapshot.budget = camp_info["budget"]
             snapshot.objective = camp_info.get("objective")
             snapshot.created_time = camp_info.get("created_time")
@@ -830,6 +840,7 @@ class MetaAdsSyncService:
         targeting_map = {}
         budget_map: Dict[str, float] = {}      # adset_id -> presupuesto diario nominal
         status_map: Dict[str, str] = {}        # adset_id -> status
+        effective_status_map: Dict[str, str] = {}   # adset_id -> effective_status (entrega real)
         campaign_of: Dict[str, str] = {}       # adset_id -> campaign_id
         end_time_map: Dict[str, Any] = {}      # adset_id -> end_time (datetime u None)
 
@@ -838,7 +849,7 @@ class MetaAdsSyncService:
         structure, insights = await asyncio.gather(
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/adsets",
-                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status,end_time",
+                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status,effective_status,end_time",
                  "limit": 200},
                 access_token=token,
             ),
@@ -857,6 +868,7 @@ class MetaAdsSyncService:
                 targeting_map[aid] = self._summarize_targeting(a.get("targeting", {}))
                 budget_map[aid] = float(a.get("daily_budget") or a.get("lifetime_budget") or 0) / 100.0
                 status_map[aid] = a.get("status")
+                effective_status_map[aid] = a.get("effective_status")
                 campaign_of[aid] = a.get("campaign_id")
                 end_time_map[aid] = self._parse_meta_datetime(a.get("end_time"))
         else:
@@ -898,6 +910,7 @@ class MetaAdsSyncService:
             row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
             row.targeting_summary = targeting_map.get(adset_id, {})
+            row.effective_status = effective_status_map.get(adset_id)
             row.budget = budget_map.get(adset_id, 0.0)
             row.end_time = end_time_map.get(adset_id)
 
@@ -914,7 +927,7 @@ class MetaAdsSyncService:
         ads_struct, insights = await asyncio.gather(
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/ads",
-                {"fields": "id,creative{id,title,body,call_to_action_type}", "limit": 200}, access_token=token,
+                {"fields": "id,effective_status,creative{id,title,body,call_to_action_type}", "limit": 200}, access_token=token,
             ),
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
@@ -932,6 +945,7 @@ class MetaAdsSyncService:
                     "title": creative.get("title"),
                     "body": creative.get("body"),
                     "cta_type": creative.get("call_to_action_type"),
+                    "effective_status": a.get("effective_status"),
                 }
 
         if self._has_error(insights):
@@ -966,6 +980,7 @@ class MetaAdsSyncService:
             row.creative_title = creative_info.get("title")
             row.creative_body = creative_info.get("body")
             row.creative_cta_type = creative_info.get("cta_type")
+            row.effective_status = creative_info.get("effective_status")
             row.name = item.get("ad_name", "")
             row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr

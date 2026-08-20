@@ -6,6 +6,7 @@ from app.config import settings
 from app.models.ad_account import AdAccount
 from app.models.ai_action import AIAction
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
+from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.modifier")
 
@@ -81,7 +82,7 @@ class MetaCampaignModifier:
             # Regla de seguridad: presupuesto máximo de 150% del actual
             old_budget_nominal = action.parameters.get("old_budget", 0)
             if old_budget_nominal and new_budget_nominal > (old_budget_nominal * 1.5):
-                raise ValueError(f"Presupuesto sugerido S/.{new_budget_nominal} excede la regla de seguridad del 150% (actual: S/.{old_budget_nominal}).")
+                raise ValueError(f"Presupuesto sugerido {money(new_budget_nominal)} excede la regla de seguridad del 150% (actual: {money(old_budget_nominal)}).")
 
             # Detectamos si es daily o lifetime budget por el backup
             if "lifetime_budget" in backup_state:

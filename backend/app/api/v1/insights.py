@@ -7,7 +7,7 @@ from app.models.ai_insight import AIInsight
 from app.models.ad_account import AdAccount
 from app.schemas.schemas import AIInsightResponse
 from app.schemas.response_schemas import MessageResponse
-from app.utils.security import get_current_user, get_active_ad_account_id, require_role
+from app.utils.security import get_current_user, get_active_ad_account_id, require_module, require_role
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import run_ai_analysis
 from typing import List, Optional
@@ -64,7 +64,8 @@ async def dismiss_insight(
     
     return {"message": "Insight descartado con éxito."}
 
-@router.post("/analyze-trigger", response_model=MessageResponse)
+@router.post("/analyze-trigger", response_model=MessageResponse,
+             dependencies=[Depends(require_module("diagnosticos"))])
 async def trigger_manual_analysis(
     current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db)

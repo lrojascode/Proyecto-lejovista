@@ -42,9 +42,9 @@ async def test_resolve_facts_kpis_and_calculator(mocker):
     assert facts["account"]["dias_para_agotar_tope"] == 75.0  # 3000 / 40.0
 
     # Texto canónico (formato local: separador de miles con punto, decimales con coma)
-    assert "S/. 1.200,00" in canonical
+    assert "S/. 1,200.00" in canonical
     assert "+20.0%" in canonical
-    assert "S/. 3.000,00" in canonical
+    assert "S/. 3,000.00" in canonical
 
 
 @pytest.mark.asyncio
@@ -93,9 +93,9 @@ async def test_resolve_facts_ranking_filters_zero_conversations_and_reads_cost_p
     assert ranking_camps[0]["name"] == "Camp Ganadora"
     assert ranking_camps[0]["cost_per_conv"] == 12.5
     assert ranking_camps[0]["conversations"] == 20
-    assert "S/. 0,00" not in canonical
+    assert "S/. 0.00" not in canonical
     assert "Camp Ganadora" in canonical
-    assert "S/. 12,50" in canonical
+    assert "S/. 12.50" in canonical
 
 
 @pytest.mark.asyncio

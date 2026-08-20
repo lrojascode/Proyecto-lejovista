@@ -2,6 +2,7 @@ import '@testing-library/jest-dom'
 import { render, screen, waitFor } from '@testing-library/react'
 import LearningHistoryPage from '../app/(dashboard)/campaigns/learning/page'
 import { api } from '../lib/api'
+import { money } from '../lib/format'
 
 // E-1: timeline del aprendizaje de la IA (GET /campaigns/learning-history).
 jest.mock('../lib/api', () => ({
@@ -80,7 +81,7 @@ describe('Learning History Page', () => {
     await waitFor(() => {
       expect(screen.getByText(/Funcionó/i)).toBeInTheDocument()
     })
-    expect(screen.getByText(/S\/\.1\.80 por conversación/i)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`${money(1.8)} por conversación`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))).toBeInTheDocument()
   })
 
   it('renders the full outcome with figures and reason (Fase 1)', async () => {
@@ -103,8 +104,8 @@ describe('Learning History Page', () => {
       expect(screen.getByText(/No funcionó/i)).toBeInTheDocument()
     })
     expect(screen.getAllByText(/S\/\.11\.00 por conversación/i).length).toBeGreaterThan(0)
-    expect(screen.getByText(/esperado ~S\/\.5\.00/i)).toBeInTheDocument()
-    expect(screen.getByText(/20 conversación\(es\) con S\/\.220\.00 de gasto/i)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`esperado ~${money(5)}`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'))).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`20 conversación\\(es\\) con ${money(220).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} de gasto`, 'i'))).toBeInTheDocument()
     expect(screen.getByText(/más del doble del costo esperado/i)).toBeInTheDocument()
   })
 

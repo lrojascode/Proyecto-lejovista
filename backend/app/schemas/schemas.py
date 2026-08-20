@@ -54,7 +54,10 @@ class OrganizationResponse(BaseModel):
 class OrganizationUpdate(BaseModel):
     name: Optional[str] = None
     display_name: Optional[str] = None
-    accent_color: Optional[str] = None
+    # El acento se inyecta como variable CSS en el layout del cliente. Un valor
+    # libre ahi seria una via de inyeccion de CSS, asi que se acota a un hex —
+    # que ademas es lo unico que el selector de color de Settings produce.
+    accent_color: Optional[str] = Field(default=None, pattern=r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
     ai_model: Optional[str] = None
     llm_provider: Optional[str] = None
     llm_api_key: Optional[str] = None
@@ -161,6 +164,10 @@ class CampaignSnapshotResponse(BaseModel):
     campaign_id: str
     campaign_name: str
     status: str
+    # Estado real de entrega. `status` dice cómo quedó configurada la campaña;
+    # esto dice si está entregando. Nullable porque los snapshots anteriores a
+    # la migración d4e5f6a7b8c9 no lo tienen.
+    effective_status: Optional[str] = None
     budget: float
     spend: float
     impressions: int

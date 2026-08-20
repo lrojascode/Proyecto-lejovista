@@ -58,15 +58,32 @@ function baseSession(overrides: any = {}) {
 
 describe('Campaigns list — botón Chat', () => {
   it('el botón Chat está resaltado (btn-primary) y Crear Campaña queda secundario', async () => {
-    ;(api.getRecentCampaigns as jest.Mock).mockResolvedValueOnce([])
+    ;(api.getRecentCampaigns as jest.Mock).mockResolvedValue([])
     render(<CampaignsList />)
-    await waitFor(() => expect(screen.getByRole('heading', { name: /Todas las Campañas/i })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Campañas al Aire/i })).toBeInTheDocument())
 
     const chatLink = screen.getByRole('link', { name: /Chat/i })
     const newLink = screen.getByRole('link', { name: /Crear Campaña/i })
     expect(chatLink).toHaveClass('btn-primary')
     expect(newLink).toHaveClass('btn-secondary')
     expect(chatLink).toHaveAttribute('href', '/campaigns/chat')
+  })
+})
+
+describe('Campaigns list — solo lo que entrega', () => {
+  it('por defecto pide solo las que entregan, y "Ver todas" pide todas', async () => {
+    ;(api.getRecentCampaigns as jest.Mock).mockResolvedValue([])
+    render(<CampaignsList />)
+
+    // Arranca mostrando unicamente lo que Meta reporta entregando: es el pedido
+    // de producto, y filtrar por `status` daria una lista equivocada.
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Campañas al Aire/i })).toBeInTheDocument())
+    expect(api.getRecentCampaigns).toHaveBeenCalledWith(true)
+
+    fireEvent.click(screen.getByRole('button', { name: /Ver todas/i }))
+
+    await waitFor(() => expect(api.getRecentCampaigns).toHaveBeenCalledWith(false))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Todas las Campañas/i })).toBeInTheDocument())
   })
 })
 

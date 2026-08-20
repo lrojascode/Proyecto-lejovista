@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { APP_NAME } from "@/lib/config";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -15,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LejoVista — IA Meta Ads Automation",
+  title: `${APP_NAME} — IA Meta Ads Automation`,
   description: "Plataforma SaaS para análisis y optimización autónoma de campañas Meta Ads con Inteligencia Artificial.",
 };
 
