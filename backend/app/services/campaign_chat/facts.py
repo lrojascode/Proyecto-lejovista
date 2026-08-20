@@ -271,21 +271,22 @@ async def resolve_facts(
 
         elif b == "ranking" and report:
             if "campaigns" not in facts:
-                camps = report.get("campaigns", [])
+                all_camps = report.get("campaigns", [])
+                camps_with_conv = [c for c in all_camps if int(c.get("conversations", 0)) > 0]
                 top_camps = []
-                for c in camps[:RANKING_TOP_K]:
+                for c in camps_with_conv[:RANKING_TOP_K]:
                     top_camps.append({
                         "name": c.get("name"),
                         "status": c.get("status"),
                         "spend": round(float(c.get("spend", 0.0)), 2),
                         "conversations": int(c.get("conversations", 0)),
-                        "cost_per_conv": round(float(c.get("cpl", 0.0)), 2),
+                        "cost_per_conv": round(float(c.get("cost_per_conv", 0.0)), 2),
                         "ctr": round(float(c.get("ctr", 0.0)), 2),
                     })
                 rank_dict = {
                     "campaigns": top_camps,
-                    "total_campanas_activas": sum(1 for c in camps if c.get("status") == "ACTIVE"),
-                    "total_campanas": len(camps),
+                    "total_campanas_activas": sum(1 for c in all_camps if c.get("status") == "ACTIVE"),
+                    "total_campanas": len(all_camps),
                 }
                 _safe_add_block(facts, rank_dict, "ranking")
 
