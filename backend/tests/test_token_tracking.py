@@ -63,3 +63,21 @@ async def test_record_token_usage_noop_without_usage(db_session, monkeypatch):
     monkeypatch.setattr(tt, "async_session", lambda: (_ for _ in ()).throw(AssertionError("no debe abrir sesión")))
     await record_token_usage(UsageContext(feature="x"), "openai", "gpt-5.4", None)
     await record_token_usage(None, "openai", "gpt-5.4", {"prompt_tokens": 1})
+
+
+def test_los_modelos_sin_precio_no_reportan_costo_cero():
+    """`gpt-5.6-luna` y `gpt-5.6-sol` todavía no tienen precio en la tabla.
+
+    Lo importante es que eso se note: un 0 en la pantalla de Uso de IA se lee
+    como "no gastaste nada", que es falso. `None` se muestra como sin dato.
+
+    Si alguien agrega esos precios, este test empieza a fallar — y ahí hay que
+    borrarlo, no parchearlo.
+    """
+    from app.services.ai.token_tracking import estimate_cost_usd
+
+    for modelo in ("gpt-5.6-luna", "gpt-5.6-sol"):
+        assert estimate_cost_usd(modelo, 1_000, 1_000) is None, modelo
+
+    # Y que no se cuelen por el emparejado de prefijos con gpt-5.4.
+    assert estimate_cost_usd("gpt-5.4-mini", 1_000, 1_000) is not None

@@ -843,7 +843,11 @@ async def test_ai_models_endpoint_reflects_active_provider(async_client: AsyncCl
     data = res.json()
     assert data["active_provider"] == "openai"
     values = [m["value"] for m in data["models"]]
-    assert values == ["gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"]
+    assert values == ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.4-mini", "gpt-5.4-nano"]
+    # `gpt-5.4` NO esta: no figura entre los modelos permitidos del proyecto de
+    # OpenAI, asi que dejarlo elegible era una trampa -- el cliente lo guardaba
+    # y todas sus llamadas fallaban sin que la UI dijera por que.
+    assert "gpt-5.4" not in values
 
 
 # --- Historial de llamadas a la API de Meta en el dashboard ---

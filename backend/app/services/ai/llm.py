@@ -71,9 +71,17 @@ META_DESCRIPTION_MAX_CHARS = 30
 # no de lo que elija cada organización — antes se podía guardar un modelo de
 # un proveedor distinto al que realmente atendía las llamadas.
 MODELS_BY_PROVIDER = {
+    # Estos cuatro son exactamente los permitidos en el proyecto de OpenAI de
+    # AgenciaKibo. `gpt-5.4` (estándar) se quitó a propósito: NO está en esa
+    # lista, así que dejarlo elegible era una trampa — el cliente lo guardaba y
+    # todas sus llamadas fallaban sin que la UI dijera por qué.
+    #
+    # Luna y Sol van sin descriptor: no sé cuál conviene para qué, e inventar
+    # un "(el más rápido)" sería orientar la elección con algo que no me consta.
     "openai": [
+        {"value": "gpt-5.6-luna", "label": "GPT-5.6 Luna"},
+        {"value": "gpt-5.6-sol", "label": "GPT-5.6 Sol"},
         {"value": "gpt-5.4-mini", "label": "GPT-5.4 Mini (rápido y económico)"},
-        {"value": "gpt-5.4", "label": "GPT-5.4 (estándar)"},
         {"value": "gpt-5.4-nano", "label": "GPT-5.4 Nano (el más rápido)"},
     ],
     "gemini_direct": [
