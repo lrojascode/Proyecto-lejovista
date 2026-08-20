@@ -35,6 +35,21 @@ export type MyModules = {
   undisableable: string[];
 };
 
+/** Respuesta de GET /campaigns/history-status.
+ *  `show_estimate` lo decide el backend: solo la PRIMERA sincronizacion tiene
+ *  algo que estimar; los incrementales duran segundos. */
+export type HistoryStatus = {
+  show_estimate: boolean;
+  is_complete: boolean;
+  months_total: number;
+  months_missing: number;
+  estimated_seconds: number;
+  message: string;
+  first_month: string | null;
+  last_month: string | null;
+  in_progress: { months_total?: number; months_done?: number; last_month?: string } | null;
+};
+
 export type TenantBrand = {
   name: string;
   display_name?: string | null;

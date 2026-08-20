@@ -90,6 +90,20 @@ celery_app.conf.update(
             "task": "app.workers.tasks.archive_old_snapshots_task",
             "schedule": crontab(hour=3, minute=0, day_of_week=0),
             "args": ()
+        },
+        # Backfills históricos pendientes (4:00 AM, antes del sync de las 6:00).
+        # Cierra el caso de las cuentas YA conectadas: el backfill solo se
+        # encolaba colgado de un FULL, y un FULL solo ocurre al conectar o
+        # reconectar — una cuenta conectada antes de que el backfill existiera
+        # nunca lo iba a recibir sola. Es lo que dejó a la cuenta piloto con 36
+        # días de historia.
+        #
+        # Es barato de repetir a diario: la reconciliación mensual no llama a
+        # Meta cuando la cuenta ya está completa.
+        "daily-pending-history-backfills": {
+            "task": "app.workers.tasks.schedule_pending_history_backfills",
+            "schedule": crontab(hour=4, minute=0),
+            "args": ()
         }
     }
 )

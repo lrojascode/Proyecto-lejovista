@@ -140,16 +140,26 @@ def _release_sync_lock(ad_account_id: str) -> None:
 async def _has_completed_history_backfill(
     db, organization_id: str, ad_account_id: str
 ) -> bool:
-    """Marca persistente del backfill sin columna ni migración nueva."""
-    completed = (await db.execute(
-        select(SyncJob.id).where(
-            SyncJob.organization_id == organization_id,
-            SyncJob.ad_account_id == ad_account_id,
-            SyncJob.sync_type == SYNC_TYPE_BACKFILL,
-            SyncJob.status == "COMPLETED",
-        ).limit(1)
-    )).scalar_one_or_none()
-    return completed is not None
+    """¿Está el histórico realmente completo?
+
+    Antes esto preguntaba *"¿ya corrió un backfill alguna vez?"* buscando un
+    `SyncJob BACKFILL COMPLETED`. Era frágil: un backfill cortado a la mitad
+    quedaba marcado como hecho para siempre y la cuenta se quedaba sin historia
+    sin que nadie se enterara.
+
+    Ahora se compara el gasto que Meta reporta por mes contra el que tenemos en
+    snapshots. Sobre una cuenta completa cuesta dos queries agregadas y cero
+    llamadas a Meta, así que se puede consultar seguido; y si algún mes se
+    pierde, la próxima corrida lo vuelve a pedir sola.
+    """
+    from app.services.history_reconciliation import get_history_status
+
+    status = await get_history_status(db, organization_id, ad_account_id)
+    # Sin histórico mensual todavía no hay contra qué comparar: no se puede
+    # afirmar que está completo, así que se deja que el backfill corra.
+    if status.months_total == 0:
+        return False
+    return status.is_complete
 
 
 async def _schedule_history_backfill_after_full(db, ad_account: AdAccount) -> bool:
@@ -207,29 +217,33 @@ def schedule_pending_history_backfills(
 ):
     """Encola backfills pendientes, escalonados dentro de la ventana del Beat.
 
-    No forma parte de Beat: es una herramienta operativa explícita. Permite
-    ejecutar primero una sola cuenta y, tras verificarla, el resto de las
-    cuentas activas. Cada query conserva el scope de organización cuando se
-    proporciona.
+    Corre en Beat y también a mano. En Beat cierra el caso de las cuentas YA
+    conectadas: el backfill solo se encolaba colgado de un `FULL`, y un `FULL`
+    solo ocurre al conectar o reconectar, así que una cuenta conectada antes de
+    que el backfill existiera nunca lo iba a recibir sola. Es exactamente lo
+    que dejó a la cuenta piloto con 36 días de historia.
+
+    Es barato de repetir porque la reconciliación no llama a Meta cuando la
+    cuenta ya está completa. Cada query conserva el scope de organización
+    cuando se proporciona.
     """
     async def _impl():
         async with async_session() as db:
-            completed = select(SyncJob.id).where(
-                SyncJob.organization_id == AdAccount.organization_id,
-                SyncJob.ad_account_id == AdAccount.id,
-                SyncJob.sync_type == SYNC_TYPE_BACKFILL,
-                SyncJob.status == "COMPLETED",
-            ).exists()
-            q = select(AdAccount).where(
-                AdAccount.status == "ACTIVE",
-                ~completed,
-            )
+            q = select(AdAccount).where(AdAccount.status == "ACTIVE")
             if organization_id:
                 q = q.where(AdAccount.organization_id == organization_id)
             if ad_account_id:
                 q = q.where(AdAccount.id == ad_account_id)
 
-            accounts = (await db.execute(q)).scalars().all()
+            candidatas = (await db.execute(q)).scalars().all()
+            # El filtro por "ya corrió un BACKFILL" se hacía en SQL con un
+            # EXISTS. Ahora se reconcilia por cuenta: cuesta dos queries
+            # agregadas y ninguna llamada a Meta, y detecta el caso que el
+            # EXISTS no veía — un backfill que quedó a medias.
+            accounts = [
+                acc for acc in candidatas
+                if not await _has_completed_history_backfill(db, acc.organization_id, acc.id)
+            ]
             for acc in accounts:
                 backfill_ad_account_history.apply_async(
                     args=(acc.organization_id, acc.id),

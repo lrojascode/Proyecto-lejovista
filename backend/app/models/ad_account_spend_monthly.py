@@ -1,6 +1,6 @@
 from datetime import datetime
 import uuid
-from sqlalchemy import String, Float, Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Float, Integer, Boolean, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 
@@ -10,7 +10,12 @@ class AdAccountSpendMonthly(Base):
 
     `closed=True` marca un mes ya cerrado: el sync incremental nunca lo vuelve
     a tocar, solo actualiza el mes en curso. El backfill (`time_increment=monthly`
-    contra Meta) solo corre una vez por cuenta — ver MetaAdsSyncService."""
+    contra Meta) solo corre una vez por cuenta — ver MetaAdsSyncService.
+
+    Esta tabla es además la **verdad de referencia de cobertura**: lo que Meta
+    dice que se gastó cada mes, contra lo que tenemos en snapshots diarios. Esa
+    diferencia es cuánto histórico falta, medido en plata — ver
+    app/services/history_reconciliation.py."""
     __tablename__ = "ad_account_spend_monthly"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -18,6 +23,12 @@ class AdAccountSpendMonthly(Base):
     organization_id: Mapped[str] = mapped_column(String, index=True)
     year_month: Mapped[str] = mapped_column(String)  # "YYYY-MM"
     spend: Mapped[float] = mapped_column(Float, default=0.0)
+    # Ancho adicional: una fila por mes sigue siendo barata aun para una cuenta
+    # de 5 anos, y es lo que permite responder de verdad sobre anos viejos --
+    # "cuanto alcance en 2024" -- sin guardar cada dia de cada campana.
+    impressions: Mapped[int] = mapped_column(Integer, default=0)
+    reach: Mapped[int] = mapped_column(Integer, default=0)
+    results: Mapped[int] = mapped_column(Integer, default=0)
     closed: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

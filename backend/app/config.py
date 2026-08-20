@@ -64,9 +64,35 @@ class Settings(BaseSettings):
     # Vacío (default) = comportamiento anterior, sin restricción por cuenta.
     WRITEBACK_ACCOUNT_ALLOWLIST: str = Field(default="")
 
-    # D-3: días de retención de snapshots en las tablas calientes antes de
-    # archivarlos (ver app/services/snapshot_archiver.py).
-    SNAPSHOT_RETENTION_DAYS: int = Field(default=180)
+    # Política de datos históricos. Antes esto era UN solo número
+    # (SNAPSHOT_RETENTION_DAYS=180) que gobernaba cuatro decisiones que no
+    # tienen por qué coincidir, así que cambiar una arrastraba las otras tres.
+    #
+    #   caliente (0 → 400 días)   snapshots diarios: ranking, desgloses, alertas
+    #   frío     (400 → inicio)   tablas _archive: solo agregados
+    #   mensual  (todo)           ad_account_spend_monthly: gasto por mes
+    #
+    # 400 y no 365: son 12 meses MÁS un mes de margen, para que "este mes contra
+    # el mismo mes del año pasado" se resuelva en caliente sin tocar el archivo.
+
+    # Hasta dónde baja el backfill diario y hasta dónde puede preguntar el chat
+    # con detalle de campaña.
+    HOT_DAILY_RETENTION_DAYS: int = Field(default=400)
+
+    # A partir de cuántos días el archivador mueve filas a las tablas _archive.
+    # Igual al anterior por default: el archivo empieza donde termina lo
+    # caliente. Se separan porque son decisiones distintas — se podría querer
+    # conservar más en caliente de lo que se archiva, o al revés.
+    SNAPSHOT_RETENTION_DAYS: int = Field(default=400)
+
+    # Ventana que mira la Capa 2 estadística (tendencias, Z-scores). No necesita
+    # el histórico entero: series muy largas diluyen las anomalías recientes,
+    # que es justo lo que esa capa busca.
+    STATISTICS_WINDOW_DAYS: int = Field(default=180)
+
+    # Techo de lo que el chat admite como ventana de consulta con detalle
+    # diario. Más atrás se responde con agregados mensuales, sin límite.
+    CHAT_MAX_HISTORY_DAYS: int = Field(default=400)
 
     # Carpeta donde se guardan las imágenes subidas para crear campañas (ver
     # POST /campaigns/upload-image). Compartida entre `backend` y

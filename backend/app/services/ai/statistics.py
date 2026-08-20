@@ -19,14 +19,14 @@ class Capa2Statistics:
     async def analyze(self, ad_account: AdAccount) -> List[AIInsight]:
         """
         Analiza estadísticas de Capa 2 (medias móviles, tendencias y anomalías por Z-score).
-        Requiere datos históricos (analizamos hasta SNAPSHOT_RETENTION_DAYS).
+        Requiere datos históricos (analizamos hasta STATISTICS_WINDOW_DAYS).
         """
         t = get_thresholds_for_org(getattr(ad_account, "organization", None))
         insights = []
         insufficient_history = []  # campañas sin días suficientes para estadística
 
         today = datetime.date.today()
-        history_start = today - datetime.timedelta(days=settings.SNAPSHOT_RETENTION_DAYS)
+        history_start = today - datetime.timedelta(days=settings.STATISTICS_WINDOW_DAYS)
         
         # Obtener historial de snapshots de la cuenta
         q = select(CampaignSnapshot).where(

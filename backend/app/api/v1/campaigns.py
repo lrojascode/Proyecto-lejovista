@@ -6,8 +6,10 @@ from app.models.user import User
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ad_account import AdAccount
 from app.models.api_call_log import APICallLog
+from app.models.sync_job import SyncJob
 from app.schemas.schemas import CampaignSnapshotResponse
 from app.utils.security import get_current_user, get_active_ad_account_id, require_module, require_role
+from app.services.history_reconciliation import get_history_status
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List, Optional
@@ -374,6 +376,58 @@ async def trigger_manual_sync(
         "message": f"Sincronización encolada para {len(accounts)} cuenta(s) — revisando Meta en segundo plano.",
     }
 
+
+@router.get("/history-status")
+async def get_history_status_endpoint(
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cuánto historial falta bajar y cuánto va a tardar.
+
+    El estimado NO es inventado: los meses faltantes salen de reconciliar el
+    gasto que Meta reporta por mes contra los snapshots que tenemos, y los
+    segundos por llamada del ritmo real medido en `APICallLog` de esta misma
+    cuenta. Todo se calcula en Python (regla AI-1).
+
+    `show_estimate` existe para que el frontend no tenga que decidir: solo la
+    PRIMERA vez hay algo que estimar. Los syncs incrementales duran segundos y
+    mostrar una barra ahí sería ruido.
+    """
+    if ad_account_id is None:
+        return {
+            "show_estimate": False, "is_complete": True, "months_total": 0,
+            "months_missing": 0, "estimated_seconds": 0, "message": "",
+            "first_month": None, "last_month": None, "in_progress": None,
+        }
+
+    status = await get_history_status(db, current_user.organization_id, ad_account_id)
+
+    # Avance real si hay un backfill corriendo. `SyncJob.payload_json` lleva
+    # meses_hechos/meses_totales — progreso de verdad, no una barra falsa.
+    running = (await db.execute(
+        select(SyncJob)
+        .where(
+            SyncJob.organization_id == current_user.organization_id,
+            SyncJob.ad_account_id == ad_account_id,
+            SyncJob.sync_type == "BACKFILL",
+            SyncJob.status == "RUNNING",
+        )
+        .order_by(desc(SyncJob.started_at))
+        .limit(1)
+    )).scalar_one_or_none()
+
+    return {
+        "show_estimate": not status.is_complete or running is not None,
+        "is_complete": status.is_complete,
+        "months_total": status.months_total,
+        "months_missing": status.months_missing,
+        "estimated_seconds": status.estimated_seconds,
+        "message": status.estimate_text(),
+        "first_month": status.first_month,
+        "last_month": status.last_month,
+        "in_progress": (running.payload_json or {}) if running else None,
+    }
 
 @router.get("/sync-status")
 async def get_sync_status(

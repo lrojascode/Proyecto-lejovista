@@ -4,7 +4,7 @@ import json
 import random
 import logging
 from collections import defaultdict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
@@ -28,6 +28,17 @@ SYNC_TYPE_BACKFILL = "BACKFILL"
 class MetaAdsSyncService:
     def __init__(self, db: AsyncSession):
         self.db = db
+        # Estructura (campañas, conjuntos, anuncios) cacheada por instancia. El
+        # backfill recorre un mes por vez, pero /campaigns, /adsets y /ads NO
+        # están acotados por tiempo: pedirlos en cada chunk multiplicaría las
+        # llamadas por la cantidad de meses sin traer un solo dato nuevo.
+        self._structure_cache: Dict[str, Any] = {}
+
+    async def _structure_once(self, key: str, factory):
+        """Ejecuta `factory()` la primera vez y reusa el resultado después."""
+        if key not in self._structure_cache:
+            self._structure_cache[key] = await factory()
+        return self._structure_cache[key]
 
     async def run_sync(self, ad_account: AdAccount, sync_type: str = "INCREMENTAL") -> SyncJob:
         """
@@ -64,6 +75,8 @@ class MetaAdsSyncService:
 
             if settings.MOCK_SERVICES:
                 records_synced = await self._sync_mock_data(ad_account, sync_type, limiter)
+            elif sync_type == SYNC_TYPE_BACKFILL:
+                records_synced = await self._sync_backfill_by_months(ad_account, limiter, job)
             else:
                 records_synced = await self._sync_real_data(ad_account, sync_type, limiter)
 
@@ -259,7 +272,7 @@ class MetaAdsSyncService:
         # En FULL creamos 30 días. En INCREMENTAL sólo ayer y hoy. El
         # BACKFILL llega hasta el mismo techo que aplica snapshot_archiver.
         if sync_type == SYNC_TYPE_BACKFILL:
-            days_to_sync = settings.SNAPSHOT_RETENTION_DAYS
+            days_to_sync = settings.HOT_DAILY_RETENTION_DAYS
         else:
             days_to_sync = 30 if sync_type == "FULL" else 2
 
@@ -513,7 +526,10 @@ class MetaAdsSyncService:
         await self._sync_real_pages(ad_account, token, limiter)
         await self.db.commit()
 
-    async def _sync_real_data(self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter) -> int:
+    async def _sync_real_data(
+        self, ad_account: AdAccount, sync_type: str, limiter: MetaAPIRateLimiter,
+        insights_period: Optional[Dict[str, Any]] = None,
+    ) -> int:
         """
         Lógica real de producción usando llamadas a la Graph API de Meta Ads.
         """
@@ -553,17 +569,17 @@ class MetaAdsSyncService:
         # 1. Campañas + insights de campaña (P-1): dos lecturas independientes —
         # los insights no necesitan `campaigns_map` para pedirse, solo para
         # combinarse después — se piden en paralelo en vez de una tras otra.
-        insights_period = self._insights_period_params(sync_type)
+        insights_period = insights_period or self._insights_period_params(sync_type)
 
         campaigns_res, campaigns_insights = await asyncio.gather(
-            limiter.call_api_paginated(
+            self._structure_once("campaigns", lambda: limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/campaigns",
                 {
                     "fields": "id,name,status,effective_status,objective,daily_budget,lifetime_budget,created_time,start_time,stop_time",
                     "limit": 200,
                 },
                 access_token=token
-            ),
+            )),
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
                 {
@@ -711,6 +727,95 @@ class MetaAdsSyncService:
 
         return records_synced
 
+    # ------------------------------------------------------- backfill por meses
+
+    async def _sync_backfill_by_months(
+        self, ad_account: AdAccount, limiter: MetaAPIRateLimiter, job: SyncJob
+    ) -> int:
+        """Baja el histórico faltante un mes calendario por vez.
+
+        Por qué chunkear y no pedir tres años de una sola llamada:
+        `time_increment=1` sobre rangos largos a nivel anuncio hace que Meta
+        rechace por volumen, y `call_api_paginated` tiene un tope de 50 páginas
+        × 500 filas = 25.000 filas tras las cuales **trunca en silencio** — solo
+        loguea un warning y devuelve datos parciales sin marca de error, así que
+        el job se marcaría COMPLETED con la historia incompleta.
+
+        Qué meses se piden lo decide la reconciliación mensual, no un "¿ya
+        corrí?": sobre una cuenta ya completa esto cuesta dos queries y CERO
+        llamadas a Meta, así que puede correr todos los días.
+
+        Del más reciente al más viejo: si se corta, lo que quedó bajado es lo
+        que más se consulta. Commit por mes, porque un fallo en el mes 20 no
+        puede perder los 19 anteriores.
+        """
+        from app.services.history_reconciliation import get_history_status, month_range
+        from app.services.meta_ads.sync_progress import SyncProgressTracker
+
+        status = await get_history_status(self.db, ad_account.organization_id, ad_account.id)
+        if status.is_complete:
+            logger.info(
+                "Backfill de la cuenta %s: nada que traer (%d meses ya cubiertos).",
+                ad_account.id, status.months_covered,
+            )
+            job.payload_json = {"months_total": 0, "months_done": 0, "already_complete": True}
+            self.db.add(job)
+            return 0
+
+        total = len(status.gaps)
+        logger.info(
+            "Backfill de la cuenta %s: %d meses faltantes (~%d s estimados).",
+            ad_account.id, total, status.estimated_seconds,
+        )
+
+        records = 0
+        done = 0
+        for gap in status.gaps:
+            first, last = month_range(gap.year_month)
+            period = {
+                "time_range": json.dumps(
+                    {"since": first.isoformat(), "until": last.isoformat()},
+                    separators=(",", ":"),
+                )
+            }
+            try:
+                records += await self._sync_real_data(
+                    ad_account, SYNC_TYPE_BACKFILL, limiter, insights_period=period
+                )
+                # Commit por chunk: lo bajado hasta acá queda firme aunque el
+                # mes siguiente falle.
+                await self.db.commit()
+                done += 1
+            except Exception:
+                # Se sigue con los demás meses: un mes que falla no puede
+                # abortar los tres años. La reconciliación lo va a volver a
+                # detectar en la próxima corrida.
+                logger.exception(
+                    "Fallo bajando el mes %s de la cuenta %s; se continúa con los demás.",
+                    gap.year_month, ad_account.id,
+                )
+                await self.db.rollback()
+
+            job.payload_json = {
+                "months_total": total,
+                "months_done": done,
+                "last_month": gap.year_month,
+                "estimated_seconds": status.estimated_seconds,
+            }
+            self.db.add(job)
+            await self.db.commit()
+
+            SyncProgressTracker.report_progress(
+                organization_id=ad_account.organization_id,
+                ad_account_id=ad_account.id,
+                step=done,
+                total_steps=total,
+                step_name="backfill",
+                message=f"Trayendo historial: {done} de {total} meses...",
+            )
+
+        return records
+
     # ------------------------------------------------------------------ helpers
 
     @staticmethod
@@ -725,7 +830,7 @@ class MetaAdsSyncService:
             return {"date_preset": "last_30d" if sync_type == "FULL" else "yesterday"}
 
         today = datetime.date.today()
-        oldest = today - datetime.timedelta(days=settings.SNAPSHOT_RETENTION_DAYS - 1)
+        oldest = today - datetime.timedelta(days=settings.HOT_DAILY_RETENTION_DAYS - 1)
         return {
             "time_range": json.dumps(
                 {"since": oldest.isoformat(), "until": today.isoformat()},
@@ -793,6 +898,37 @@ class MetaAdsSyncService:
     })
 
     @classmethod
+    def _extract_raw_results(cls, actions):
+        """Devuelve `(leads, wa)` CRUDOS, sin ningún proxy.
+
+        Es la base honesta para `resultados = leads + wa`. No se puede sumar
+        sobre `_extract_conversions_conversations` porque ese método rellena
+        `conversations` con los leads cuando la campaña no tiene mensajería —
+        sumar ahí contaría cada lead dos veces.
+        """
+        leads, wa = 0, 0
+        for a in actions or []:
+            at = a.get("action_type", "")
+            val = int(float(a.get("value", 0) or 0))
+            if at in cls._LEAD_ACTION_TYPES:
+                leads += val
+            if "messaging_conversation_started" in at:
+                wa += val
+        return leads, wa
+
+    @classmethod
+    def _count_results(cls, actions):
+        """`resultados = leads + conversaciones de WhatsApp`, sobre valores crudos.
+
+        El documento de ITS es tajante: dividir el gasto de una campaña de
+        WhatsApp entre `leads` da cifras absurdas (S/101.78 por lead medido mal
+        contra S/3.38 por conversación medido bien). Una cuenta que corre los
+        dos tipos a la vez necesita la SUMA, no "el que haya".
+        """
+        leads, wa = cls._extract_raw_results(actions)
+        return leads + wa
+
+    @classmethod
     def _extract_conversions_conversations(cls, actions):
         """Cuenta leads (conversions) y conversaciones de mensajería iniciadas.
 
@@ -847,12 +983,12 @@ class MetaAdsSyncService:
         # P-1: estructura e insights son lecturas independientes (insights no
         # depende de la estructura para pedirse, solo para combinarse después).
         structure, insights = await asyncio.gather(
-            limiter.call_api_paginated(
+            self._structure_once("adsets", lambda: limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/adsets",
                 {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status,effective_status,end_time",
                  "limit": 200},
                 access_token=token,
-            ),
+            )),
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
                 {"level": "adset",
@@ -925,10 +1061,10 @@ class MetaAdsSyncService:
         # P-1: estructura de ads (copy/creativo) e insights son lecturas
         # independientes — en paralelo en vez de una tras otra.
         ads_struct, insights = await asyncio.gather(
-            limiter.call_api_paginated(
+            self._structure_once("ads", lambda: limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/ads",
                 {"fields": "id,effective_status,creative{id,title,body,call_to_action_type}", "limit": 200}, access_token=token,
-            ),
+            )),
             limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
                 {"level": "ad",
@@ -1335,7 +1471,8 @@ class MetaAdsSyncService:
         if not has_history:
             res = await limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/insights",
-                {"fields": "spend", "time_increment": "monthly", "date_preset": "maximum", "limit": 100},
+                {"fields": "spend,impressions,reach,actions", "time_increment": "monthly",
+                 "date_preset": "maximum", "limit": 100},
                 access_token=token,
             )
             if self._has_error(res):
@@ -1348,8 +1485,9 @@ class MetaAdsSyncService:
                 if not sync_date:
                     continue
                 ym = sync_date.strftime("%Y-%m")
-                spend = float(row.get("spend", 0) or 0)
-                await self._upsert_spend_month(ad_account, ym, spend, closed=(ym != current_ym))
+                await self._upsert_spend_month(
+                    ad_account, ym, self._monthly_metrics(row), closed=(ym != current_ym)
+                )
             return
 
         # Backfill ya hecho: cerrar perezosamente meses viejos y refrescar solo el actual.
@@ -1365,7 +1503,7 @@ class MetaAdsSyncService:
 
         res = await limiter.call_api(
             f"{ad_account.external_account_id}/insights",
-            {"fields": "spend", "date_preset": "this_month"},
+            {"fields": "spend,impressions,reach,actions", "date_preset": "this_month"},
             access_token=token,
         )
         if self._has_error(res):
@@ -1374,10 +1512,21 @@ class MetaAdsSyncService:
             self._maybe_mark_expired(ad_account, res)
             return
         data = res.get("data", [])
-        spend = float(data[0].get("spend", 0) or 0) if data else 0.0
-        await self._upsert_spend_month(ad_account, current_ym, spend, closed=False)
+        metrics = self._monthly_metrics(data[0]) if data else {"spend": 0.0, "impressions": 0, "reach": 0, "results": 0}
+        await self._upsert_spend_month(ad_account, current_ym, metrics, closed=False)
 
-    async def _upsert_spend_month(self, ad_account: AdAccount, year_month: str, spend: float, closed: bool) -> None:
+    def _monthly_metrics(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Extrae del insight mensual lo que se guarda. `results` sale de
+        `actions` con el mismo criterio que el sync diario, para que el agregado
+        mensual y la suma de los dias hablen de lo mismo."""
+        return {
+            "spend": float(row.get("spend", 0) or 0),
+            "impressions": int(float(row.get("impressions", 0) or 0)),
+            "reach": int(float(row.get("reach", 0) or 0)),
+            "results": self._count_results(row.get("actions") or []),
+        }
+
+    async def _upsert_spend_month(self, ad_account: AdAccount, year_month: str, metrics: Dict[str, Any], closed: bool) -> None:
         row = (await self.db.execute(select(AdAccountSpendMonthly).where(
             AdAccountSpendMonthly.ad_account_id == ad_account.id,
             AdAccountSpendMonthly.year_month == year_month,
@@ -1388,7 +1537,10 @@ class MetaAdsSyncService:
                 year_month=year_month,
             )
             self.db.add(row)
-        row.spend = spend
+        row.spend = metrics["spend"]
+        row.impressions = metrics["impressions"]
+        row.reach = metrics["reach"]
+        row.results = metrics["results"]
         row.closed = closed
 
     async def _sync_mock_spend_history(self, ad_account: AdAccount) -> None:

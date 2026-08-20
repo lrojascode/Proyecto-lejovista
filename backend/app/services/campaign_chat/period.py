@@ -20,7 +20,7 @@ from app.services.campaign_chat.slots import strip_accents
 
 # Techo real: más atrás de esto los snapshots se mueven a las tablas de archivo
 # (`snapshot_archiver`), que ni `ReportBuilder` ni `kpi_period` consultan.
-MAX_HISTORY_DAYS = settings.SNAPSHOT_RETENTION_DAYS
+MAX_HISTORY_DAYS = settings.CHAT_MAX_HISTORY_DAYS
 
 # Ventana por defecto cuando la pregunta no menciona ningún período. 7 días es
 # lo que muestran el Resumen y la lista de campañas: si alguien pregunta
