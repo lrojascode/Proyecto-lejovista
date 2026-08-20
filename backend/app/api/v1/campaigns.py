@@ -12,7 +12,7 @@ from app.utils.security import get_current_user, get_active_ad_account_id, requi
 from app.services.history_reconciliation import get_history_status
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from app.utils.formatting import money
 import datetime
 import io
