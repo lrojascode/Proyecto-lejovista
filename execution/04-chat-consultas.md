@@ -1,5 +1,17 @@
 # 04 · El chat de consultas, contra `PROMPT-CONSULTAS-ITS.md`
 
+> **Estado: hecho lo esencial (§1, §2, §3, §5, §9).** Queda pendiente lo de la
+> cola de la lista, que depende de datos que todavía no se sincronizan o que son
+> mejoras de presentación:
+>
+> | # | Qué falta | Por qué quedó |
+> |---|---|---|
+> | 4 | Métricas *lifetime* por campaña | El agregado mensual ya está; falta exponerlo por campaña |
+> | 6, 7 | ID de campaña y formato tabla en las respuestas | Presentación; el ID ya está en los datos |
+> | 8 | Verificar que el total cuadre con las partes | Chequeo de consistencia sobre los facts |
+> | 10 | Píxeles (`/adspixels`) | Una llamada de sync y una tabla nueva |
+> | 11-14 | Públicos, bit.ly, gestor, estacionalidad | Baja prioridad según el propio plan |
+
 ## Contexto
 
 `PROMPT-CONSULTAS-ITS.md` es cómo opera hoy un analista real sobre la cuenta de
