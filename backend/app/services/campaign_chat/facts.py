@@ -63,6 +63,11 @@ def _money(value: Optional[float]) -> str:
     return f"S/. {sign}{entero_agrupado},{dec}"
 
 
+def _fmt_int(value: Optional[int]) -> str:
+    """Formatea un entero con separador de miles con punto (ej. 789.412)."""
+    return f"{int(value or 0):,}".replace(",", ".")
+
+
 def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
     """Verifica si anadir block_dict mantiene el total dentro de MAX_GROUNDING_VALUES.
     Si entra, lo anade a facts y devuelve True; si no, lo omite y devuelve False (H7).
@@ -462,7 +467,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             if not personas and not impresiones:
                 return questions.NO_DATA_TEXT
             freq = alc.get("frecuencia", 0.0)
-            return f"En {ventana} alcanzaste a {personas:,} personas con {impresiones:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", ".")
+            return f"En {ventana} alcanzaste a {_fmt_int(personas)} personas con {_fmt_int(impresiones)} impresiones (frecuencia promedio de {freq:.2f})."
 
         if single_topic == "CTR":
             personas = alc.get("total_personas", 0)
@@ -470,7 +475,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             if not personas and not impresiones:
                 return questions.NO_DATA_TEXT
             ctr = alc.get("ctr_promedio_pct", 0.0)
-            return f"Tu CTR promedio es {ctr:.2f}% en {ventana}, sobre un alcance de {personas:,} personas.".replace(",", ".")
+            return f"Tu CTR promedio es {ctr:.2f}% en {ventana}, sobre un alcance de {_fmt_int(personas)} personas."
 
         if single_topic == "LEADS":
             convs = kpis.get("conversations", 0)
@@ -570,7 +575,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
         personas = alc.get("total_personas", 0)
         impresiones = alc.get("impresiones", 0)
         freq = alc.get("frecuencia", 0.0)
-        parts.append(f"Alcanzaste a {personas:,} personas con {impresiones:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", "."))
+        parts.append(f"Alcanzaste a {_fmt_int(personas)} personas con {_fmt_int(impresiones)} impresiones (frecuencia promedio de {freq:.2f}).")
 
     # Bloque 3: estructura (objetivo / fechas). Si el tema se pidió pero el
     # dato no está, lo decimos explícitamente en vez de dejar que otro bloque

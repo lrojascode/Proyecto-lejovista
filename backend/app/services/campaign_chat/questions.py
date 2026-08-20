@@ -228,6 +228,11 @@ def _money(value: Optional[float]) -> str:
     return f"S/. {float(value or 0):.2f}"
 
 
+def _fmt_int(value: Optional[int]) -> str:
+    """Formatea un entero con separador de miles con punto (ej. 789.412)."""
+    return f"{int(value or 0):,}".replace(",", ".")
+
+
 def _pct(value: Optional[float]) -> str:
     """Un decimal, igual que las tarjetas del Resumen (`pct_change` ya redondea
     a 1) — con `.0f` el chat decía "-1%" donde el dashboard mostraba "↓1.2%"."""
@@ -348,7 +353,7 @@ def _answer_ctr(period: Period, report: Dict[str, Any]) -> str:
     kpis = report.get("kpis") or {}
     return (
         f"Tu CTR promedio es {kpis.get('avg_ctr', 0):.2f}% en {period.label}, "
-        f"sobre un alcance de {kpis.get('total_reach', 0):,} personas.".replace(",", ".")
+        f"sobre un alcance de {_fmt_int(kpis.get('total_reach', 0))} personas."
     )
 
 
@@ -495,7 +500,7 @@ def _answer_reach(period: Period, report: Dict[str, Any]) -> str:
     reach = kpis.get("total_reach", 0)
     impr = kpis.get("total_impressions") or sum(c.get("impressions", 0) for c in ((report or {}).get("campaigns") or []))
     freq = (impr / reach) if reach else 0
-    return f"En {period.label} alcanzaste a {reach:,} personas con {impr:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", ".")
+    return f"En {period.label} alcanzaste a {_fmt_int(reach)} personas con {_fmt_int(impr)} impresiones (frecuencia promedio de {freq:.2f})."
 
 
 def _answer_spend_cap(period: Period, report: Dict[str, Any]) -> str:
