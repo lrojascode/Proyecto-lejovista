@@ -21,6 +21,7 @@ from app.workers.creation_tasks import (
     task_create_creative,
     task_handle_chain_error,
     task_upload_image,
+    task_verify_campaign,
 )
 
 from app.models.organization import Organization
@@ -230,6 +231,12 @@ async def start_campaign_creation(
         task_create_adset.s().set(countdown=40),
         task_create_creative.s().set(countdown=40),
         task_create_ad.s().set(countdown=40),
+        # Paso 6: releer los cuatro niveles en Meta. Hasta ahora "creada con
+        # exito" solo significaba "Meta acepto el POST", y Meta acepta la
+        # creacion y despues marca el objeto con problemas de politica o de
+        # configuracion en `issues_info`. Sin releer, el usuario ve un cartel de
+        # exito sobre una campana que no va a entregar nunca.
+        task_verify_campaign.s().set(countdown=40),
     ).on_error(task_handle_chain_error.s(draft_id, tenant_id))
 
     creation_chain.apply_async()

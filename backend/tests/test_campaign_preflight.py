@@ -106,9 +106,13 @@ async def test_preflight_validates_the_real_saga_payload(db_session: AsyncSessio
 
     adset = next(c for c in limiter.calls if c["endpoint"].endswith("/adsets"))
     targeting = json.loads(adset["params"]["targeting"])
-    # Con 45-54, Advantage+ va apagado con 0 explícito (reglas 1870188 + 1870227).
-    assert targeting["age_min"] == 45
-    assert targeting["targeting_automation"] == {"advantage_audience": 0}
+    # Sin segmentar por edad (el default desde execution/05 §3): publico amplio
+    # y Advantage+ ENCENDIDO, con el valor explicito que Meta exige (1870227).
+    # Antes, con el rango ganador 45-54, la app se veia obligada a apagarlo
+    # porque Meta no admite Advantage+ con age_min > 25 (1870188) -- o sea que
+    # segmentar por edad desactivaba justo lo que conviene usar.
+    assert targeting["age_min"] == 25
+    assert targeting["targeting_automation"] == {"advantage_audience": 1}
     # promoted_object solo con page_id (CTWA).
     assert json.loads(adset["params"]["promoted_object"]) == {"page_id": "page-1"}
 

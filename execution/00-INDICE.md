@@ -25,7 +25,7 @@ Tres frentes que llegaron juntos y conviene no mezclar:
 | 02 | [panel-admin-y-modulos](02-panel-admin-y-modulos.md) | Alta de clientes, roles de plataforma, toggles de módulos | 01 | ✅ **hecho** |
 | 03 | [sync-historico-completo](03-sync-historico-completo.md) | Primer sync total + estimación de tiempo + incrementales | — | ✅ **hecho** |
 | 04 | [chat-consultas](04-chat-consultas.md) | Brechas contra `PROMPT-CONSULTAS-ITS.md` | 03 | 🟡 esencial hecho |
-| 05 | [chat-creacion](05-chat-creacion.md) | Brechas contra `ORDEN-CAMPANA-ITS.md` | — | |
+| 05 | [chat-creacion](05-chat-creacion.md) | Brechas contra `ORDEN-CAMPANA-ITS.md` | — | 🟡 1-4 hecho; plantillas pendientes |
 | 06 | [bugs-pendientes](06-bugs-pendientes.md) | Lo que quedó abierto del plan anterior | — | ✅ **hecho** (`eaf5eb8`) |
 
 ## Orden recomendado
@@ -36,7 +36,7 @@ Tres frentes que llegaron juntos y conviene no mezclar:
 03  sync histórico         → HECHO
 04  chat consultas         → esencial HECHO; queda pixeles y lifetime
 02  panel admin            → HECHO
-05  chat creación          → el más grande; ver la advertencia de abajo
+05  chat creación          → 1-4 HECHO; plantillas de formulario nativo pendientes
 ```
 
 **01 y 03 se pueden hacer en paralelo.** El §5 del 01 (moneda) arranca del

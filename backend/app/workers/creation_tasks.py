@@ -249,7 +249,11 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
             if not campaign_name:
                 month_year = datetime.now().strftime("%b%Y").upper()
                 brand = _brand_code(acc)
-                campaign_name = f"{brand}_MSJ_{product_name}_{month_year}".replace(" ", "")
+                # El token de tipo sale de las reglas de la organización: estaba
+                # clavado en "MSJ" porque la app solo sabía hacer campañas de
+                # WhatsApp, y el tipo ES la plantilla de campaña.
+                tipo = rules.get("campaign_name_type_token") or "MSJ"
+                campaign_name = f"{brand}_{tipo}_{product_name}_{month_year}".replace(" ", "")
 
             payload = {
                 "name": campaign_name,
@@ -510,6 +514,97 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 event_type="campaign_creation",
             )
 
+            return context
+
+    return run_async(_impl())
+
+
+@celery_app.task(bind=True)
+def task_verify_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    """Paso 6: releer los cuatro niveles en Meta y reportar su estado real.
+
+    Hasta acá, "campaña creada con éxito" significaba únicamente "Meta aceptó
+    el POST". No es lo mismo: Meta acepta la creación y después marca el objeto
+    con problemas de política o de configuración, y eso vive en `issues_info`.
+    Sin releer, el usuario ve un cartel de éxito sobre una campaña que no va a
+    entregar nunca.
+
+    Esta tarea NO falla la Saga. Los cuatro objetos ya existen en Meta; que la
+    verificación no se pueda hacer —token vencido, rate limit, red— no es
+    motivo para disparar el rollback y borrarlos. Se registra lo que se pudo
+    leer y se sigue.
+    """
+    logger.info("Task 6 (Verify) - draft %s", context.get("draft_id"))
+
+    async def _impl():
+        async with async_session() as db:
+            acc = await _get_ad_account(db, context["ad_account_id"])
+            limiter = MetaAPIRateLimiter(
+                ad_account_id=acc.id, external_account_id=acc.external_account_id
+            )
+            token = acc.get_access_token()
+
+            niveles = [
+                ("campaign", context.get("campaign_id")),
+                ("adset", context.get("adset_id")),
+                ("ad", context.get("ad_id")),
+            ]
+            verificacion: Dict[str, Any] = {"niveles": {}, "problemas": []}
+
+            for nombre, obj_id in niveles:
+                if not obj_id:
+                    continue
+                try:
+                    res = await limiter.call_api(
+                        str(obj_id),
+                        {"fields": "id,name,status,effective_status,issues_info"},
+                        access_token=token,
+                    )
+                except Exception as exc:
+                    logger.warning("No se pudo verificar %s %s: %s", nombre, obj_id, exc)
+                    verificacion["niveles"][nombre] = {"id": obj_id, "verificado": False}
+                    continue
+
+                if not isinstance(res, dict) or "error" in res or "ERROR" in res:
+                    verificacion["niveles"][nombre] = {"id": obj_id, "verificado": False}
+                    continue
+
+                issues = res.get("issues_info") or []
+                verificacion["niveles"][nombre] = {
+                    "id": obj_id,
+                    "verificado": True,
+                    "status": res.get("status"),
+                    "effective_status": res.get("effective_status"),
+                    "issues": issues,
+                }
+                for issue in issues:
+                    verificacion["problemas"].append({
+                        "nivel": nombre,
+                        "titulo": issue.get("error_summary") or issue.get("error_message"),
+                        "detalle": issue.get("error_message"),
+                        "como_resolver": issue.get("confirmation_manual_action"),
+                    })
+
+            # La compuerta de seguridad, releída de Meta y no asumida: TODO
+            # tiene que haber nacido PAUSED. Si algo salió ACTIVE es un
+            # incidente, no una curiosidad.
+            activos = [
+                n for n, d in verificacion["niveles"].items()
+                if d.get("verificado") and d.get("status") == "ACTIVE"
+            ]
+            if activos:
+                verificacion["alerta_activo"] = activos
+                logger.error(
+                    "Objetos creados en estado ACTIVE (deberían nacer PAUSED): %s — draft %s",
+                    activos, context.get("draft_id"),
+                )
+
+            await _merge_draft_result(db, context["draft_id"], verificacion=verificacion)
+            context["verificacion"] = verificacion
+            logger.info(
+                "Verificación del draft %s: %d problema(s) reportado(s) por Meta.",
+                context.get("draft_id"), len(verificacion["problemas"]),
+            )
             return context
 
     return run_async(_impl())

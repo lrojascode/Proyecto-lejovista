@@ -62,12 +62,16 @@ async def test_modify_placements_post_data_shape(approved_placements_action, db_
 
     await MetaCampaignModifier(db_session).modify(acc, action)
 
-    # Segunda llamada (la primera, en modo simulado, no pega a la red para el
-    # backup; solo la escritura real pasa por call_api mockeado).
-    _, endpoint, post_data = mock_call_api.call_args[0]
-    kwargs = mock_call_api.call_args[1]
-    assert kwargs["method"] == "POST"
-    targeting = post_data["targeting"]
+    # La secuencia ahora son TRES escrituras: pausar, editar, reactivar. Editar
+    # un adset que esta entregando deja a Meta reoptimizando con la
+    # configuracion a medio cambiar, y ese gasto sale de la cuenta del cliente.
+    payloads = [llamada[0][2] for llamada in mock_call_api.call_args_list]
+    assert payloads[0] == {"status": "PAUSED"}, "hay que pausar ANTES de editar"
+    assert payloads[-1] == {"status": "ACTIVE"}, "y devolverlo al estado que tenia"
+
+    edicion = next(pl for pl in payloads if "targeting" in pl)
+    assert all(llamada[1]["method"] == "POST" for llamada in mock_call_api.call_args_list)
+    targeting = edicion["targeting"]
     # Optimizar posiciones de Facebook NO debe apagar Instagram: antes esto
     # forzaba ["facebook"] y la primera optimización de la IA le quitaba IG a
     # las campañas que la propia app creaba con Instagram activado.

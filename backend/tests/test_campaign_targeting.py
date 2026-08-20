@@ -4,6 +4,16 @@ from app.services.campaign_targeting import (
 )
 
 
+def _reglas_con_edad():
+    """Reglas de una organización que SÍ quiere segmentar por edad.
+
+    Por defecto está apagado (execution/05 §3): la data es plana entre rangos y
+    segmentar obliga a apagar Advantage+, que es justo lo que conviene usar.
+    """
+    from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
+    return {**TENANT_CAMPAIGN_RULES, "use_age_targeting": True}
+
+
 def test_parse_age_range_normal():
     assert parse_age_range("18-24") == (18, 24)
     assert parse_age_range("25-34") == (25, 34)
@@ -33,7 +43,8 @@ def test_device_targeting_none():
 
 
 def test_build_targeting_applies_winning_signals():
-    t = build_targeting(best_age_range="18-24", best_device="android_tablet", excluded_placements=[])
+    t = build_targeting(best_age_range="18-24", best_device="android_tablet",
+                        excluded_placements=[], rules=_reglas_con_edad())
     assert t["age_min"] == 18 and t["age_max"] == 24
     assert t["user_os"] == ["Android"]
     assert t["device_platforms"] == ["mobile"]
@@ -88,7 +99,8 @@ def test_build_targeting_falls_back_without_history():
 # => siempre presente; 0 cuando la edad mínima pasa de 25. ---
 
 def test_advantage_audience_disabled_when_winning_age_is_older():
-    t = build_targeting(best_age_range="45-54", best_device=None, excluded_placements=[])
+    t = build_targeting(best_age_range="45-54", best_device=None, excluded_placements=[],
+                        rules=_reglas_con_edad())
     # Se respeta la señal real del histórico como restricción dura...
     assert t["age_min"] == 45 and t["age_max"] == 54
     # ...apagando Advantage+ con un 0 EXPLÍCITO (no omitiendo el campo).
@@ -104,14 +116,16 @@ def test_advantage_audience_always_declared():
 
 
 def test_advantage_audience_kept_for_young_audience():
-    t = build_targeting(best_age_range="18-24", best_device=None, excluded_placements=[])
+    t = build_targeting(best_age_range="18-24", best_device=None, excluded_placements=[],
+                        rules=_reglas_con_edad())
     assert t["age_min"] == 18
     assert t["targeting_automation"] == {"advantage_audience": 1}
 
 
 def test_advantage_audience_kept_at_the_boundary():
     """25 es el límite que acepta Meta, no debe apagarse."""
-    t = build_targeting(best_age_range="25-34", best_device=None, excluded_placements=[])
+    t = build_targeting(best_age_range="25-34", best_device=None, excluded_placements=[],
+                        rules=_reglas_con_edad())
     assert t["age_min"] == 25
     assert t["targeting_automation"] == {"advantage_audience": 1}
 
@@ -155,3 +169,39 @@ def test_facebook_positions_uses_custom_required_placements():
     positions = _facebook_positions(["facebook_marketplace"], rules=custom_rules)
     # required_placements nunca se excluye, ni siquiera si el histórico lo marcó.
     assert "facebook_marketplace" in positions
+
+
+# --- Por defecto NO se segmenta por edad (execution/05 §3) ---
+
+def test_por_defecto_se_ignora_el_rango_ganador():
+    """El documento de ITS: "nunca segmentar por edad o género. La data es plana
+    (S/1.83 a S/2.68 entre extremos). Público amplio + Advantage+ y listo."."""
+    t = build_targeting(best_age_range="45-54", best_device=None, excluded_placements=[])
+    assert (t["age_min"], t["age_max"]) != (45, 54)
+    # Y lo importante: con público amplio, Advantage+ deja de ser un caso
+    # especial y pasa a ser lo normal. Segmentar por edad lo DESACTIVABA.
+    assert t["targeting_automation"] == {"advantage_audience": 1}
+
+
+def test_la_regla_de_edad_se_puede_reactivar_por_organizacion():
+    """No es un cambio global silencioso: una org que hoy depende de su rango
+    ganador puede volver a encenderla."""
+    t = build_targeting(best_age_range="45-54", best_device=None, excluded_placements=[],
+                        rules=_reglas_con_edad())
+    assert t["age_min"] == 45 and t["age_max"] == 54
+
+
+# --- Geografía por países (execution/05 §2) ---
+
+def test_geo_por_defecto_sigue_siendo_la_region():
+    assert build_targeting()["geo_locations"] == {"regions": [{"key": "2771"}]}
+
+
+def test_geo_por_paises_para_campanas_latam():
+    """La app entendía SOLO una clave de región, así que una campaña LATAM era
+    imposible de armar."""
+    from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES
+    reglas = {**TENANT_CAMPAIGN_RULES, "geo_countries": ["pe", "CL", " co "]}
+    geo = build_targeting(rules=reglas)["geo_locations"]
+    assert geo == {"countries": ["PE", "CL", "CO"]}
+    assert "regions" not in geo
