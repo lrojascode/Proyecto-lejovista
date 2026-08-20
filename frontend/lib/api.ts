@@ -4,7 +4,7 @@ import type {
   CampaignSnapshot, CampaignDetail, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
-  OrgMember, Invitation, InvitationDetails, TenantBrand,
+  OrgMember, Invitation, InvitationDetails, TenantBrand, MyModules,
   CampaignRulesConfig, AIThresholdsConfig,
 } from "./types";
 
@@ -250,6 +250,7 @@ export const api = {
     formData.append("file", file);
     return apiUploadRequest<{ logo_url: string }>("/api/v1/organizations/my/logo", formData);
   },
+  getMyModules: () => apiRequest<MyModules>("/api/v1/organizations/my/modules", "GET"),
   getTenantBrand: (slug?: string) =>
     apiRequest<TenantBrand>(
       slug ? `/api/v1/auth/tenant-brand?slug=${encodeURIComponent(slug)}` : "/api/v1/auth/tenant-brand",

@@ -32,6 +32,11 @@ class Organization(Base):
     # alguien la personalice explícitamente.
     campaign_rules_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
     ai_thresholds_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Módulos habilitados de la vista del cliente (ver app/tenant_rules/modules.py).
+    # NULL o lista vacía = todos habilitados, igual que los overrides de arriba:
+    # ninguna organización existente cambia de comportamiento hasta que alguien
+    # la configure. La lista es de claves de AVAILABLE_MODULES.
+    enabled_modules: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones

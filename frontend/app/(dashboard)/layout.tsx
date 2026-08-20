@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { safeRedirect } from "@/lib/navigation";
 import { APP_NAME, getTenantSlugFromHostname } from "@/lib/config";
+import { moduleForPath } from "@/lib/modules";
 import { api, hasAccessToken } from "@/lib/api";
 import { WebSocketProvider } from "@/components/providers/WebSocketProvider";
 import { AdAccountProvider, useAdAccount } from "@/components/providers/AdAccountProvider";
@@ -140,12 +141,29 @@ function accentStyle(color?: string | null): React.CSSProperties | undefined {
   return { ["--color-accent" as string]: color } as React.CSSProperties;
 }
 
+/** Menú completo. Las rutas y sus módulos viven en `lib/modules.ts`, que es lo
+ *  que se testea; acá solo se les pone nombre e icono. */
+const ALL_MENU_ITEMS = [
+  { name: "Resumen", path: "/", icon: GridIcon, module: "resumen" },
+  { name: "Campañas", path: "/campaigns", icon: TargetIcon, module: "campanas" },
+  { name: "Chat Analista", path: "/chat", icon: SparkleIcon, module: "chat" },
+  { name: "Reporte", path: "/reporte", icon: DocIcon, module: "reporte" },
+  { name: "Diagnósticos IA", path: "/diagnostics", icon: SparkleIcon, module: "diagnosticos" },
+  { name: "Acciones Sugeridas", path: "/actions", icon: BoltIcon, module: "acciones" },
+  { name: "Uso de IA", path: "/ai-usage", icon: GaugeIcon, module: "ai_usage" },
+  { name: "Configuración", path: "/settings", icon: GearIcon, module: "settings" },
+];
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState("");
   const [orgSlug, setOrgSlug] = useState("");
   const [orgId, setOrgId] = useState("");
   const [brand, setBrand] = useState<TenantBrand | null>(null);
+  // `null` = todavía no se sabe. Se arranca mostrando el menú completo y no uno
+  // vacío: un parpadeo de menú de más es molesto, pero un menú que aparece
+  // vacío mientras carga se lee como "se rompió".
+  const [modules, setModules] = useState<string[] | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const pathname = usePathname();
 
@@ -169,6 +187,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       api.getTenantBrand(detectedSlug).then((b) => {
         if (!cancelled) setBrand(b);
       }).catch(() => {});
+      // Si falla, se deja `null` y se muestra todo. Degradar hacia el producto
+      // completo es lo correcto: la capa que de verdad apaga un módulo es el
+      // 403 del backend, no este menú.
+      api.getMyModules().then((m) => {
+        if (!cancelled) setModules(m.enabled);
+      }).catch(() => {});
       setLoading(false);
     };
 
@@ -179,6 +203,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     }
     return () => { cancelled = true; };
   }, []);
+
+  // Capa 2 de las tres: si la ruta actual pertenece a una pantalla apagada, se
+  // sale de ahí. Escribir la URL a mano ya no sirve para ver la pantalla — y el
+  // 403 del backend (capa 3) es lo que impide además leer sus datos.
+  //
+  // `/` es el Resumen: si está apagado, la raíz tiene que llevar a la primera
+  // pantalla habilitada y no a una página vacía.
+  useEffect(() => {
+    if (!modules) return;
+    const current = moduleForPath(pathname);
+    if (!current || modules.includes(current)) return;
+    const fallback = ALL_MENU_ITEMS.find((i) => modules.includes(i.module));
+    safeRedirect(fallback ? fallback.path : "/settings");
+  }, [modules, pathname]);
 
   const handleLogout = () => {
     // Best-effort: revoca el refresh en el backend y limpia la sesión local
@@ -204,16 +242,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
-  const menuItems = [
-    { name: "Resumen", path: "/", icon: GridIcon },
-    { name: "Campañas", path: "/campaigns", icon: TargetIcon },
-    { name: "Chat Analista", path: "/chat", icon: SparkleIcon },
-    { name: "Reporte", path: "/reporte", icon: DocIcon },
-    { name: "Diagnósticos IA", path: "/diagnostics", icon: SparkleIcon },
-    { name: "Acciones Sugeridas", path: "/actions", icon: BoltIcon },
-    { name: "Uso de IA", path: "/ai-usage", icon: GaugeIcon },
-    { name: "Configuración", path: "/settings", icon: GearIcon },
-  ];
+  // Mientras no se sepan los módulos se muestra el producto completo (ver el
+  // comentario del useState).
+  const allowedModules = modules ?? ALL_MENU_ITEMS.map((i) => i.module);
+  const menuItems = ALL_MENU_ITEMS.filter((item) => allowedModules.includes(item.module));
 
   return (
     <AdAccountProvider orgId={orgId}>

@@ -7,7 +7,7 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ad_account import AdAccount
 from app.models.api_call_log import APICallLog
 from app.schemas.schemas import CampaignSnapshotResponse
-from app.utils.security import get_current_user, get_active_ad_account_id, require_role
+from app.utils.security import get_current_user, get_active_ad_account_id, require_module, require_role
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
 from typing import List, Optional
@@ -148,7 +148,8 @@ async def list_api_call_history(
         for log, acc_name in res.all()
     ]
 
-@router.get("/{campaign_id}/history", response_model=List[CampaignSnapshotResponse])
+@router.get("/{campaign_id}/history", response_model=List[CampaignSnapshotResponse],
+            dependencies=[Depends(require_module("campanas"))])
 async def get_campaign_history(
     campaign_id: str,
     current_user: User = Depends(get_current_user),
@@ -171,7 +172,8 @@ async def get_campaign_history(
     res = await db.execute(q)
     return res.scalars().all()
 
-@router.get("/{campaign_id}/details", response_model=CampaignDetailResponse)
+@router.get("/{campaign_id}/details", response_model=CampaignDetailResponse,
+            dependencies=[Depends(require_module("campanas"))])
 async def get_campaign_details(
     campaign_id: str,
     current_user: User = Depends(get_current_user),

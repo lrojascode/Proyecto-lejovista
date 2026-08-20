@@ -26,6 +26,15 @@ export type Organization = Schemas["OrganizationResponse"] & {
   llm_api_key_preview?: string | null;
 };
 
+/** Respuesta de GET /organizations/my/modules.
+ *  El catalogo es del BACKEND: si el frontend tuviera el suyo, los dos se
+ *  desincronizarian y un modulo "apagado" seguiria respondiendo por la API. */
+export type MyModules = {
+  enabled: string[];
+  available: Record<string, string>;
+  undisableable: string[];
+};
+
 export type TenantBrand = {
   name: string;
   display_name?: string | null;

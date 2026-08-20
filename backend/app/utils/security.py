@@ -264,6 +264,54 @@ def require_role(min_role: str):
     return _dependency
 
 
+def require_module(module: str):
+    """Exige que la organización activa tenga habilitado `module`.
+
+    Esta es la ÚNICA capa de las tres que es seguridad. Filtrar el menú y
+    redirigir la ruta en el frontend son experiencia de usuario: sin esta
+    dependencia el módulo está escondido, no apagado, y basta con llamar al
+    endpoint a mano para seguir usándolo.
+
+    Se responde 403 y no 404 a propósito: el cliente sabe que el módulo existe
+    —se lo vendieron o no—, así que ocultar su existencia no protege nada y sí
+    vuelve el problema imposible de diagnosticar.
+    """
+    async def _dependency(
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ) -> User:
+        from sqlalchemy import select
+        from app.models.organization import Organization
+        from app.tenant_rules.modules import AVAILABLE_MODULES, is_module_enabled
+
+        if module not in AVAILABLE_MODULES:
+            # Error de programación: un módulo fuera del catálogo nunca está
+            # habilitado, así que dejarlo pasar sería abrir el endpoint a todos.
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Módulo desconocido: {module}",
+            )
+
+        org_id = current_user.organization_id
+        if not org_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No perteneces a ninguna organización activa.",
+            )
+
+        org = (await db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )).scalar_one_or_none()
+        if not org or not is_module_enabled(org, module):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"El módulo '{AVAILABLE_MODULES[module]}' no está habilitado para tu organización.",
+            )
+        return current_user
+
+    return _dependency
+
+
 async def get_active_ad_account_id(
     request: Request,
     current_user: User = Depends(get_current_user),
