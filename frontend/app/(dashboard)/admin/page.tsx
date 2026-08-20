@@ -23,6 +23,10 @@ export default function AdminPanel() {
   const [sinPermiso, setSinPermiso] = useState(false);
   const [msg, setMsg] = useState("");
   const [creando, setCreando] = useState(false);
+  // Enlace de la ultima invitacion creada. Se muestra siempre que el correo no
+  // haya salido de verdad: `send_email` es best-effort y sin BREVO_API_KEY
+  // registra el envio y devuelve exito sin mandar nada.
+  const [enlaceInvitacion, setEnlaceInvitacion] = useState<string | null>(null);
   const [form, setForm] = useState({ slug: "", name: "", admin_email: "", accent_color: "#02b8cc" });
 
   const cargar = async () => {
@@ -61,18 +65,26 @@ export default function AdminPanel() {
     setCreando(true);
     setMsg("");
     try {
-      await api.adminCreateOrganization({
+      const creada = await api.adminCreateOrganization({
         slug: form.slug.trim().toLowerCase(),
         name: form.name.trim(),
         accent_color: form.accent_color,
         admin_email: form.admin_email.trim() || undefined,
       });
+      const inv = creada.invitacion;
       setForm({ slug: "", name: "", admin_email: "", accent_color: "#02b8cc" });
-      setMsg(
-        form.admin_email
-          ? `Cliente creado. Se le envió la invitación a ${form.admin_email} para que elija su contraseña.`
-          : "Cliente creado. Todavía no tiene ningún usuario: invitá a su primer ADMIN."
-      );
+      if (!inv) {
+        setEnlaceInvitacion(null);
+        setMsg("Cliente creado. Todavía no tiene ningún usuario: invitá a su primer ADMIN.");
+      } else if (inv.correo_enviado) {
+        setEnlaceInvitacion(null);
+        setMsg(`Cliente creado. Se le envió la invitación a ${inv.email} para que elija su contraseña.`);
+      } else {
+        // El correo NO salió. Decirlo, y dar el enlace: es lo único que
+        // permite terminar el alta hoy.
+        setEnlaceInvitacion(inv.invite_url);
+        setMsg(`Cliente creado, pero el correo no se envió (falta configurar el envío). Pasale este enlace a ${inv.email}:`);
+      }
       await cargar();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "No se pudo crear el cliente.");
@@ -104,6 +116,28 @@ export default function AdminPanel() {
         </p>
         {msg ? (
           <p className="mono" style={{ color: "var(--color-accent)", fontSize: "13px", marginTop: "8px" }}>{msg}</p>
+        ) : null}
+        {enlaceInvitacion ? (
+          <div style={{ marginTop: "8px", display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+            <code
+              style={{
+                background: "var(--color-carbon)", padding: "6px 10px", borderRadius: "6px",
+                fontSize: "12px", wordBreak: "break-all", color: "var(--color-mist)",
+              }}
+            >
+              {enlaceInvitacion}
+            </code>
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              onClick={() => navigator.clipboard?.writeText(enlaceInvitacion)}
+            >
+              Copiar
+            </button>
+            <span style={{ color: "var(--color-ash)", fontSize: "12px" }}>
+              Vence en 7 días y se usa una sola vez.
+            </span>
+          </div>
         ) : null}
       </div>
 

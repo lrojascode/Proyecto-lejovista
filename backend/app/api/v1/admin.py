@@ -15,6 +15,7 @@ contraseña de nadie. Se crea la organización y se invita a su primer ADMIN, qu
 pone su propia clave desde el enlace.
 """
 import datetime
+import logging
 import re
 import secrets
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,8 @@ from app.tenant_rules.modules import (
 )
 from app.utils.security import require_platform_admin
 
+logger = logging.getLogger("lejovista.admin")
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$")
@@ -58,6 +61,9 @@ class AdminOrganizationSummary(BaseModel):
     miembros: int
     cuentas_publicitarias: int
     created_at: datetime.datetime
+    # Solo presente cuando el alta creó una invitación. Trae el enlace para
+    # poder pasarlo a mano si el correo no está configurado.
+    invitacion: Optional[Dict[str, Any]] = None
 
 
 class AdminOrganizationCreate(BaseModel):
@@ -158,12 +164,15 @@ async def create_organization(
     db.add(org)
     await db.flush()
 
+    invitacion = None
     if payload.admin_email:
-        await _invite_first_admin(db, org, payload.admin_email, current_user)
+        invitacion = await _invite_first_admin(db, org, payload.admin_email, current_user)
 
     await db.commit()
     await db.refresh(org)
-    return await _summary(db, org)
+    resumen = await _summary(db, org)
+    resumen.invitacion = invitacion
+    return resumen
 
 
 @router.patch("/organizations/{org_id}/modules", response_model=AdminOrganizationSummary)
@@ -237,19 +246,26 @@ async def invite_organization_admin(
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido.")
 
-    token = await _invite_first_admin(db, org, email, current_user)
+    invitacion = await _invite_first_admin(db, org, email, current_user)
     await db.commit()
-    return {"message": f"Invitación enviada a {email}.", "expires_in_days": 7, "token_creado": bool(token)}
+    return invitacion
 
 
 async def _invite_first_admin(
     db: AsyncSession, org: Organization, email: str, invited_by: User
-) -> str:
+) -> Dict[str, Any]:
     """Crea la invitación de ADMIN y manda el correo.
 
     Reusa exactamente el mecanismo de invitaciones que ya existe —token de un
     solo uso con vencimiento— para no tener dos caminos distintos de alta de
     usuario que puedan divergir en seguridad.
+
+    Devuelve además el ENLACE y si el correo salió de verdad. `send_email` es
+    best-effort: sin `BREVO_API_KEY` configurada registra el envío en el log y
+    devuelve éxito sin mandar nada. Sin esto, el alta respondía "invitación
+    enviada" mientras el cliente no recibía absolutamente nada — y no había
+    forma de enterarse. Con el enlace en la respuesta, quien da de alta puede
+    pasarlo por otro medio.
     """
     ya_miembro = (await db.execute(
         select(User.id)
@@ -271,7 +287,7 @@ async def _invite_first_admin(
 
     invite_url = f"http://{org.slug}.{settings.BASE_DOMAIN}/invitations/{token}"
     nombre = org.display_name or org.name
-    await send_email(
+    enviado = await send_email(
         to_email=email,
         subject=f"Tu acceso a {nombre} en Agente DX IA",
         html_content=f"""
@@ -289,4 +305,17 @@ async def _invite_first_admin(
     """,
         text_content=f"Tu acceso a {nombre} en Agente DX IA: {invite_url}",
     )
-    return token
+    correo_configurado = bool(settings.BREVO_API_KEY) and not settings.MOCK_SERVICES
+    if not correo_configurado:
+        logger.warning(
+            "Invitación de %s creada SIN enviar correo (BREVO_API_KEY sin configurar). "
+            "Hay que pasarle el enlace a mano.", email,
+        )
+    return {
+        "email": email,
+        "invite_url": invite_url,
+        "expira_en_dias": 7,
+        # Distingue "se mandó" de "se creó y nadie lo mandó". Son cosas muy
+        # distintas para quien está dando de alta a un cliente.
+        "correo_enviado": bool(enviado) and correo_configurado,
+    }

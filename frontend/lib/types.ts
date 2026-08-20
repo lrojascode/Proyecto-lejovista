@@ -65,6 +65,14 @@ export type AdminOrganization = {
   miembros: number;
   cuentas_publicitarias: number;
   created_at: string;
+  /** Solo al CREAR con email. `correo_enviado: false` significa que la
+   *  invitacion existe pero nadie la mando -- hay que pasar el enlace a mano. */
+  invitacion?: {
+    email: string;
+    invite_url: string;
+    expira_en_dias: number;
+    correo_enviado: boolean;
+  } | null;
 };
 
 export type TenantBrand = {
