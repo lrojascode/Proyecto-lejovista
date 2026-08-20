@@ -44,37 +44,48 @@ _ARCHIVE_SPECS = [
 ]
 
 
-async def archive_old_snapshots(db: AsyncSession, retention_days: int) -> Dict[str, int]:
+BATCH_SIZE = 500
+
+
+async def archive_old_snapshots(db: AsyncSession, retention_days: int, batch_size: int = BATCH_SIZE) -> Dict[str, int]:
     """Mueve a las tablas de archivo las filas con `date` anterior al retention
     window, y las borra de la tabla caliente. Devuelve cuántas filas se movieron
-    por tabla. No falla el proceso si una tabla individual da error."""
+    por tabla. Procesa en lotes y usa savepoints por lote para garantizar
+    atomicidad y evitar duplicados si falla el borrado o la inserción."""
     cutoff = datetime.date.today() - datetime.timedelta(days=retention_days)
     counts: Dict[str, int] = {}
 
     for hot_model, archive_model, fields in _ARCHIVE_SPECS:
         table_name = hot_model.__tablename__
+        total_archived = 0
         try:
-            rows = (await db.execute(
-                select(hot_model).where(hot_model.date < cutoff)
-            )).scalars().all()
+            while True:
+                rows = (await db.execute(
+                    select(hot_model).where(hot_model.date < cutoff).limit(batch_size)
+                )).scalars().all()
 
-            for row in rows:
-                db.add(archive_model(
-                    original_id=row.id,
-                    **{f: getattr(row, f) for f in fields},
-                ))
+                if not rows:
+                    break
 
-            ids = [row.id for row in rows]
-            if ids:
-                await db.execute(delete(hot_model).where(hot_model.id.in_(ids)))
+                ids = [row.id for row in rows]
 
-            counts[table_name] = len(rows)
-            if rows:
+                async with db.begin_nested():
+                    for row in rows:
+                        db.add(archive_model(
+                            original_id=row.id,
+                            **{f: getattr(row, f) for f in fields},
+                        ))
+                    await db.execute(delete(hot_model).where(hot_model.id.in_(ids)))
+
+                await db.commit()
+                total_archived += len(rows)
+
+            counts[table_name] = total_archived
+            if total_archived:
                 logger.info("Archivadas %d filas de %s (anteriores a %s).",
-                            len(rows), table_name, cutoff)
+                            total_archived, table_name, cutoff)
         except Exception:
             logger.exception("Fallo archivando %s; se continúa con las demás tablas.", table_name)
-            counts[table_name] = 0
+            counts[table_name] = total_archived
 
-    await db.commit()
     return counts

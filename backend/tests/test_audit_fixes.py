@@ -732,6 +732,83 @@ async def test_archive_old_snapshots_moves_old_rows(db_session: AsyncSession):
     assert (await db_session.execute(select(func.count()).select_from(AdSnapshotArchive))).scalar() == 1
 
 
+@pytest.mark.asyncio
+async def test_archive_old_snapshots_batched(db_session: AsyncSession):
+    """Punto 3 de fase 06: procesa múltiples lotes correctamente."""
+    from app.services.snapshot_archiver import archive_old_snapshots
+    from app.models.campaign_snapshot import CampaignSnapshot
+    from app.models.snapshot_archive import CampaignSnapshotArchive
+    from sqlalchemy import select, func
+
+    org, acc = await _make_org_and_account(db_session, slug="arch-batch-org")
+    today = datetime.date.today()
+    old_date = today - datetime.timedelta(days=200)
+
+    for i in range(5):
+        db_session.add(CampaignSnapshot(
+            ad_account_id=acc.id, organization_id=org.id, campaign_id=f"c-batch-{i}",
+            campaign_name=f"Vieja {i}", status="ACTIVE", date=old_date,
+        ))
+    await db_session.commit()
+
+    # Batch size de 2: procesará 3 lotes (2, 2, 1)
+    counts = await archive_old_snapshots(db_session, retention_days=180, batch_size=2)
+    assert counts["campaign_snapshots"] == 5
+
+    archived_count = (await db_session.execute(
+        select(func.count()).select_from(CampaignSnapshotArchive).where(CampaignSnapshotArchive.ad_account_id == acc.id)
+    )).scalar()
+    assert archived_count == 5
+
+    hot_count = (await db_session.execute(
+        select(func.count()).select_from(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id)
+    )).scalar()
+    assert hot_count == 0
+
+
+@pytest.mark.asyncio
+async def test_archive_old_snapshots_rollback_on_failure_prevents_duplicates(db_session: AsyncSession, monkeypatch):
+    """Punto 3 de fase 06: si falla el delete, el savepoint hace rollback y no deja filas duplicadas."""
+    from app.services.snapshot_archiver import archive_old_snapshots
+    from app.models.campaign_snapshot import CampaignSnapshot
+    from app.models.snapshot_archive import CampaignSnapshotArchive
+    from sqlalchemy import select, func
+
+    org, acc = await _make_org_and_account(db_session, slug="arch-fail-org")
+    today = datetime.date.today()
+    old_date = today - datetime.timedelta(days=200)
+
+    db_session.add(CampaignSnapshot(
+        ad_account_id=acc.id, organization_id=org.id, campaign_id="c-fail-test",
+        campaign_name="Vieja Fallo", status="ACTIVE", date=old_date,
+    ))
+    await db_session.commit()
+
+    orig_execute = db_session.execute
+    async def mock_execute(statement, *args, **kwargs):
+        # Simular fallo únicamente al intentar DELETE sobre campaign_snapshots
+        if "DELETE FROM campaign_snapshots" in str(statement):
+            raise RuntimeError("Fallo simulado en DELETE")
+        return await orig_execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(db_session, "execute", mock_execute)
+
+    counts = await archive_old_snapshots(db_session, retention_days=180)
+    assert counts["campaign_snapshots"] == 0
+
+    # No debe haber quedado en archive porque el savepoint se revirtió
+    archived_count = (await orig_execute(
+        select(func.count()).select_from(CampaignSnapshotArchive).where(CampaignSnapshotArchive.ad_account_id == acc.id)
+    )).scalar()
+    assert archived_count == 0
+
+    # La fila caliente sigue intacta
+    hot_count = (await orig_execute(
+        select(func.count()).select_from(CampaignSnapshot).where(CampaignSnapshot.ad_account_id == acc.id)
+    )).scalar()
+    assert hot_count == 1
+
+
 # --- Selector de modelo de IA: solo ofrece modelos del proveedor realmente activo ---
 @pytest.mark.asyncio
 async def test_ai_models_endpoint_reflects_active_provider(async_client: AsyncClient, monkeypatch):

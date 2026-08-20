@@ -329,3 +329,28 @@ async def test_plan_chat_request_multi_block_kpis_and_reach(monkeypatch):
     )
     assert plan.blocks == ["kpis", "reach"]
     assert plan.period_key == "90d"
+
+
+@pytest.mark.asyncio
+async def test_plan_chat_request_validates_topic_against_catalog(monkeypatch):
+    """Punto 4 de fase 06: topic devuelto por el LLM debe validarse contra SUPPORTED_TOPICS."""
+    _key_env(monkeypatch)
+    # 1. Topic válido
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({
+            "blocks": ["kpis"],
+            "topic": "SPEND",
+        }))
+    ))
+    plan = await OpenRouterClient().plan_chat_request(_org(), "¿cuánto gasté?")
+    assert plan.topic == "SPEND"
+
+    # 2. Topic inválido/inventado -> None
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient(
+        response=_topic_response(json.dumps({
+            "blocks": ["kpis"],
+            "topic": "INVENTED_TOPIC_123",
+        }))
+    ))
+    plan2 = await OpenRouterClient().plan_chat_request(_org(), "algo raro")
+    assert plan2.topic is None

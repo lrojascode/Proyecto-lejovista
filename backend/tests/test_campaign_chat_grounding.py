@@ -118,3 +118,25 @@ def test_spanish_grouped_money_format_is_accepted():
     romper el grounding."""
     facts = {"account": {"amount_spent": 2399.97, "spend_cap": 5000.0}}
     assert numbers_are_grounded(facts, "Llevás gastados S/. 2.399,97 de un tope de S/. 5.000,00.") is True
+
+
+def test_thousands_dot_notation_grounding_bidirectional():
+    """Punto 2 de fase 06: alcance como 789.412 debe groundear contra entero 789412 y viceversa."""
+    facts = {"alcance": {"total_personas": 789412, "impresiones": 1250000}}
+    # LLM usa formato con punto de miles
+    assert numbers_are_grounded(facts, "Alcanzaste a 789.412 personas con 1.250.000 impresiones.") is True
+    # LLM usa formato plano
+    assert numbers_are_grounded(facts, "Alcanzaste a 789412 personas.") is True
+
+    # Inversa: facts contiene el string formateado "789.412", respuesta usa plano o con punto
+    facts_str = {"mensaje": "Alcanzaste a 789.412 personas"}
+    assert numbers_are_grounded(facts_str, "Alcanzaste a 789.412 personas.") is True
+    assert numbers_are_grounded(facts_str, "Alcanzaste a 789412 personas.") is True
+
+
+def test_thousands_dot_notation_does_not_break_decimal_collision_rejection():
+    """Asegurar que 789.41 (2 decimales) no groundea contra 789410 ni 78941."""
+    facts = {"spend": 789.41}
+    assert numbers_are_grounded(facts, "Gastaste S/. 789.41.") is True
+    assert numbers_are_grounded(facts, "Gastaste S/. 789410.") is False
+    assert numbers_are_grounded(facts, "Alcanzaste a 789410 personas.") is False

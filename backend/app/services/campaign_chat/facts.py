@@ -63,6 +63,11 @@ def _money(value: Optional[float]) -> str:
     return f"S/. {sign}{entero_agrupado},{dec}"
 
 
+def _fmt_int(value: Optional[int]) -> str:
+    """Formatea un entero con separador de miles con punto (ej. 789.412)."""
+    return f"{int(value or 0):,}".replace(",", ".")
+
+
 def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
     """Verifica si anadir block_dict mantiene el total dentro de MAX_GROUNDING_VALUES.
     Si entra, lo anade a facts y devuelve True; si no, lo omite y devuelve False (H7).
@@ -142,9 +147,15 @@ async def resolve_facts(
             topic = "CUSTOM_PLAN"
             topics_to_check = []
     else:
-        topic = getattr(topic_or_blocks, "topic", "SUMMARY")
-        blocks = list(getattr(topic_or_blocks, "blocks", ["kpis", "ranking"]))
-        topics_to_check = [topic] if isinstance(topic, str) else list(topic)
+        topic_attr = getattr(topic_or_blocks, "topic", None)
+        topic = topic_attr if topic_attr is not None else "CUSTOM_PLAN"
+        blocks = list(getattr(topic_or_blocks, "blocks", None) or ["kpis", "ranking"])
+        if isinstance(topic, str) and topic != "CUSTOM_PLAN":
+            topics_to_check = [topic]
+        elif isinstance(topic, (list, tuple, set)):
+            topics_to_check = list(topic)
+        else:
+            topics_to_check = []
 
     # 2. Ventana de tiempo
     if window_days is None:
@@ -271,21 +282,22 @@ async def resolve_facts(
 
         elif b == "ranking" and report:
             if "campaigns" not in facts:
-                camps = report.get("campaigns", [])
+                all_camps = report.get("campaigns", [])
+                camps_with_conv = [c for c in all_camps if int(c.get("conversations", 0)) > 0]
                 top_camps = []
-                for c in camps[:RANKING_TOP_K]:
+                for c in camps_with_conv[:RANKING_TOP_K]:
                     top_camps.append({
                         "name": c.get("name"),
                         "status": c.get("status"),
                         "spend": round(float(c.get("spend", 0.0)), 2),
                         "conversations": int(c.get("conversations", 0)),
-                        "cost_per_conv": round(float(c.get("cpl", 0.0)), 2),
+                        "cost_per_conv": round(float(c.get("cost_per_conv", 0.0)), 2),
                         "ctr": round(float(c.get("ctr", 0.0)), 2),
                     })
                 rank_dict = {
                     "campaigns": top_camps,
-                    "total_campanas_activas": sum(1 for c in camps if c.get("status") == "ACTIVE"),
-                    "total_campanas": len(camps),
+                    "total_campanas_activas": sum(1 for c in all_camps if c.get("status") == "ACTIVE"),
+                    "total_campanas": len(all_camps),
                 }
                 _safe_add_block(facts, rank_dict, "ranking")
 
@@ -461,7 +473,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             if not personas and not impresiones:
                 return questions.NO_DATA_TEXT
             freq = alc.get("frecuencia", 0.0)
-            return f"En {ventana} alcanzaste a {personas:,} personas con {impresiones:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", ".")
+            return f"En {ventana} alcanzaste a {_fmt_int(personas)} personas con {_fmt_int(impresiones)} impresiones (frecuencia promedio de {freq:.2f})."
 
         if single_topic == "CTR":
             personas = alc.get("total_personas", 0)
@@ -469,7 +481,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             if not personas and not impresiones:
                 return questions.NO_DATA_TEXT
             ctr = alc.get("ctr_promedio_pct", 0.0)
-            return f"Tu CTR promedio es {ctr:.2f}% en {ventana}, sobre un alcance de {personas:,} personas.".replace(",", ".")
+            return f"Tu CTR promedio es {ctr:.2f}% en {ventana}, sobre un alcance de {_fmt_int(personas)} personas."
 
         if single_topic == "LEADS":
             convs = kpis.get("conversations", 0)
@@ -569,7 +581,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
         personas = alc.get("total_personas", 0)
         impresiones = alc.get("impresiones", 0)
         freq = alc.get("frecuencia", 0.0)
-        parts.append(f"Alcanzaste a {personas:,} personas con {impresiones:,} impresiones (frecuencia promedio de {freq:.2f}).".replace(",", "."))
+        parts.append(f"Alcanzaste a {_fmt_int(personas)} personas con {_fmt_int(impresiones)} impresiones (frecuencia promedio de {freq:.2f}).")
 
     # Bloque 3: estructura (objetivo / fechas). Si el tema se pidió pero el
     # dato no está, lo decimos explícitamente en vez de dejar que otro bloque
@@ -615,4 +627,4 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
     spend = kpis.get("spend", 0.0)
     convs = kpis.get("conversations", 0)
     cpl = kpis.get("cost_per_conv", 0.0)
-    return f"Resumen de {ventana}: S/. {spend:.2f} invertidos, {convs} conversaciones y un costo promedio de S/. {cpl:.2f} por lead."
+    return f"Resumen de {ventana}: {_money(spend)} invertidos, {convs} conversaciones y un costo promedio de {_money(cpl)} por lead."

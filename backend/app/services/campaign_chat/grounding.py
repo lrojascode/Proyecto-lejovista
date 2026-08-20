@@ -186,25 +186,45 @@ def _parse_float_candidates(raw: str) -> List[float]:
         return []
     candidates = []
     
-    # 1. Sin separador de miles: 1085.47 o 1085,47
+    # 1. Solo '.' y no ','
     if "." in raw and "," not in raw:
         try:
             candidates.append(float(raw))
         except ValueError:
             pass
+        # Lectura de miles con punto (ej. 789.412 o 1.234.567)
+        parts = raw.split(".")
+        if len(parts) > 1 and 1 <= len(parts[0]) <= 3 and parts[0].isdigit() and all(len(p) == 3 and p.isdigit() for p in parts[1:]):
+            try:
+                val = float(raw.replace(".", ""))
+                if val not in candidates:
+                    candidates.append(val)
+            except ValueError:
+                pass
+    # 2. Solo ',' y no '.'
     elif "," in raw and "." not in raw:
         try:
             candidates.append(float(raw.replace(",", ".")))
         except ValueError:
             pass
+        # Lectura de miles con coma (ej. 789,412 o 1,234,567)
+        parts = raw.split(",")
+        if len(parts) > 1 and 1 <= len(parts[0]) <= 3 and parts[0].isdigit() and all(len(p) == 3 and p.isdigit() for p in parts[1:]):
+            try:
+                val = float(raw.replace(",", ""))
+                if val not in candidates:
+                    candidates.append(val)
+            except ValueError:
+                pass
+    # 3. '.' y ',' presentes
     elif "." in raw and "," in raw:
-        # Formato 1,085.47 (inglés)
+        # Formato 1,085.47 o 1,234,567.89 (inglés)
         if raw.rfind(".") > raw.rfind(","):
             try:
                 candidates.append(float(raw.replace(",", "")))
             except ValueError:
                 pass
-        # Formato 1.085,47 (español)
+        # Formato 1.085,47 o 1.234.567,89 (español)
         else:
             try:
                 candidates.append(float(raw.replace(".", "").replace(",", ".")))
