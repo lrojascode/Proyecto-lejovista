@@ -4,6 +4,26 @@ from app.services.campaign_chat.facts import resolve_facts, PLAN_BY_TOPIC
 from app.services.campaign_chat.grounding import GroundingSet
 
 
+def _coverage(dias: int):
+    """Cobertura falsa con N dias de datos.
+
+    `facts` dejo de usar `days_of_history` (que asumia continuidad y no
+    filtraba por organizacion) y ahora pide la cobertura completa, que ademas
+    entra a los facts en vez de calcularse y tirarse.
+    """
+    from app.services.data_coverage import Coverage
+    import datetime as _dt
+    hoy = _dt.date.today()
+    return Coverage(
+        primer_dia=hoy - _dt.timedelta(days=max(0, dias - 1)),
+        ultimo_dia=hoy,
+        dias_con_datos=dias,
+        detalle_diario_desde=hoy - _dt.timedelta(days=max(0, dias - 1)),
+        backfill_completo=True,
+    )
+
+
+
 def _acc():
     acc = AdAccount(id="acc_1", name="Cuenta Test", spend_cap=5000.0, amount_spent=2000.0, status="ACTIVE")
     return acc
@@ -11,10 +31,7 @@ def _acc():
 
 @pytest.mark.asyncio
 async def test_resolve_facts_kpis_and_calculator(mocker):
-    mocker.patch(
-        "app.services.campaign_chat.facts.days_of_history",
-        return_value=30,
-    )
+    mocker.patch("app.services.campaign_chat.facts.get_account_coverage", return_value=_coverage(30))
     mocker.patch(
         "app.services.campaign_chat.facts.get_kpis_with_deltas",
         return_value={
@@ -49,7 +66,7 @@ async def test_resolve_facts_kpis_and_calculator(mocker):
 
 @pytest.mark.asyncio
 async def test_resolve_facts_grounding_invariant(mocker):
-    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=30)
+    mocker.patch("app.services.campaign_chat.facts.get_account_coverage", return_value=_coverage(30))
     mocker.patch("app.services.campaign_chat.facts.get_kpis_with_deltas", return_value={
         "current": {"spend": 500.0, "conversations": 25, "cost_per_conv": 20.0},
         "previous": {"spend": 400.0, "conversations": 20, "cost_per_conv": 20.0},
@@ -70,7 +87,7 @@ async def test_resolve_facts_grounding_invariant(mocker):
 
 @pytest.mark.asyncio
 async def test_resolve_facts_ranking_filters_zero_conversations_and_reads_cost_per_conv(mocker):
-    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=30)
+    mocker.patch("app.services.campaign_chat.facts.get_account_coverage", return_value=_coverage(30))
     mocker.patch("app.services.campaign_chat.facts.get_kpis_with_deltas", return_value={
         "current": {"spend": 500.0, "conversations": 25, "cost_per_conv": 20.0},
         "previous": {"spend": 400.0, "conversations": 20, "cost_per_conv": 20.0},
@@ -101,7 +118,7 @@ async def test_resolve_facts_ranking_filters_zero_conversations_and_reads_cost_p
 @pytest.mark.asyncio
 async def test_resolve_facts_with_none_topic_in_chat_plan_does_not_crash(mocker):
     """Punto 4 de fase 06: ChatPlan(topic=None) no debe lanzar TypeError: 'NoneType' object is not iterable."""
-    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=30)
+    mocker.patch("app.services.campaign_chat.facts.get_account_coverage", return_value=_coverage(30))
     mocker.patch("app.services.campaign_chat.facts.get_kpis_with_deltas", return_value={
         "current": {"spend": 100.0, "conversations": 5, "cost_per_conv": 20.0},
         "previous": {"spend": 100.0, "conversations": 5, "cost_per_conv": 20.0},

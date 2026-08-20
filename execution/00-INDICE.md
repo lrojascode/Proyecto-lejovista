@@ -24,7 +24,7 @@ Tres frentes que llegaron juntos y conviene no mezclar:
 | 01 | [marca-y-vista-cliente](01-marca-y-vista-cliente.md) | Rebrand a Agente DX IA, acento celeste, ocultar módulos, solo campañas al aire, formato de moneda único | 06 (§5) | ✅ **hecho** |
 | 02 | [panel-admin-y-modulos](02-panel-admin-y-modulos.md) | Alta de clientes, roles de plataforma, toggles de módulos | 01 | |
 | 03 | [sync-historico-completo](03-sync-historico-completo.md) | Primer sync total + estimación de tiempo + incrementales | — | ✅ **hecho** |
-| 04 | [chat-consultas](04-chat-consultas.md) | Brechas contra `PROMPT-CONSULTAS-ITS.md` | 03 | |
+| 04 | [chat-consultas](04-chat-consultas.md) | Brechas contra `PROMPT-CONSULTAS-ITS.md` | 03 | 🟡 esencial hecho |
 | 05 | [chat-creacion](05-chat-creacion.md) | Brechas contra `ORDEN-CAMPANA-ITS.md` | — | |
 | 06 | [bugs-pendientes](06-bugs-pendientes.md) | Lo que quedó abierto del plan anterior | — | ✅ **hecho** (`eaf5eb8`) |
 
@@ -34,7 +34,7 @@ Tres frentes que llegaron juntos y conviene no mezclar:
 06  bugs pendientes        → HECHO (eaf5eb8)
 01  marca y vista cliente  → HECHO
 03  sync histórico         → HECHO
-04  chat consultas         → el mayor salto de calidad percibida
+04  chat consultas         → esencial HECHO; queda pixeles y lifetime
 02  panel admin            → cuando ya haya módulos que valga la pena apagar
 05  chat creación          → el más grande; ver la advertencia de abajo
 ```

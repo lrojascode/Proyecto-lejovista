@@ -200,6 +200,7 @@ class MetaAdsSyncService:
                 "name": "MTV_MSJ_CABLE_GPT_CERCADO_JUN2026",
                 "status": "ACTIVE",
                 "effective_status": "ACTIVE",
+                "result_type": "MIXTA",   # formularios Y WhatsApp: el caso que rompia las cifras
                 "budget": 70.0,  # Presupuesto diario S/.70
                 "ctr_base": 1.4, # 1.4%
                 "cpl_target": 1.50, # S/.1.50
@@ -221,6 +222,7 @@ class MetaAdsSyncService:
                 "name": "MTV_MSJ_VULCANIZADO_SURQUILLO_JUN2026",
                 "status": "ACTIVE",
                 "effective_status": "ACTIVE",
+                "result_type": "WHATSAPP",
                 "budget": 50.0,
                 "ctr_base": 0.6,
                 "cpl_target": 4.50,
@@ -239,6 +241,7 @@ class MetaAdsSyncService:
                 # simulacion es la unica forma de probar que el filtro real
                 # (effective_status) funciona.
                 "effective_status": "ADSET_PAUSED",
+                "result_type": "LEADS",
                 "budget": 40.0,
                 "ctr_base": 0.25,
                 "cpl_target": 12.00,
@@ -327,7 +330,24 @@ class MetaAdsSyncService:
                     frequency = 1.2
 
                 conversions = max(0, conversions)
-                conversations = conversions  # en campañas de mensajes, cada lead es una conversación
+                # Tipo de resultado por campaña, para que en simulación exista el
+                # caso que rompía las cifras: una cuenta que corre formularios Y
+                # WhatsApp a la vez. Con todas las campañas del mismo tipo, la
+                # diferencia entre "elegir uno" y "sumar" no se ve nunca.
+                tipo = c.get("result_type", "WHATSAPP")
+                if tipo == "LEADS":
+                    leads_reales, wa_reales = conversions, 0
+                elif tipo == "MIXTA":
+                    leads_reales = conversions
+                    wa_reales = int(conversions * 1.4)
+                else:
+                    leads_reales, wa_reales = 0, conversions
+                # `conversations` conserva el proxy histórico (cuando no hay
+                # mensajería se rellena con los leads) para no cambiar lo que ya
+                # leen otras partes; `results` es la suma honesta.
+                conversations = wa_reales or leads_reales
+                conversions = leads_reales
+                resultados = leads_reales + wa_reales
                 reach = int(impressions / max(frequency, 1.0))
                 cpl = spend / conversions if conversions > 0 else spend
                 ctr = (clicks / impressions) * 100.0 if impressions > 0 else 0.0
@@ -393,6 +413,7 @@ class MetaAdsSyncService:
                     clicks=clicks,
                     conversions=conversions,
                     conversations=conversations,
+                    results=resultados,
                     cpl=cpl,
                     ctr=ctr,
                     frequency=frequency,
@@ -680,6 +701,7 @@ class MetaAdsSyncService:
             snapshot.clicks = clicks
             snapshot.conversions = conversions
             snapshot.conversations = conversations
+            snapshot.results = self._count_results(item.get("actions"))
             snapshot.cpl = cpl
             snapshot.ctr = ctr
             snapshot.frequency = frequency
@@ -1045,6 +1067,7 @@ class MetaAdsSyncService:
             row.name = item.get("adset_name", "")
             row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
+            row.results = self._count_results(item.get("actions"))
             row.targeting_summary = targeting_map.get(adset_id, {})
             row.effective_status = effective_status_map.get(adset_id)
             row.budget = budget_map.get(adset_id, 0.0)
@@ -1120,6 +1143,7 @@ class MetaAdsSyncService:
             row.name = item.get("ad_name", "")
             row.spend = spend; row.impressions = impressions; row.reach = reach; row.clicks = clicks
             row.conversions = conversions; row.conversations = conversations; row.cpl = cpl; row.ctr = ctr
+            row.results = self._count_results(item.get("actions"))
 
     async def _sync_real_inventory(self, ad_account, token, limiter):
         # P-1: imágenes y audiencias son lecturas independientes entre sí —

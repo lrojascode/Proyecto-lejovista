@@ -43,9 +43,34 @@ async def get_window_kpis(
     snapshots = (await db.execute(q)).scalars().all()
 
     spend = sum(s.spend for s in snapshots)
-    conversations = sum((s.conversations or s.conversions) for s in snapshots)
-    cost_per_conv = round(spend / conversations, 2) if conversations > 0 else spend
-    return {"spend": round(spend, 2), "conversations": conversations, "cost_per_conv": cost_per_conv}
+
+    # `resultados = leads + conversaciones de WhatsApp`. Antes esto era
+    # `s.conversations or s.conversions`: ELEGIA uno en vez de sumar, y en una
+    # cuenta que corre formularios Y WhatsApp el total no era "resultados", era
+    # "lo que haya".
+    #
+    # `results` lo llena el sync desde los `actions` crudos; es None en los
+    # snapshots anteriores a la migración f6a7b8c9d0e1 y ahí se conserva el
+    # comportamiento viejo, que es preferible a inventar una suma que
+    # doble-contaría (`conversations` trae los leads como proxy).
+    leads = sum(s.conversions for s in snapshots)
+    results = sum(
+        s.results if s.results is not None else (s.conversations or s.conversions)
+        for s in snapshots
+    )
+    whatsapp = max(0, results - leads)
+    cost_per_conv = round(spend / results, 2) if results > 0 else spend
+    return {
+        "spend": round(spend, 2),
+        # `conversations` se conserva como el TOTAL para no romper a quien ya lo
+        # lee (frontend, PDF, facts del chat). Las claves honestas son las de
+        # abajo: el chat nombra cada cosa por lo que es.
+        "conversations": results,
+        "results": results,
+        "leads": leads,
+        "whatsapp": whatsapp,
+        "cost_per_conv": cost_per_conv,
+    }
 
 
 def pct_change(old: float, new: float) -> Optional[float]:

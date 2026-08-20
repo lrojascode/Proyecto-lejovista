@@ -10,6 +10,26 @@ from app.models.organization_user import OrganizationUser
 from app.models.user import User
 
 
+def _coverage(dias: int):
+    """Cobertura falsa con N dias de datos.
+
+    `facts` dejo de usar `days_of_history` (que asumia continuidad y no
+    filtraba por organizacion) y ahora pide la cobertura completa, que ademas
+    entra a los facts en vez de calcularse y tirarse.
+    """
+    from app.services.data_coverage import Coverage
+    import datetime as _dt
+    hoy = _dt.date.today()
+    return Coverage(
+        primer_dia=hoy - _dt.timedelta(days=max(0, dias - 1)),
+        ultimo_dia=hoy,
+        dias_con_datos=dias,
+        detalle_diario_desde=hoy - _dt.timedelta(days=max(0, dias - 1)),
+        backfill_completo=True,
+    )
+
+
+
 async def _auth_headers_for_role(async_client: AsyncClient, db: AsyncSession, org, email: str, role: str):
     signup_res = await async_client.post("/api/v1/auth/signup", json={
         "email": email, "password": "securepassword123",
@@ -71,7 +91,10 @@ async def test_ask_mode_answering_questions_does_not_push_creation(
     async_client: AsyncClient, db_session: AsyncSession, mocker
 ):
     for mod in ("questions", "facts"):
-        mocker.patch(f"app.services.campaign_chat.{mod}.days_of_history", return_value=30)
+        if mod == "facts":
+            mocker.patch(f"app.services.campaign_chat.{mod}.get_account_coverage", return_value=_coverage(30))
+        else:
+            mocker.patch(f"app.services.campaign_chat.{mod}.days_of_history", return_value=30)
         mocker.patch(
             f"app.services.campaign_chat.{mod}.get_kpis_with_deltas",
             return_value={

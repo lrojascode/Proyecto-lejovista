@@ -166,7 +166,8 @@ class ReportBuilder:
                 "objective": s.objective, "created_time": s.created_time,
                 "start_time": s.start_time, "stop_time": s.stop_time,
                 "spend": 0.0, "impressions": 0, "reach": 0, "clicks": 0,
-                "conversions": 0, "conversations": 0, "freqs": [],
+                "conversions": 0, "conversations": 0, "results": 0, "results_known": False,
+                "effective_status": None, "freqs": [],
             })
             a["name"] = s.campaign_name
             a["status"] = s.status
@@ -187,17 +188,45 @@ class ReportBuilder:
             a["clicks"] += s.clicks
             a["conversions"] += s.conversions
             a["conversations"] += s.conversations
+            # `results` viene del sync contado sobre los `actions` crudos. Es
+            # None en snapshots anteriores a la migracion f6a7b8c9d0e1, y ahi no
+            # se puede recalcular: se marca la campana como "sin dato" y se cae
+            # al comportamiento anterior en vez de inventar un total.
+            if s.results is not None:
+                a["results"] += s.results
+                a["results_known"] = True
+            if s.effective_status:
+                a["effective_status"] = s.effective_status
             if s.frequency:
                 a["freqs"].append(s.frequency)
 
         out = []
         for cid, a in agg.items():
-            conv = a["conversations"] or a["conversions"]
+            # `resultados = leads + conversaciones de WhatsApp`. Antes esto era
+            # `conversations or conversions`: ELEGIA uno en vez de sumar, asi que
+            # en una cuenta que corre los dos tipos a la vez el numero final no
+            # era "resultados", era "lo que haya". El documento de ITS es
+            # tajante: dividir el gasto de una campana de WhatsApp entre `leads`
+            # da cifras absurdas (S/101.78 por lead medido mal contra S/3.38 por
+            # conversacion medido bien).
+            leads = a["conversions"]
+            if a["results_known"]:
+                results = a["results"]
+                whatsapp = max(0, results - leads)
+            else:
+                # Datos viejos sin la columna: se conserva el comportamiento
+                # anterior. Preferible a inventar una suma que doble-contaria.
+                results = a["conversations"] or a["conversions"]
+                whatsapp = a["conversations"] if a["conversations"] != leads else 0
+            conv = results
             cost = a["spend"] / conv if conv > 0 else a["spend"]
             ctr = (a["clicks"] / a["impressions"] * 100) if a["impressions"] else 0
             freq = (sum(a["freqs"]) / len(a["freqs"])) if a["freqs"] else 0
             out.append({
                 "campaign_id": cid, "name": a["name"], "status": a["status"], "budget": a["budget"],
+                "effective_status": a["effective_status"],
+                "leads": leads, "whatsapp": whatsapp, "results": results,
+                "results_known": a["results_known"],
                 "objective": a["objective"],
                 "created_time": a["created_time"].isoformat() if a["created_time"] else None,
                 "start_time": a["start_time"].isoformat() if a["start_time"] else None,

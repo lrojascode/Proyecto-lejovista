@@ -42,6 +42,17 @@ class AdSnapshot(Base):
     clicks: Mapped[int] = mapped_column(Integer, default=0)
     conversions: Mapped[int] = mapped_column(Integer, default=0)
     conversations: Mapped[int] = mapped_column(Integer, default=0)
+    # `resultados = leads + conversaciones de WhatsApp`, contado sobre los
+    # valores CRUDOS de Meta. No se puede derivar de las dos columnas de
+    # arriba: `conversations` trae los leads como proxy cuando la campana no
+    # tiene mensajeria, asi que sumarlas contaria cada lead dos veces.
+    #
+    # De aca sale ademas el WhatsApp real: wa = results - conversions.
+    #
+    # Nullable: los snapshots anteriores a la migracion f6a7b8c9d0e1 no lo
+    # tienen y no se puede recalcular sin volver a pedirle los `actions` a
+    # Meta. Quien lo lea cae al comportamiento anterior cuando es None.
+    results: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     cpl: Mapped[float] = mapped_column(Float, default=0.0)
     ctr: Mapped[float] = mapped_column(Float, default=0.0)
 
