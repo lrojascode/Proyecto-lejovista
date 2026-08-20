@@ -116,7 +116,12 @@ export type SyncStatusResponse = {
 };
 
 // --- CAMPAIGN SNAPSHOT (/campaigns/recent, /campaigns/{id}/history) ---
-export type CampaignSnapshot = Schemas["CampaignSnapshotResponse"];
+// `effective_status` se agrega a mano hasta la proxima corrida de
+// `pnpm generate-types` (necesita el backend levantado). Mismo patron que
+// AdAccount mas arriba.
+export type CampaignSnapshot = Schemas["CampaignSnapshotResponse"] & {
+  effective_status?: string | null;
+};
 
 // --- INSIGHTS ---
 export type AIInsight = Schemas["AIInsightResponse"];

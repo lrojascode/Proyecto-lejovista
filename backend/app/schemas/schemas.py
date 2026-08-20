@@ -164,6 +164,10 @@ class CampaignSnapshotResponse(BaseModel):
     campaign_id: str
     campaign_name: str
     status: str
+    # Estado real de entrega. `status` dice cómo quedó configurada la campaña;
+    # esto dice si está entregando. Nullable porque los snapshots anteriores a
+    # la migración d4e5f6a7b8c9 no lo tienen.
+    effective_status: Optional[str] = None
     budget: float
     spend: float
     impressions: int

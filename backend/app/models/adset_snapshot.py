@@ -16,6 +16,15 @@ class AdsetSnapshot(Base):
     campaign_id: Mapped[str] = mapped_column(String, index=True)
     adset_id: Mapped[str] = mapped_column(String, index=True)
     name: Mapped[str] = mapped_column(String)
+    # Estado EFECTIVO de entrega segun Meta. No es lo mismo que `status`: una
+    # campana puede estar ACTIVE y no entregar nada porque su conjunto esta
+    # pausado, se agoto el presupuesto o la cuenta esta topada — Meta lo reporta
+    # como CAMPAIGN_PAUSED / ADSET_PAUSED / IN_PROCESS / etc. Para saber que
+    # esta REALMENTE al aire se mira este campo, no `status`.
+    # Se escribe por snapshot y no con un UPDATE masivo como objective/fechas:
+    # aquello son hechos inmutables de la campana, esto cambia a diario y pisarle
+    # la historia seria falsear el pasado.
+    effective_status: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Presupuesto diario del adset (nominal, no en centavos). En cuentas ABO el
     # presupuesto vive a nivel adset; se usa para derivar el de la campaña (Bug 5).

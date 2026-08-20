@@ -13,10 +13,13 @@ export default function CampaignsList() {
   const [campaigns, setCampaigns] = useState<CampaignSnapshot[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncMessage, setSyncMessage] = useState("");
+  // Por defecto se muestra SOLO lo que Meta reporta entregando. "Ver todas" es
+  // la salida para el operador, que si necesita revisar lo pausado.
+  const [showAll, setShowAll] = useState(false);
 
-  const fetchCampaigns = async () => {
+  const fetchCampaigns = async (all = showAll) => {
     try {
-      const data = await api.getRecentCampaigns();
+      const data = await api.getRecentCampaigns(!all);
       setCampaigns(data);
     } catch (e) {
       console.error("Error fetching campaigns list:", e);
@@ -26,8 +29,8 @@ export default function CampaignsList() {
   };
 
   useEffect(() => {
-    fetchCampaigns();
-  }, []);
+    fetchCampaigns(showAll);
+  }, [showAll]);
 
   // Antes esta página solo cargaba una vez al entrar — si sincronizabas
   // estando acá, se quedaba con los datos viejos hasta recargar a mano.
@@ -51,13 +54,27 @@ export default function CampaignsList() {
     <div>
       <div style={{ marginBottom: "24px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
         <div>
-          <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>Todas las Campañas</h2>
-          <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>Consulta el rendimiento y estado de optimización de todas las campañas de anuncios.</p>
+          <h2 style={{ fontSize: "24px", fontWeight: 590, letterSpacing: "-0.012em" }}>
+            {showAll ? "Todas las Campañas" : "Campañas al Aire"}
+          </h2>
+          <p style={{ color: "var(--color-fog)", fontSize: "15px", marginTop: "4px" }}>
+            {showAll
+              ? "Todas las campañas de la cuenta, incluidas las pausadas y las que no están entregando."
+              : "Solo lo que Meta reporta entregando ahora mismo. Una campaña puede figurar activa y no entregar nada si su conjunto está pausado o se agotó el presupuesto."}
+          </p>
           {syncMessage && (
             <p className="mono" style={{ color: "var(--color-signal-teal)", fontSize: "13px", marginTop: "8px" }}>{syncMessage}</p>
           )}
         </div>
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setShowAll((v) => !v)}
+            style={{ whiteSpace: "nowrap" }}
+          >
+            {showAll ? "Solo las que entregan" : "Ver todas"}
+          </button>
           <Link href="/campaigns/learning" className="btn-secondary" style={{ whiteSpace: "nowrap" }}>
             Aprendizaje de la IA
           </Link>
@@ -73,7 +90,9 @@ export default function CampaignsList() {
       <div className="glass-card">
         {campaigns.length === 0 ? (
           <p style={{ color: "var(--text-secondary)", textAlign: "center" }}>
-            No hay campañas sincronizadas. Conecta una cuenta de Meta Ads en Configuración.
+            {showAll
+              ? "No hay campañas sincronizadas. Conecta una cuenta de Meta Ads en Configuración."
+              : "Ninguna campaña está entregando ahora mismo. Probá \"Ver todas\" para revisar las pausadas."}
           </p>
         ) : (
           <div style={{ overflowX: "auto" }}>
@@ -119,6 +138,11 @@ export default function CampaignsList() {
                       <td style={{ padding: "12px 8px", fontSize: "14px" }}>{c.frequency.toFixed(2)}</td>
                       <td style={{ padding: "12px 8px" }}>
                         <StatusBadge status={c.status} />
+                        {c.effective_status && c.effective_status !== c.status ? (
+                          <div className="mono" style={{ color: "var(--color-amber)", fontSize: "12px", marginTop: "4px" }}>
+                            {c.effective_status}
+                          </div>
+                        ) : null}
                       </td>
                       <td style={{ padding: "12px 8px" }}>
                         <span className={`badge ${badgeClass}`}>{badgeIcon(badgeClass)} {badgeLabel}</span>

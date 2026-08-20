@@ -301,7 +301,11 @@ export const api = {
     }),
 
   // --- CAMPAIGNS ---
-  getRecentCampaigns: () => apiRequest<CampaignSnapshot[]>("/api/v1/campaigns/recent", "GET"),
+  getRecentCampaigns: (onlyDelivering = false) =>
+    apiRequest<CampaignSnapshot[]>(
+      `/api/v1/campaigns/recent${onlyDelivering ? "?only_delivering=true" : ""}`,
+      "GET"
+    ),
   getCampaignHistory: (campaignId: string) => apiRequest<CampaignSnapshot[]>(`/api/v1/campaigns/${campaignId}/history`, "GET"),
   getCampaignDetails: (campaignId: string) => apiRequest<CampaignDetail>(`/api/v1/campaigns/${campaignId}/details`, "GET"),
   triggerSync: () => apiRequest<{ status: string; task_id?: string; message: string }>("/api/v1/campaigns/sync-trigger", "POST"),

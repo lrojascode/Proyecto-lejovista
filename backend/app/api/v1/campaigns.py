@@ -59,6 +59,7 @@ CAMPAIGN_CREATION_RISK_LEVEL = "MEDIUM"
 
 @router.get("/recent", response_model=List[CampaignSnapshotResponse])
 async def list_recent_campaign_snapshots(
+    only_delivering: bool = False,
     current_user: User = Depends(get_current_user),
     ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
     db: AsyncSession = Depends(get_db)
@@ -66,6 +67,16 @@ async def list_recent_campaign_snapshots(
     """
     Retorna la captura de métricas más reciente para cada campaña de la cuenta de
     anuncios activa (ver `get_active_ad_account_id`).
+
+    `only_delivering=true` deja solo lo que Meta reporta como entregando de
+    verdad. Se filtra por `effective_status` y NO por `status`: una campaña
+    puede estar ACTIVE y no gastar un sol porque su conjunto está pausado, se
+    agotó el presupuesto o la cuenta está topada.
+
+    Los snapshots anteriores a la migración `d4e5f6a7b8c9` tienen
+    `effective_status` nulo. Esos se dejan pasar: esconder campañas por un dato
+    que todavía no se sincronizó sería peor que mostrarlas: el operador vería
+    una pantalla vacía sin saber por qué.
     """
     # Ventana amplia a propósito: "hoy" en el servidor (UTC) no es "hoy" en la
     # zona horaria de la cuenta de anuncios (ej. Lima, UTC-5), y Meta suele
@@ -94,6 +105,8 @@ async def list_recent_campaign_snapshots(
     for s in all_snapshots:
         if s.campaign_id not in seen_campaigns:
             seen_campaigns.add(s.campaign_id)
+            if only_delivering and s.effective_status is not None and s.effective_status != "ACTIVE":
+                continue
             latest_snapshots.append(s)
 
     # 4.3 (E-4): adjuntar el agregado real de 7 días por campaña (mismo cálculo
