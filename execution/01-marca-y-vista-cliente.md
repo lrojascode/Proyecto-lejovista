@@ -152,8 +152,82 @@ sol, que es peor que mostrarlas todas.
 
 ---
 
+## 5 · Un solo formato de moneda en todo el producto
+
+Viene del [06](06-bugs-pendientes.md), que cerró la mitad de adentro: el chat ya
+habla un solo formato, con una única definición en
+`backend/app/services/campaign_chat/formatting.py` (`money` / `fmt_int`). Lo que
+queda es el resto del producto, y entra acá porque el 01 ya toca el frontend
+entero por el rebrand y el acento — abrir un pase aparte para esto sería pasar dos
+veces por los mismos archivos.
+
+**Hoy conviven dos convenciones para el mismo número:**
+
+```
+chat            : S/. 7.417,19     ← es-PE, ya unificado
+PDF / dashboard : S/.7417.19       ← sin separador, punto decimal, sin espacio
+```
+
+El cliente lee una cifra en el chat, descarga el PDF del mismo dato y ve otra
+escritura. Son tres diferencias a la vez: el espacio tras `S/.`, el separador de
+miles y el separador decimal.
+
+### Alcance real
+
+| Superficie | Sitios | Forma actual |
+|---|---|---|
+| Frontend | **31** en 8 archivos | `S/.{n.toFixed(2)}` inline |
+| `pdf_report.py` | 4 | `S/.{{ "%.2f"\|format(...) }}` en la plantilla Jinja |
+| `report_builder.py` | 8 | f-strings dentro de las narrativas |
+| Otros servicios backend | 11 archivos | textos de insights, riesgo, sugerencias |
+
+Los 8 archivos del frontend son exactamente los que ya se tocan por el rebrand y
+el acento, salvo `campaigns/[id]` y `campaigns/new`.
+
+### Cómo hacerlo
+
+1. **Frontend:** una sola función en `lib/format.ts` (`money(n)`), y reemplazar los
+   31 sitios. Hoy `reporte/page.tsx:28` ya tiene un `money()` local — es el molde,
+   solo hay que subirlo a `lib/` y que los demás lo importen en vez de repetir
+   `toFixed(2)` inline. `Intl.NumberFormat("es-PE")` da el formato correcto sin
+   armarlo a mano.
+2. **Backend fuera del chat:** el mismo criterio. `formatting.py` del chat ya tiene
+   la implementación; conviene subirla a un módulo compartido —
+   `app/utils/formatting.py`— e importarla desde el chat, el PDF y
+   `report_builder`. **No** duplicarla: la duplicación es literalmente lo que
+   causó este bug.
+3. **Orden:** frontend y PDF primero (lo que el cliente ve); las narrativas de
+   `report_builder` y los insights después, que son texto generado y su formato
+   viaja dentro de strings más largos.
+
+### La trampa
+
+Las narrativas de `report_builder.py` y los insights **entran al grounding del
+chat** cuando el chat los cita. `formatting.money` ya está probado contra la
+guarda (`test_campaign_chat_formatting.py`), pero cualquier formateo nuevo que se
+invente por fuera hay que verificarlo igual, o la respuesta del analista se
+descarta entera y vuelve a leerse como plantilla.
+
+Y no aplicar `.replace(",", ".")` sobre una cadena que ya contenga un monto
+formateado: convierte `S/. 7.417,19` en `S/. 7.417.19`. Por eso `fmt_int` recibe un
+entero y no un string.
+
+### Decisión pendiente
+
+Doy por hecho que se alinea **el producto al chat** (es-PE con separador), que es
+lo coherente para un cliente peruano. Si preferís lo inverso —volver el chat a
+`S/.7417.19`— es cambiar `formatting.py` y los tests que fijan la convención, y no
+tocar nada más. Conviene decidirlo antes de empezar, no a mitad de los 31 sitios.
+
+---
+
 ## Verificación
 
+- El mismo monto se escribe igual en el chat, la tarjeta de aprobación, el
+  dashboard, el reporte y el PDF.
+- `grep -rn 'toFixed(2)' frontend/app` no devuelve montos de dinero.
+- Una respuesta del chat que cita una narrativa del reporte sigue pasando el
+  grounding.
 - Un usuario de una organización con módulos recortados: no ve los ítems, y
   **escribiendo la URL a mano tampoco entra**; la API le responde 403.
 - La raíz `/` lleva a una pantalla útil, no a la que se ocultó.

@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.campaign_chat import formatting
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.meta_page import MetaPage
@@ -98,7 +99,10 @@ async def test_full_chat_flow_creates_one_draft_and_learning_log(
     # El presupuesto mostrado tiene que venir de CampaignSuggester (evidencia de
     # que el LLM/extractor no inventó una cifra) — sin histórico, cae al
     # default determinista, pero SIGUE siendo lo que muestra `slots.budget`.
-    assert str(round(session["slots"]["budget"], 2)) in budget_field["value"]
+    # Se compara contra el formateador canónico, no contra un string armado a
+    # mano: así el test sigue verificando que la tarjeta muestra el monto de la
+    # sesión, sin quedar atado a cómo se escribe ese monto.
+    assert formatting.money(session["slots"]["budget"]) in budget_field["value"]
 
     accept_review = await async_client.post(
         f"/api/v1/campaigns/chat/sessions/{session_id}/decision",

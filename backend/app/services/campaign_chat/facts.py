@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.meta_page import MetaPage
+from app.services.campaign_chat import formatting
 from app.services.campaign_chat.grounding import GroundingSet, MAX_GROUNDING_VALUES
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat import questions
@@ -52,20 +53,10 @@ BLOCK_DESCRIPTIONS: Dict[str, str] = {
     "destination": "página de Facebook y número de WhatsApp de destino",
 }
 
-def _money(value: Optional[float]) -> str:
-    """Formatea un monto con la convención del resto del producto: separador
-    de miles con punto, decimales con coma (`S/. 2.399,97`). El fact numérico
-    detrás (`2399.97`) no cambia — solo el texto canónico que lo muestra."""
-    v = float(value or 0)
-    sign = "-" if v < 0 else ""
-    entero, dec = f"{abs(v):.2f}".split(".")
-    entero_agrupado = f"{int(entero):,}".replace(",", ".")
-    return f"S/. {sign}{entero_agrupado},{dec}"
-
-
-def _fmt_int(value: Optional[int]) -> str:
-    """Formatea un entero con separador de miles con punto (ej. 789.412)."""
-    return f"{int(value or 0):,}".replace(",", ".")
+# Definidos una sola vez en `formatting`: tener dos copias de esto fue
+# exactamente lo que produjo que el mismo monto saliera con dos formatos.
+_money = formatting.money
+_fmt_int = formatting.fmt_int
 
 
 def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
