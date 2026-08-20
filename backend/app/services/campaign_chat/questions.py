@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
+from app.services.campaign_chat import formatting
 from app.services.campaign_chat.period import DEFAULT_WINDOW_DAYS, Period, clamp_to_available
 from app.services.campaign_chat.slots import strip_accents
 from app.services.kpi_period import days_of_history, get_kpis_with_deltas
@@ -224,17 +225,8 @@ NO_DATA_TEXT = (
 )
 
 
-def _money(value: Optional[float]) -> str:
-    v = float(value or 0)
-    sign = "-" if v < 0 else ""
-    entero, dec = f"{abs(v):.2f}".split(".")
-    entero_agrupado = f"{int(entero):,}".replace(",", ".")
-    return f"S/. {sign}{entero_agrupado},{dec}"
-
-
-def _fmt_int(value: Optional[int]) -> str:
-    """Formatea un entero con separador de miles con punto (ej. 789.412)."""
-    return f"{int(value or 0):,}".replace(",", ".")
+_money = formatting.money
+_fmt_int = formatting.fmt_int
 
 
 def _pct(value: Optional[float]) -> str:

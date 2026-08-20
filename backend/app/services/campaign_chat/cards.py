@@ -9,6 +9,7 @@ import datetime
 import uuid
 from typing import Any, Dict, List, Optional
 
+from app.services.campaign_chat import formatting
 from app.services.campaign_chat.markdown_utils import normalize_markdown
 
 GREETING_TEXT = (
@@ -95,7 +96,7 @@ def build_review_card(slots: Dict[str, Any], proposal: Dict[str, Any]) -> Dict[s
         _field("product_name", "Producto", slots.get("product_name") or "—", "user", editable=False),
         _field(
             "budget", "Presupuesto",
-            f"S/. {slots.get('budget', 0):.2f} ({budget_type_label})",
+            f"{formatting.money(slots.get('budget', 0))} ({budget_type_label})",
             "user" if slots.get("_budget_from_user") else "ai_suggestion",
         ),
         _field("days", "Duración", f"{slots.get('days', 0)} días", "user" if slots.get("_days_from_user") else "ai_suggestion"),

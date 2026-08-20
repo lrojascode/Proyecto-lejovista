@@ -97,6 +97,22 @@ La convención nueva es defendible para es-PE, pero hoy conviven las dos: el cha
 dice `S/. 7.417,19` y el PDF del mismo dato dice `S/.7417.19`. Hay que elegir una
 y alinear, o el cliente ve dos formatos del mismo número el mismo día.
 
+> **Estado: cerrado de este lado, el resto se movió al [01](01-marca-y-vista-cliente.md) §5.**
+>
+> Se eligió la convención es-PE del chat. Dentro del chat quedó **una sola
+> definición** —`campaign_chat/formatting.py` (`money` / `fmt_int`)— y `facts.py`
+> y `questions.py` la importan en vez de tener cada uno su copia. Tener dos copias
+> fue exactamente lo que produjo este bug: se arregló una y la otra derivó.
+>
+> Se corrigió además un residuo que la primera pasada no vio: `cards.py`
+> —`build_review_card`, la tarjeta donde el usuario **confirma gasto real**—
+> seguía con el formato viejo, así que el presupuesto se mostraba `S/. 1000.00`
+> mientras el análisis dos mensajes antes decía `S/. 1.000,00`.
+>
+> Lo que sigue abierto es la divergencia chat ↔ resto del producto (31 sitios en
+> el frontend, el PDF y las narrativas de `report_builder`). Va en el 01 porque
+> ese pase ya toca los mismos archivos del frontend por el rebrand y el acento.
+
 ---
 
 ## Orden
