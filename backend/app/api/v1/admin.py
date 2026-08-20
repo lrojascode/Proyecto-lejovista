@@ -36,6 +36,7 @@ from app.services.email_service import send_email
 from app.tenant_rules.modules import (
     AVAILABLE_MODULES, UNDISABLEABLE_MODULES, enabled_modules_for, normalize_enabled_modules,
 )
+from app.utils.urls import invitation_url
 from app.utils.security import require_platform_admin
 
 logger = logging.getLogger("lejovista.admin")
@@ -285,7 +286,7 @@ async def _invite_first_admin(
         invited_by_user_id=invited_by.id,
     ))
 
-    invite_url = f"http://{org.slug}.{settings.BASE_DOMAIN}/invitations/{token}"
+    invite_url = invitation_url(token)
     nombre = org.display_name or org.name
     enviado = await send_email(
         to_email=email,

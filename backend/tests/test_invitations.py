@@ -62,7 +62,12 @@ async def test_only_admin_can_send_invitations(async_client: AsyncClient, db_ses
     assert data["email"] == "newbie@example.com"
     assert data["role"] == "OPERATOR"
     assert "token" in data
-    assert "invite-role-test" in data["invite_url"]
+    # El enlace va al DOMINIO BASE, no al subdominio del cliente:
+    # `accept_invitation` busca la invitacion solo por token, asi que meterle el
+    # subdominio obligaba a tener DNS y certificado para ese cliente antes de
+    # que alguien pudiera abrir el enlace.
+    assert "invite-role-test" not in data["invite_url"]
+    assert data["invite_url"].endswith(f"/invitations/{data['token']}")
 
 
 @pytest.mark.asyncio
