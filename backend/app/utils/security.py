@@ -264,6 +264,30 @@ def require_role(min_role: str):
     return _dependency
 
 
+async def require_platform_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Exige el flag de administrador de plataforma.
+
+    Deliberadamente NO comprueba ningun rol de organizacion: son dos ejes
+    distintos. Un ADMIN del Cliente A no puede crear el Cliente B, y un admin
+    de plataforma no es ADMIN de ninguna organizacion por serlo.
+
+    Y esto NO abre los datos de los tenants: las rutas que dependen de esta
+    funcion administran organizaciones (crearlas, invitar a su primer ADMIN,
+    configurar modulos), nunca leen sus campanas, gastos ni conversaciones. Ese
+    limite es lo que mantiene en pie el aislamiento por organizacion.
+    """
+    if not getattr(current_user, "is_platform_admin", False):
+        # 403 y no 404: el usuario esta autenticado y el recurso existe; lo que
+        # falta es el permiso. Devolver 404 solo dificultaria diagnosticarlo.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Esta sección es solo para administradores de la plataforma.",
+        )
+    return current_user
+
+
 def require_module(module: str):
     """Exige que la organización activa tenga habilitado `module`.
 

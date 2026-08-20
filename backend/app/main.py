@@ -10,6 +10,7 @@ from app.api.v1.insights import router as insight_router
 from app.api.v1.actions import router as action_router
 from app.api.v1.reports import router as report_router
 from app.api.v1.ai_usage import router as ai_usage_router
+from app.api.v1.admin import router as admin_router
 from app.api.v1.invitations import router as invitations_router
 from app.api.v1.ws import router as ws_router, redis_listener
 from app.utils.security import require_module
@@ -141,6 +142,9 @@ app.include_router(action_router, prefix="/api/v1", dependencies=[Depends(requir
 app.include_router(report_router, prefix="/api/v1")
 app.include_router(ai_usage_router, prefix="/api/v1", dependencies=[Depends(require_module("ai_usage"))])
 app.include_router(invitations_router, prefix="/api/v1")
+# Panel de plataforma. Sin require_module: no es un modulo de cliente, y su
+# gate --require_platform_admin-- vive en cada ruta del router.
+app.include_router(admin_router, prefix="/api/v1")
 app.include_router(ws_router) # Not prefixed with api/v1 to keep ws://host/ws/
 
 # Servir archivos estáticos subidos (/media)

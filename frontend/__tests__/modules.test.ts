@@ -35,6 +35,13 @@ describe('moduleForPath', () => {
     expect(moduleForPath('/loquesea')).toBeNull()
   })
 
+  it('/admin no pertenece a ningun módulo de cliente', () => {
+    // El panel de plataforma no es un modulo contratable: si cayera en uno, la
+    // redireccion del layout lo sacaria de ahi al primer cliente con modulos
+    // recortados. Su gate real es el 403 del backend.
+    expect(moduleForPath('/admin')).toBeNull()
+  })
+
   it('todas las rutas del mapa son alcanzables', () => {
     for (const r of MODULE_ROUTES) {
       expect(moduleForPath(r.path)).toBe(r.module)
