@@ -5,6 +5,7 @@ import type {
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
   OrgMember, Invitation, InvitationDetails, TenantBrand, MyModules, HistoryStatus,
+  AdminOrganization,
   CampaignRulesConfig, AIThresholdsConfig,
 } from "./types";
 
@@ -251,6 +252,22 @@ export const api = {
     return apiUploadRequest<{ logo_url: string }>("/api/v1/organizations/my/logo", formData);
   },
   getMyModules: () => apiRequest<MyModules>("/api/v1/organizations/my/modules", "GET"),
+
+  // --- Panel de plataforma. Solo responde si el usuario tiene el flag
+  //     is_platform_admin; si no, 403.
+  adminListOrganizations: () =>
+    apiRequest<AdminOrganization[]>("/api/v1/admin/organizations", "GET"),
+  adminListModules: () =>
+    apiRequest<{ available: Record<string, string>; undisableable: string[] }>(
+      "/api/v1/admin/modules", "GET"),
+  adminCreateOrganization: (body: Record<string, unknown>) =>
+    apiRequest<AdminOrganization>("/api/v1/admin/organizations", "POST", body),
+  adminUpdateModules: (orgId: string, modules: string[]) =>
+    apiRequest<AdminOrganization>(
+      `/api/v1/admin/organizations/${orgId}/modules`, "PATCH", { enabled_modules: modules }),
+  adminInviteAdmin: (orgId: string, email: string) =>
+    apiRequest<{ message: string }>(
+      `/api/v1/admin/organizations/${orgId}/invite-admin`, "POST", { email }),
   getTenantBrand: (slug?: string) =>
     apiRequest<TenantBrand>(
       slug ? `/api/v1/auth/tenant-brand?slug=${encodeURIComponent(slug)}` : "/api/v1/auth/tenant-brand",

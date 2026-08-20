@@ -50,6 +50,23 @@ export type HistoryStatus = {
   in_progress: { months_total?: number; months_done?: number; last_month?: string } | null;
 };
 
+/** Organizacion vista desde el panel de plataforma.
+ *  Trae CONTEOS y no contenido: nombres de campanas, gastos o conversaciones
+ *  serian datos del tenant, y el rol de plataforma no da acceso a eso. */
+export type AdminOrganization = {
+  id: string;
+  slug: string;
+  name: string;
+  display_name: string | null;
+  status: string;
+  industry: string | null;
+  accent_color: string | null;
+  enabled_modules: string[];
+  miembros: number;
+  cuentas_publicitarias: number;
+  created_at: string;
+};
+
 export type TenantBrand = {
   name: string;
   display_name?: string | null;
