@@ -1,18 +1,112 @@
 # Runbook: Alta y Onboarding de un Nuevo Cliente (Tenant)
 
-Este procedimiento describe el paso a paso reproducible para configurar y habilitar una nueva organización en LejoVista.
+Paso a paso reproducible para dar de alta una organización en **Agente DX IA**,
+con los módulos que ese cliente contrató y sin que nadie escriba su contraseña.
+
+> **Cambió en 2026-08.** Antes el cliente se auto-registraba desde `/signup` y
+> quedaba como ADMIN de su propia organización. Ahora el alta la hace un
+> **administrador de plataforma** desde `/admin`, que además elige qué módulos
+> ve ese cliente. El signup público sigue existiendo y no cambió.
 
 ---
 
-## 1. Creación de la Organización y Usuario Administrador
+## 0. Requisito previo (una sola vez): ser admin de plataforma
 
-1. Acceder a `http://<slug>.localhost:3000/login` (o en producción `https://<slug>.lejovista.com/login`).
-2. Seleccionar **Regístrate aquí**:
-   - Nombre de la Organización: `Nombre Comercial S.A.C.`
-   - Identificador (Slug): `nombre-cliente` (solo letras minúsculas, números y guiones; no usar palabras reservadas como `api`, `admin`, `www`).
-   - Nombre del Administrador y correo electrónico corporativo.
-   - Contraseña segura (mínimo 8 caracteres).
-3. Tras registrarse, el usuario queda automáticamente como `ADMIN` de la nueva organización.
+`is_platform_admin` es una columna de `users` con default `false`. **Nadie la
+tiene hasta que se marque a mano**, y no hay UI para dárselo a nadie — es
+deliberado: si el panel pudiera crear admins de plataforma, cualquier toma de
+esa cuenta escalaría a todos los clientes.
+
+Se hace una vez, contra la base:
+
+```sql
+UPDATE users SET is_platform_admin = true WHERE email = 'tu@correo.com';
+```
+
+En local:
+
+```bash
+docker compose exec db psql -U lejovista -d lejovista -c "UPDATE users SET is_platform_admin = true WHERE email = 'tu@correo.com';"
+```
+
+En producción (Coolify), abrir una terminal contra el contenedor de Postgres del
+recurso y correr el mismo `UPDATE`.
+
+**Qué NO da este permiso:** acceso a los datos de ningún cliente. Un admin de
+plataforma crea organizaciones, invita a su primer ADMIN y prende o apaga
+módulos. No puede leer campañas, gastos ni el chat de nadie. Ese límite es lo
+que mantiene en pie el aislamiento por organización.
+
+---
+
+## 1. Crear el cliente y elegir qué ve
+
+1. Entrar a `/admin` (no está en el menú: se escribe la URL). Si no sos admin de
+   plataforma, la pantalla lo dice; la API responde 403.
+2. **Nuevo cliente**:
+   - **Subdominio (slug)**: `cliente-nuevo`. Es el subdominio del tenant y
+     **no se puede cambiar después** — renombrarlo dejaría fuera a todos sus
+     usuarios. Minúsculas, números y guiones; `www`, `api`, `admin` y demás
+     reservados se rechazan.
+   - **Nombre**: la razón social o el nombre comercial.
+   - **Email del primer ADMIN**: se le manda una invitación de un solo uso.
+     Es opcional: se puede crear la organización e invitar después.
+   - **Acento**: color de la marca del cliente.
+3. **Crear cliente.**
+
+### El enlace de invitación
+
+Nadie escribe la contraseña del cliente: la elige él desde el enlace.
+
+`send_email` es *best-effort*. Si `BREVO_API_KEY` no está configurada, la
+invitación se crea igual pero **el correo no sale**. El panel distingue los dos
+casos: cuando no salió, muestra el enlace con un botón de copiar para pasarlo
+por WhatsApp o por donde sea. Vence en 7 días y se usa una sola vez.
+
+### Elegir los módulos
+
+Recién creado, el cliente tiene **todos** los módulos. En su fila del panel,
+cada módulo es un botón: se apagan los que no contrató.
+
+| Módulo | Clave | Pantalla |
+|---|---|---|
+| Resumen / dashboard | `resumen` | `/` |
+| Campañas | `campanas` | `/campaigns` |
+| Chat analista | `chat` | `/chat` |
+| Creación de campañas por chat | `chat_creacion` | modo BUILD del chat |
+| Reporte ejecutivo | `reporte` | `/reporte` |
+| Diagnósticos de IA | `diagnosticos` | `/diagnostics` |
+| Acciones sugeridas | `acciones` | `/actions` |
+| Consumo de IA | `ai_usage` | `/ai-usage` |
+| Configuración | `settings` | `/settings` — **no se puede apagar** |
+
+`settings` no se apaga porque sin ella el cliente no puede conectar Meta ni
+administrarse: quedaría sin forma de repararse solo.
+
+**Para la vista recortada de cliente** (ocultar Resumen, Reporte, Diagnósticos y
+Uso de IA), dejar encendidos: `campanas`, `chat`, `chat_creacion`, `acciones`.
+
+Ocultar funciona en tres capas, y **solo la tercera es seguridad**:
+
+1. El ítem desaparece del menú.
+2. Escribir la URL a mano redirige a la primera pantalla habilitada — incluida
+   la raíz `/`, que es el Resumen.
+3. La API responde **403**. Sin esto el módulo estaría escondido, no apagado.
+
+> Los módulos se cambian **solo desde `/admin`**. El ADMIN de la organización no
+> puede tocarlos ni desde la UI ni por la API: si pudiera, el módulo dejaría de
+> ser una decisión comercial y pasaría a ser una preferencia del cliente.
+
+---
+
+## 1b. Qué hace el cliente al recibir el enlace
+
+1. Abre el enlace → elige su contraseña → entra ya como `ADMIN` de **su**
+   organización.
+2. Ve únicamente los módulos habilitados. Si el Resumen está apagado, la raíz lo
+   lleva a Campañas.
+3. Desde **Configuración** conecta su cuenta de Meta Ads (paso 3) y su clave de
+   IA (paso 4).
 
 ---
 
@@ -65,9 +159,23 @@ Este procedimiento describe el paso a paso reproducible para configurar y habili
 
 1. En **Configuración** → **Cuentas Publicitarias Conectadas**, verificar el estado `ACTIVE` y el icono de sincronización.
 2. Monitorear el progreso en el indicador superior o WebSocket.
-3. Al completar el sync:
-   - Revisar **Resumen** (`/`): KPIs de gasto, impresiones, CPL y conversiones.
-   - Revisar **Diagnósticos IA** (`/diagnostics`): Narrativa generada por el motor, clasificación de campañas y análisis de anomalías.
+3. Al completar el sync, verificar desde **tu propia** organización de operador
+   (el cliente puede tener Resumen y Diagnósticos apagados):
+   - **Resumen** (`/`): KPIs de gasto, impresiones, CPL y resultados.
+   - **Diagnósticos IA** (`/diagnostics`): narrativa del motor, clasificación de
+     campañas y anomalías.
+
+### El primer sync trae TODO el historial
+
+No son 30 días: el `BACKFILL` baja mes por mes hasta donde llegue la cuenta en
+Meta. Mientras corre, un aviso en la app muestra cuántos meses faltan y una
+estimación de tiempo — derivada del ritmo real de llamadas de esa cuenta, no de
+una constante. Los sincronizados siguientes solo traen lo reciente y extienden
+el histórico; nunca lo pisan.
+
+Una cuenta con años de antigüedad puede tardar entre 3 y 25 minutos. El cliente
+puede usar la app mientras tanto: el chat responde sobre lo que ya bajó y **lo
+aclara** en vez de dar por ceros lo que todavía no tiene.
    - Abrir **Chat Analista** (`/chat`): Realizar preguntas en lenguaje natural sobre el rendimiento de la cuenta.
 
 ---
