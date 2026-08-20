@@ -147,9 +147,15 @@ async def resolve_facts(
             topic = "CUSTOM_PLAN"
             topics_to_check = []
     else:
-        topic = getattr(topic_or_blocks, "topic", "SUMMARY")
-        blocks = list(getattr(topic_or_blocks, "blocks", ["kpis", "ranking"]))
-        topics_to_check = [topic] if isinstance(topic, str) else list(topic)
+        topic_attr = getattr(topic_or_blocks, "topic", None)
+        topic = topic_attr if topic_attr is not None else "CUSTOM_PLAN"
+        blocks = list(getattr(topic_or_blocks, "blocks", None) or ["kpis", "ranking"])
+        if isinstance(topic, str) and topic != "CUSTOM_PLAN":
+            topics_to_check = [topic]
+        elif isinstance(topic, (list, tuple, set)):
+            topics_to_check = list(topic)
+        else:
+            topics_to_check = []
 
     # 2. Ventana de tiempo
     if window_days is None:

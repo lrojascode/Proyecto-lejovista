@@ -96,3 +96,20 @@ async def test_resolve_facts_ranking_filters_zero_conversations_and_reads_cost_p
     assert "S/. 0,00" not in canonical
     assert "Camp Ganadora" in canonical
     assert "S/. 12,50" in canonical
+
+
+@pytest.mark.asyncio
+async def test_resolve_facts_with_none_topic_in_chat_plan_does_not_crash(mocker):
+    """Punto 4 de fase 06: ChatPlan(topic=None) no debe lanzar TypeError: 'NoneType' object is not iterable."""
+    mocker.patch("app.services.campaign_chat.facts.days_of_history", return_value=30)
+    mocker.patch("app.services.campaign_chat.facts.get_kpis_with_deltas", return_value={
+        "current": {"spend": 100.0, "conversations": 5, "cost_per_conv": 20.0},
+        "previous": {"spend": 100.0, "conversations": 5, "cost_per_conv": 20.0},
+        "deltas_pct": {"spend": 0.0, "conversations": 0.0, "cost_per_conv": 0.0},
+    })
+    from app.services.ai.llm import ChatPlan
+    plan = ChatPlan(blocks=["kpis"], topic=None)
+    facts, canonical = await resolve_facts(None, "org_1", _acc(), plan)
+    assert "kpis_del_periodo" in facts
+    assert isinstance(canonical, str)
+    assert len(canonical) > 0

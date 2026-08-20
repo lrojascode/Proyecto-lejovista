@@ -1077,7 +1077,9 @@ class OpenRouterClient:
         period_b = data.get("period_b_key") if data.get("period_b_key") in ("7d", "30d", "90d", "180d", "all") else None
         focus_camp = data.get("focus_campaign") if data.get("focus_campaign") in camp_list else None
         wants_creation = bool(data.get("wants_creation", False))
-        topic = data.get("topic")
+        from app.services.campaign_chat.questions import SUPPORTED_TOPICS
+        raw_topic = data.get("topic")
+        topic = raw_topic if isinstance(raw_topic, str) and raw_topic in SUPPORTED_TOPICS else None
 
         return ChatPlan(
             blocks=blocks,
