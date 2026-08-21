@@ -1264,38 +1264,65 @@ class MetaAdsSyncService:
                 if p.get("access_token"):
                     entry["page_token"] = p["access_token"]
 
-        _collect(await limiter.call_api(
-            "me/accounts",
-            {"fields": "name,id,category,connected_instagram_account,access_token", "limit": "100"},
-            access_token=token,
-        ), "me/accounts")
-
-        biz_res = await limiter.call_api("me/businesses", {"fields": "id,name", "limit": "100"},
-                                         access_token=token)
-        if self._has_error(biz_res):
-            logger.warning("Descubrimiento de páginas: /me/businesses no disponible (cuenta %s): %s",
-                           ad_account.id, biz_res)
-        else:
-            business_ids = []
-            for biz in biz_res.get("data", []):
-                biz_id = biz.get("id")
-                if not biz_id:
-                    continue
-                business_ids.append(biz_id)
-                for edge in ("owned_pages", "client_pages"):
-                    _collect(await limiter.call_api(
-                        f"{biz_id}/{edge}",
-                        {"fields": "id,name,connected_instagram_account", "limit": "100"},
-                        access_token=token,
-                    ), f"{biz_id}/{edge}")
-
-            await self._sync_whatsapp_numbers(ad_account, token, limiter, business_ids)
-
+        # FUENTE PRINCIPAL: lo que ESTA cuenta puede promocionar. Es la
+        # respuesta de Meta a la pregunta que nos importa —"¿qué página le
+        # adjunto a una campaña de esta cuenta?"— y viene acotada por cuenta.
         _collect(await limiter.call_api(
             f"{ad_account.external_account_id}/promote_pages",
             {"fields": "id,name", "limit": "100"},
             access_token=token,
         ), "promote_pages")
+
+        # FUENTE SECUNDARIA: el Business DUEÑO de esta cuenta, y solo ese.
+        #
+        # Antes se recorrían TODOS los business del usuario del token
+        # (`/me/businesses`) más `/me/accounts`. En una agencia eso es un leak
+        # entre clientes: al cliente A le aparecían las páginas de los clientes
+        # B, C y D. Caso real, con un token correctamente acotado a una sola
+        # cuenta: `promote_pages` devolvía 1 página y la app mostraba 5, de
+        # cuatro negocios distintos.
+        #
+        # Se conserva esta fuente porque `promote_pages` no siempre trae todo
+        # (caso "Althea pack": la página que Ads Manager ofrecía promocionar no
+        # figuraba en las fuentes directas), pero acotada al business correcto.
+        business_ids = []
+        acc_info = await limiter.call_api(
+            ad_account.external_account_id, {"fields": "business"}, access_token=token,
+        )
+        owner_biz = ((acc_info or {}).get("business") or {}).get("id") if not self._has_error(acc_info) else None
+        if owner_biz:
+            business_ids.append(owner_biz)
+            for edge in ("owned_pages", "client_pages"):
+                _collect(await limiter.call_api(
+                    f"{owner_biz}/{edge}",
+                    {"fields": "id,name,connected_instagram_account", "limit": "100"},
+                    access_token=token,
+                ), f"{owner_biz}/{edge}")
+        else:
+            logger.warning(
+                "La cuenta %s no declara business dueño; solo se usan las páginas "
+                "que puede promocionar.", ad_account.id,
+            )
+
+        # El token de página hace falta para leer el WhatsApp, y solo lo
+        # devuelve /me/accounts. Se pide DESPUÉS y se usa únicamente para
+        # enriquecer las páginas ya descubiertas: nunca para agregar otras.
+        me_res = await limiter.call_api(
+            "me/accounts",
+            {"fields": "name,id,category,connected_instagram_account,access_token", "limit": "100"},
+            access_token=token,
+        )
+        if not self._has_error(me_res):
+            for p in me_res.get("data", []):
+                ext_id = p.get("id")
+                if ext_id in discovered:
+                    if p.get("access_token"):
+                        discovered[ext_id]["page_token"] = p["access_token"]
+                    ig_id = (p.get("connected_instagram_account") or {}).get("id")
+                    if ig_id:
+                        discovered[ext_id].setdefault("instagram_actor_id", ig_id)
+
+        await self._sync_whatsapp_numbers(ad_account, token, limiter, business_ids)
 
         for ext_id, info in discovered.items():
             row = (await self.db.execute(select(MetaPage).where(

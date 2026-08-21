@@ -26,7 +26,12 @@ async def _make_org_and_account(db: AsyncSession, slug="pages-org"):
 
 
 class _PagesFakeLimiter:
-    """Simula /me/accounts + GET de whatsapp_number por página."""
+    """Simula el descubrimiento de páginas acotado a la cuenta + el WhatsApp.
+
+    La cuenta `act_1` pertenece al business `biz_propio`. El usuario del token
+    ADEMÁS administra `biz_ajeno`, de otro cliente: sus páginas NO pueden
+    aparecer (ver test_no_filtra_paginas_de_otros_clientes).
+    """
 
     def __init__(self, wa_by_page=None, wa_error_pages=None, pages_error=False):
         self.wa_by_page = wa_by_page or {}
@@ -34,6 +39,23 @@ class _PagesFakeLimiter:
         self.pages_error = pages_error
 
     async def call_api(self, endpoint, params, method="GET", access_token=""):
+        if endpoint == "act_1" and params.get("fields") == "business":
+            return {"id": "act_1", "business": {"id": "biz_propio", "name": "Cliente"}}
+        if endpoint == "act_1/promote_pages":
+            if self.pages_error:
+                return {"error": {"message": "Invalid OAuth", "code": 190}}
+            return {"data": [
+                {"id": "page_1", "name": "Página Uno"},
+                {"id": "page_2", "name": "Página Dos"},
+            ]}
+        if endpoint == "biz_propio/owned_pages":
+            return {"data": [{"id": "page_1", "name": "Página Uno",
+                              "connected_instagram_account": {"id": "ig_1"}}]}
+        if endpoint == "biz_propio/client_pages":
+            return {"data": []}
+        # Página de OTRO cliente del mismo usuario del token.
+        if endpoint.startswith("biz_ajeno/"):
+            return {"data": [{"id": "page_ajena", "name": "Cliente Ajeno"}]}
         if endpoint == "me/accounts":
             if self.pages_error:
                 return {"error": {"message": "Invalid OAuth", "code": 190}}
@@ -41,6 +63,7 @@ class _PagesFakeLimiter:
                 {"id": "page_1", "name": "Página Uno", "category": "Business",
                  "connected_instagram_account": {"id": "ig_1"}},
                 {"id": "page_2", "name": "Página Dos", "category": "Business"},
+                {"id": "page_ajena", "name": "Cliente Ajeno", "category": "Business"},
             ]}
         if endpoint in self.wa_error_pages:
             return {"error": {"message": "Tried accessing nonexisting field", "code": 100}}
@@ -71,18 +94,19 @@ async def test_sync_real_pages_populates_metapage_with_whatsapp(db_session: Asyn
 
 
 @pytest.mark.asyncio
-async def test_sync_real_pages_soft_fails_when_me_accounts_errors(db_session: AsyncSession):
+async def test_una_fuente_caida_no_tumba_el_descubrimiento(db_session: AsyncSession):
+    """Con `promote_pages` en error, el business dueño sigue aportando. No
+    lanza excepción y no se queda sin páginas por un fallo parcial."""
     org, acc = await _make_org_and_account(db_session, slug="pages-org-err")
     limiter = _PagesFakeLimiter(pages_error=True)
 
-    # No debe lanzar excepción — solo loguear y no crear páginas.
     await MetaAdsSyncService(db_session)._sync_real_pages(acc, "valid-token", limiter)
     await db_session.flush()
 
     pages = (await db_session.execute(
         select(MetaPage).where(MetaPage.organization_id == org.id)
     )).scalars().all()
-    assert pages == []
+    assert {p.external_page_id for p in pages} == {"page_1"}
 
 
 @pytest.mark.asyncio
@@ -133,8 +157,14 @@ class _MultiSourceFakeLimiter:
                 return {"error": {"message": "Invalid OAuth", "code": 190}}
             return {"data": [{"id": "page_own", "name": "Página Propia",
                               "connected_instagram_account": {"id": "ig_own"}}]}
+        if endpoint == "act_1" and params.get("fields") == "business":
+            return {"id": "act_1", "business": {"id": "biz_1", "name": "Mi Business"}}
         if endpoint == "me/businesses":
-            return {"data": [{"id": "biz_1", "name": "Mi Business"}]}
+            # Ya no se usa: recorrerlo entero era el leak entre clientes.
+            return {"data": [{"id": "biz_1", "name": "Mi Business"},
+                             {"id": "biz_otro", "name": "Otro Cliente"}]}
+        if endpoint.startswith("biz_otro/"):
+            return {"data": [{"id": "page_ajena", "name": "Página de Otro Cliente"}]}
         if endpoint == "biz_1/owned_pages":
             # Solapa con me/accounts (page_own) + una nueva (page_althea).
             return {"data": [{"id": "page_own", "name": "Página Propia"},
@@ -163,7 +193,11 @@ async def test_sync_real_pages_merges_business_and_promote_sources(db_session: A
         select(MetaPage).where(MetaPage.organization_id == org.id).order_by(MetaPage.external_page_id)
     )).scalars().all()
     # Dedupe: page_own aparece en 2 fuentes pero se guarda 1 vez.
+    # El caso "Althea pack" sigue cubierto: es una página que solo aparece en el
+    # business DUEÑO de la cuenta, no en las fuentes directas.
     assert [p.external_page_id for p in pages] == ["page_althea", "page_own", "page_promo"]
+    # Y la del OTRO cliente del mismo usuario del token no entra.
+    assert "page_ajena" not in {p.external_page_id for p in pages}
     althea = pages[0]
     assert althea.name == "Althea pack"
     assert althea.whatsapp_number == "51911222333"
@@ -211,10 +245,19 @@ class _PageTokenFakeLimiter:
             self.me_accounts_fields = params.get("fields", "")
             return {"data": [{"id": "page_own", "name": "Página Propia",
                               "access_token": "PAGE-TOKEN-own"}]}
+        if endpoint == "act_1" and params.get("fields") == "business":
+            return {"id": "act_1", "business": {"id": "biz_1", "name": "Mi Business"}}
         if endpoint == "me/businesses":
-            return {"data": [{"id": "biz_1", "name": "Mi Business"}]}
+            # Ya no se usa: recorrerlo entero era el leak entre clientes.
+            return {"data": [{"id": "biz_1", "name": "Mi Business"},
+                             {"id": "biz_otro", "name": "Otro Cliente"}]}
+        if endpoint.startswith("biz_otro/"):
+            return {"data": [{"id": "page_ajena", "name": "Página de Otro Cliente"}]}
         if endpoint == "biz_1/owned_pages":
-            return {"data": [{"id": "page_biz", "name": "Página del Business"}]}
+            # `page_own` la descubre esta fuente (acotada al business dueño);
+            # /me/accounts ya no descubre, solo aporta el token de página.
+            return {"data": [{"id": "page_own", "name": "Página Propia"},
+                             {"id": "page_biz", "name": "Página del Business"}]}
         if params.get("fields") == "whatsapp_number":
             self.wa_tokens[endpoint] = access_token
             if access_token.startswith("PAGE-TOKEN"):
@@ -289,3 +332,81 @@ async def test_sync_does_not_wipe_manual_whatsapp_number(db_session: AsyncSessio
                                MetaPage.external_page_id == "page_1")
     )).scalar_one()
     assert refreshed.whatsapp_number == "51900111222"
+
+
+# --- Aislamiento entre clientes de una misma agencia (21-ago-2026) ---
+
+class _AgenciaFakeLimiter:
+    """Un usuario de agencia que administra VARIOS negocios.
+
+    Es el caso real: un token correctamente acotado a la cuenta de un cliente,
+    y la app mostrándole las páginas de los otros cuatro.
+    """
+
+    async def call_api(self, endpoint, params, method="GET", access_token=""):
+        if endpoint == "act_1" and params.get("fields") == "business":
+            return {"id": "act_1", "business": {"id": "biz_cliente", "name": "ITS IN"}}
+        if endpoint == "act_1/promote_pages":
+            return {"data": [{"id": "page_cliente", "name": "ITS Institute"}]}
+        if endpoint == "biz_cliente/owned_pages":
+            return {"data": [{"id": "page_cliente", "name": "ITS Institute"}]}
+        if endpoint == "biz_cliente/client_pages":
+            return {"data": []}
+        if endpoint == "me/businesses":
+            # Los cinco negocios del usuario del token. Recorrerlos TODOS era el bug.
+            return {"data": [
+                {"id": "biz_cliente", "name": "ITS IN"},
+                {"id": "biz_agencia", "name": "Agencia Kibo"},
+                {"id": "biz_farma", "name": "Expert Farma"},
+                {"id": "biz_edu", "name": "Círculo Educativo"},
+            ]}
+        if endpoint.startswith(("biz_agencia/", "biz_farma/", "biz_edu/")):
+            return {"data": [{"id": f"page_{endpoint.split('/')[0]}", "name": "Página ajena"}]}
+        if endpoint == "me/accounts":
+            # El usuario tiene rol directo en páginas de varios clientes.
+            return {"data": [
+                {"id": "page_cliente", "name": "ITS Institute", "access_token": "PT"},
+                {"id": "page_biz_agencia", "name": "Agencia Kibo", "access_token": "PT2"},
+            ]}
+        return {}
+
+    async def call_api_paginated(self, endpoint, params, method="GET", access_token="", max_pages=50):
+        return await self.call_api(endpoint, params, method=method, access_token=access_token)
+
+
+@pytest.mark.asyncio
+async def test_no_filtra_paginas_de_otros_clientes(db_session: AsyncSession):
+    """Caso real: token acotado a UNA cuenta, y a ese cliente le aparecían las
+    páginas de los otros cuatro negocios de la agencia.
+
+    El descubrimiento recorría `/me/businesses` entero —todos los negocios del
+    USUARIO del token— más `/me/accounts` sin filtrar. Ahora se acota al
+    business DUEÑO de la cuenta que se está sincronizando.
+    """
+    org, acc = await _make_org_and_account(db_session, slug="pages-agencia")
+
+    await MetaAdsSyncService(db_session)._sync_real_pages(acc, "valid-token", _AgenciaFakeLimiter())
+    await db_session.flush()
+
+    pages = (await db_session.execute(
+        select(MetaPage).where(MetaPage.organization_id == org.id)
+    )).scalars().all()
+    assert {p.external_page_id for p in pages} == {"page_cliente"}
+
+
+@pytest.mark.asyncio
+async def test_me_accounts_no_agrega_paginas_por_su_cuenta(db_session: AsyncSession):
+    """`/me/accounts` sigue consultándose porque es lo ÚNICO que entrega el
+    token de página (necesario para leer el WhatsApp), pero solo puede
+    enriquecer páginas ya descubiertas por una fuente acotada."""
+    org, acc = await _make_org_and_account(db_session, slug="pages-agencia-2")
+
+    await MetaAdsSyncService(db_session)._sync_real_pages(acc, "valid-token", _AgenciaFakeLimiter())
+    await db_session.flush()
+
+    ids = {
+        p.external_page_id for p in (await db_session.execute(
+            select(MetaPage).where(MetaPage.organization_id == org.id)
+        )).scalars().all()
+    }
+    assert "page_biz_agencia" not in ids
