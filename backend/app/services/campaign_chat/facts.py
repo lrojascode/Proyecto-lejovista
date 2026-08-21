@@ -315,14 +315,29 @@ async def resolve_facts(
                 ]
                 top_camps = []
                 for c in camps_with_conv[:RANKING_TOP_K]:
-                    top_camps.append({
+                    fila = {
+                        # El id va para que el analista pueda citarlo, como pide
+                        # el documento. No gasta presupuesto de grounding:
+                        # `campaign_id` esta en OPAQUE_KEYS, asi que sus 15-17
+                        # digitos no quedan disponibles para respaldar una cifra
+                        # inventada.
+                        "campaign_id": c.get("campaign_id"),
                         "name": c.get("name"),
                         "status": c.get("status"),
+                        # Como quedo configurada vs si esta ENTREGANDO. Sin esto
+                        # el analista no puede responder que esta al aire.
+                        "effective_status": c.get("effective_status"),
                         "spend": round(float(c.get("spend", 0.0)), 2),
-                        "conversations": int(c.get("conversations", 0)),
+                        "resultados": int(c.get("conversations", 0)),
                         "cost_per_conv": round(float(c.get("cost_per_conv", 0.0)), 2),
                         "ctr": round(float(c.get("ctr", 0.0)), 2),
-                    })
+                    }
+                    # Solo se desglosa si la cuenta corre LOS DOS tipos: con uno
+                    # solo, "0 formularios y 25 conversaciones" es ruido.
+                    if c.get("leads") and c.get("whatsapp"):
+                        fila["leads_formulario"] = int(c["leads"])
+                        fila["conversaciones_whatsapp"] = int(c["whatsapp"])
+                    top_camps.append(fila)
                 rank_dict = {
                     "campaigns": top_camps,
                     "total_campanas_activas": sum(1 for c in all_camps if c.get("status") == "ACTIVE"),
@@ -519,7 +534,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
                 return questions.NO_DATA_TEXT
             delta = kpis.get("delta_conversations_pct")
             delta_str = f" ({'+' if delta >= 0 else ''}{delta:.1f}% vs período anterior)" if delta is not None and delta != 0 else ""
-            top_str = f" La que más generó fue {camps[0]['name']} con {camps[0]['conversations']} contactos." if camps else ""
+            top_str = f" La que más generó fue {camps[0]['name']} con {camps[0]['resultados']} resultados." if camps else ""
             return f"En {ventana} lograste {convs} conversaciones iniciadas{delta_str}.{top_str}"
 
         if single_topic == "CPL":
@@ -537,13 +552,13 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
             if not camps:
                 return f"No hay campañas activas con métricas registradas en {ventana}."
             best = camps[0]
-            return f"Tu mejor campaña en {ventana} es {best['name']} con {best['conversations']} conversaciones a un costo de {_money(best['cost_per_conv'])} por contacto."
+            return f"Tu mejor campaña en {ventana} es {best['name']} con {best['resultados']} resultados a un costo de {_money(best['cost_per_conv'])} cada uno."
 
         if single_topic == "WORST_CAMPAIGN":
             if not camps:
                 return f"No hay campañas registradas en {ventana}."
             worst = camps[-1]
-            return f"La campaña con menor rendimiento en {ventana} es {worst['name']} con un costo por contacto de {_money(worst['cost_per_conv'])} ({worst['conversations']} conversaciones)."
+            return f"La campaña con menor rendimiento en {ventana} es {worst['name']} con un costo de {_money(worst['cost_per_conv'])} por resultado ({worst['resultados']} resultados)."
 
         if single_topic == "CAMPAIGNS_OVERVIEW":
             total_act = facts.get("total_campanas_activas", 0)
@@ -642,7 +657,7 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
     # Bloque 5: ranking
     if "campaigns" in facts and camps:
         best = camps[0]
-        parts.append(f"Tu mejor campaña es {best['name']} con {best['conversations']} conversaciones a {_money(best['cost_per_conv'])} por contacto.")
+        parts.append(f"Tu mejor campaña es {best['name']} con {best['resultados']} resultados a {_money(best['cost_per_conv'])} cada uno.")
 
     # Bloque 6: destino
     if "destino" in facts and facts["destino"]:

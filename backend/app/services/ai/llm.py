@@ -98,6 +98,28 @@ MODELS_BY_PROVIDER = {
 }
 
 
+def pick_model(org: Optional[Organization], provider: str) -> str:
+    """Modelo a usar: el que eligio la organizacion, si sirve para el proveedor.
+
+    Antes esto era `candidates[0]` en cinco llamadas distintas y `org.ai_model`
+    solo entraba cuando el proveedor no tenia catalogo -- o sea casi nunca. El
+    selector de Configuracion no cambiaba nada: se podia elegir un modelo caro
+    o barato y las llamadas seguian yendo al primero de la lista.
+
+    Se valida contra el catalogo del proveedor ACTIVO a proposito: guardar un
+    modelo de OpenAI y que las llamadas salgan por OpenRouter da un 404 que no
+    dice nada util.
+    """
+    candidates = MODELS_BY_PROVIDER.get(provider) or []
+    validos = {c["value"] for c in candidates}
+    elegido = (getattr(org, "ai_model", None) or "").strip()
+    if elegido in validos:
+        return elegido
+    if candidates:
+        return candidates[0]["value"]
+    return elegido or settings.DEFAULT_AI_MODEL
+
+
 def _extract_json_object(content: str) -> Optional[Dict[str, Any]]:
     """Extrae el primer objeto JSON de la respuesta de un LLM. Tolera que el
     modelo lo envuelva en texto o en ```json ... ``` pese a la instrucción de
@@ -697,8 +719,7 @@ class OpenRouterClient:
         # Modelo más barato disponible del proveedor activo — esto es
         # clasificación de intención sobre un mensaje corto, no redacción; no
         # tiene sentido cobrar precio de un modelo premium para parsear "sí".
-        candidates = MODELS_BY_PROVIDER.get(provider) or []
-        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        model = pick_model(org, provider)
         if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
@@ -771,7 +792,8 @@ class OpenRouterClient:
         system_prompt = (
             "Sos el analista de Meta Ads de un dueño de negocio peruano que no sabe de "
             "marketing. Te dan sus datos reales y una pregunta, y respondés como le "
-            "explicarías a un amigo: directo, cálido, sin jerga.\n\n"
+            "explicarías a un amigo.\n\n"
+
             "REGLAS INQUEBRANTABLES:\n"
             "- Solo podés escribir números que aparezcan TAL CUAL en los datos. Copiálos "
             "exactos, con sus decimales.\n"
@@ -779,14 +801,46 @@ class OpenRouterClient:
             "múltiplos que no estén ya en los datos. Si querés comparar, hacelo con "
             "palabras ('bastante más caro', 'casi el doble'), nunca con una cifra nueva.\n"
             "- No inventes campañas, fechas ni métricas que no estén en los datos.\n"
-            "- Si los datos no alcanzan para responder, decilo con honestidad y ofrecé lo que "
-            "sí podés contar con los datos que tenés. NO compenses un dato faltante rellenando "
-            "con otro dato que no se preguntó (ej: si no tenés fechas, no menciones el tope de "
-            "gasto de la cuenta solo porque está disponible).\n\n"
-            "ESTILO: 2 a 5 frases. Respondé primero lo que preguntó, y recién después "
-            "agregá el contexto que le sirva para decidir. Podés usar **negrita** para el "
-            "dato clave y viñetas si son varias campañas. Máximo un emoji. Sin saludos ni "
-            "despedidas: es una conversación en curso.\n\n"
+            "- Si los datos no alcanzan, decilo de frente y explicá por qué. Nunca rellenes "
+            "con estimaciones, y no compenses un dato faltante con otro que no se preguntó.\n\n"
+
+            "CÓMO SE ARMA LA RESPUESTA (en este orden):\n"
+            "1. RESUMEN en una o dos frases, en lenguaje simple, ANTES de cualquier tabla. "
+            "Respondé primero exactamente lo que preguntó.\n"
+            "2. LOS DATOS. Si son más de tres cifras, ponelas en tabla markdown. Si son "
+            "pocas, van en el texto con **negrita** en la clave.\n"
+            "3. QUÉ SIGNIFICA, en criollo. No dejes que el cliente interprete solo: decile "
+            "si eso es bueno, malo o normal, y por qué.\n"
+            "4. SUGERENCIA, solo si la pidió o si el dato la vuelve evidente. Toda sugerencia "
+            "va apoyada en una cifra de los datos y citando la campaña exacta que la "
+            "respalda. Nunca consejos genéricos de marketing.\n\n"
+
+            "EXACTITUD:\n"
+            "- Nombres de campaña COMPLETOS y tal cual figuran en los datos, nunca "
+            "'la campaña de ABAP'.\n"
+            "- Si los datos traen el id de la campaña, incluilo entre paréntesis la primera "
+            "vez que la nombres.\n"
+            "- Fechas completas: '18 de agosto de 2026', nunca '18/08' ni 'la semana pasada'.\n"
+            "- Períodos exactos: 'del 12 al 18 de agosto', no 'los últimos días'.\n"
+            "- `status` es cómo quedó configurada la campaña; `effective_status` es si está "
+            "ENTREGANDO. Una campaña ACTIVE con effective_status ADSET_PAUSED no está al "
+            "aire. Si te preguntan qué está corriendo, mirá el efectivo.\n\n"
+
+            "LENGUAJE:\n"
+            "- Simple. 'cuánto te costó conseguir un contacto', no 'CPL optimizado'.\n"
+            "- La primera vez que uses un término técnico, explicalo entre paréntesis: "
+            "'CTR (el porcentaje de gente que hace clic al ver el anuncio)'.\n"
+            "- Los resultados son leads de formulario MÁS conversaciones de WhatsApp. Si los "
+            "datos traen las dos por separado, nombrálas por lo que son.\n"
+            "- Un emoji como mucho. Sin saludos ni despedidas: es una conversación en curso.\n"
+            "- Extensión: la que haga falta para cumplir los cuatro pasos. Ni un resumen de "
+            "una línea ni tres párrafos de relleno.\n\n"
+
+            "LO QUE ESTA CUENTA NO PUEDE SABER: si preguntan por ventas, ingresos, "
+            "matrículas, ROAS o retorno, decí que no se mide. El píxel registra contactos, "
+            "no compras, y sin CRM conectado no hay forma de saber cuántos compraron. Se "
+            "mide costo por contacto, no costo por venta.\n\n"
+
             'Tu única salida es un JSON: {"text": "la respuesta"}.\n\n'
             f"{_PROMPT_INJECTION_GUARD}"
         )
@@ -797,8 +851,7 @@ class OpenRouterClient:
             "Devuelve solo el JSON del contrato."
         )
 
-        candidates = MODELS_BY_PROVIDER.get(provider) or []
-        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        model = pick_model(org, provider)
         if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
@@ -884,8 +937,7 @@ class OpenRouterClient:
             "Devuelve solo el JSON del contrato."
         )
 
-        candidates = MODELS_BY_PROVIDER.get(provider) or []
-        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        model = pick_model(org, provider)
         if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
@@ -983,8 +1035,7 @@ class OpenRouterClient:
 
         # Igual que la extracción de slots: clasificar una frase corta contra un
         # catálogo cerrado es la tarea más barata que hay, no paga premium.
-        candidates = MODELS_BY_PROVIDER.get(provider) or []
-        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        model = pick_model(org, provider)
         if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
@@ -1086,8 +1137,7 @@ class OpenRouterClient:
                 f"- Se le respondió: {_delimit_untrusted(respuesta_previa[:600])}\n\n"
             )
         user_prompt = f"{contexto}Consulta del cliente: {_delimit_untrusted(user_text)}"
-        candidates = MODELS_BY_PROVIDER.get(provider) or []
-        model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
+        model = pick_model(org, provider)
         if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
