@@ -138,7 +138,10 @@ async def test_off_topic_question_does_not_change_state(async_client: AsyncClien
 # (14-ago-2026). Caso reportado: "¿cuál es la capana activa ahora?" — un typo
 # convertía una pregunta respondible en un rechazo. ---
 
-_OUT_OF_SCOPE_START = "Eso se me escapa"
+# El texto de fuera de tema decia "solo se de tus campanas de Meta Ads", y
+# salia tambien cuando la pregunta ERA sobre las campanas. Negar conocer el
+# tema del que uno mismo habla es lo que rompia la conversacion.
+_OUT_OF_SCOPE_START = "Esa no te la puedo responder"
 
 
 async def _open_session(async_client: AsyncClient, db_session: AsyncSession, slug: str):
@@ -164,7 +167,8 @@ async def test_unrecognized_question_is_answered_when_the_llm_finds_the_topic(
 ):
     from app.services.ai.llm import ChatPlan, OpenRouterClient
 
-    async def fake_plan(self, org, text, available_campaigns=None, usage_ctx=None):
+    async def fake_plan(self, org, text, available_campaigns=None, usage_ctx=None,
+                        previous_exchange=None):
         return ChatPlan(blocks=["destination"], topic="DESTINATION")
 
     monkeypatch.setattr(OpenRouterClient, "plan_chat_request", fake_plan)

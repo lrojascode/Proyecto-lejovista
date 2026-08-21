@@ -568,8 +568,31 @@ async def _try_llm_extraction(
     return extraction.ExtractionResult(intent=intent, slots=slots)
 
 
+def _ultimo_intercambio(messages: List[Dict[str, Any]]) -> Optional[Tuple[str, str]]:
+    """Última (pregunta del cliente, respuesta dada) de la conversación.
+
+    Es lo que permite resolver una repregunta. Sin esto, "¿cómo que 0 por
+    contacto?" llega sin referente y el chat responde "eso se me escapa" a
+    alguien que pregunta por la respuesta que él mismo acaba de dar.
+    """
+    pregunta = respuesta = None
+    for msg in reversed(messages):
+        if msg.get("type") != "text":
+            continue
+        texto = (msg.get("text") or "").strip()
+        if not texto:
+            continue
+        if respuesta is None and msg.get("role") == "assistant":
+            respuesta = texto
+        elif respuesta is not None and msg.get("role") == "user":
+            pregunta = texto
+            break
+    return (pregunta, respuesta) if pregunta and respuesta else None
+
+
 async def _try_llm_plan(
-    db: AsyncSession, current_user: User, session: CampaignChatSession, text: str
+    db: AsyncSession, current_user: User, session: CampaignChatSession, text: str,
+    messages: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[Optional[ChatPlan], Optional[Period]]:
     """Segunda oportunidad para una pregunta que los regex no reconocieron (H3).
 
@@ -588,6 +611,7 @@ async def _try_llm_plan(
     try:
         plan = await OpenRouterClient(organization=org).plan_chat_request(
             org, text, usage_ctx=usage_ctx,
+            previous_exchange=_ultimo_intercambio(messages or []),
         )
     except Exception:
         logger.exception("Fallo planificando la pregunta del chat con LLM (sesión %s)", session.id)
@@ -684,7 +708,7 @@ async def _handle_off_topic(
     text: str, messages: List[Dict[str, Any]],
 ) -> None:
     """Pregunta sin tema reconocido por regex: se le pide un plan analítico abierto al LLM (H3)."""
-    plan, period = await _try_llm_plan(db, current_user, session, text)
+    plan, period = await _try_llm_plan(db, current_user, session, text, messages)
     if plan and plan.blocks:
         await _answer_and_resume(
             db, current_user, session, plan, messages, user_text=text, period=period,
@@ -805,7 +829,7 @@ async def _handle_text(
             # Si hay coordinación explícita (e.g. "y", "además"), evaluamos si el LLM
             # puede planificar una segunda intención abierta no cubierta por regex
             if _COORDINATION_RE.search(strip_accents(text)):
-                plan, period = await _try_llm_plan(db, current_user, session, text)
+                plan, period = await _try_llm_plan(db, current_user, session, text, messages)
                 if plan and plan.blocks and len(plan.blocks) > 1:
                     await _answer_and_resume(
                         db, current_user, session, plan, messages,

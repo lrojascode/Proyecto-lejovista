@@ -186,7 +186,10 @@ async def test_off_topic_question_is_refused_and_state_is_untouched(
     session = res.json()
     assert session["state"] == before["state"]
     assert session["slots"] == before["slots"]
-    assert "solo sé de tus campañas" in session["messages"][-2]["text"].lower()
+    # Se compara contra la constante y no contra un literal: el texto ya cambio
+    # una vez por decir "solo se de tus campanas de Meta Ads" cuando la pregunta
+    # ERA sobre las campanas.
+    assert questions.OUT_OF_SCOPE_TEXT in session["messages"][-2]["text"]
 
 
 @pytest.mark.asyncio
