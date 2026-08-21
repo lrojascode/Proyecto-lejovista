@@ -15,11 +15,12 @@ import asyncio
 import datetime
 import sys
 
-from sqlalchemy import String, func, select
+from sqlalchemy import func, select
 
 from app.database import async_session
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.models.organization import Organization
 from app.models.sync_job import SyncJob
 from app.services.history_reconciliation import get_history_status
 
@@ -35,10 +36,15 @@ def _duracion(segundos: float) -> str:
     return f"{segundos // 3600}h {(segundos % 3600) // 60}m"
 
 
-async def _informe(db, acc: AdAccount) -> None:
+async def _informe(db, acc: AdAccount, org_slug: str = "?", duplicada: bool = False) -> None:
     ahora = datetime.datetime.utcnow()
-    print(f"\ncuenta {acc.external_account_id} ({acc.name})")
+    print(f"\ncuenta {acc.external_account_id} ({acc.name})  ·  org {org_slug}")
     print("=" * 60)
+    if duplicada:
+        # La MISMA cuenta de Meta conectada dos veces son dos backfills
+        # compitiendo por la misma cuota de API, dos historiales a medias, y un
+        # chat que ve el de la organización que le toque.
+        print("  ⚠ esta cuenta de Meta está conectada MÁS DE UNA VEZ")
 
     job = (await db.execute(
         select(SyncJob)
@@ -83,7 +89,7 @@ async def _informe(db, acc: AdAccount) -> None:
         print(f"  faltan {len(estado.gaps)}:")
         for gap in estado.gaps[:12]:
             print(f"    {gap.year_month}  meta S/{gap.meta_spend:,.2f}"
-                  f"  local S/{gap.local_spend:,.2f}  falta {gap.missing_pct:.0%}")
+                  f"  local S/{gap.local_spend:,.2f}  falta {gap.missing_pct:.0f}%")
         if len(estado.gaps) > 12:
             print(f"    …y {len(estado.gaps) - 12} meses más")
 
@@ -114,8 +120,18 @@ async def main() -> None:
             if not cuentas:
                 print("No hay cuentas de anuncios activas.")
                 return
+            slugs = dict((await db.execute(
+                select(Organization.id, Organization.slug)
+            )).all())
+            veces: dict = {}
             for acc in cuentas:
-                await _informe(db, acc)
+                veces[acc.external_account_id] = veces.get(acc.external_account_id, 0) + 1
+            for acc in cuentas:
+                await _informe(
+                    db, acc,
+                    org_slug=slugs.get(acc.organization_id, "?"),
+                    duplicada=veces[acc.external_account_id] > 1,
+                )
         if not seguir:
             return
         print("\n--- refresco en 30s (Ctrl+C para salir) ---")

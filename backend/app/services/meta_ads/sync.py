@@ -790,6 +790,15 @@ class MetaAdsSyncService:
             ad_account.id, total, status.estimated_seconds,
         )
 
+        # Los identificadores se copian a variables ANTES del bucle. Abajo hay un
+        # rollback, y `rollback()` expira todos los objetos de la sesión — no lo
+        # evita `expire_on_commit=False`, que solo aplica al commit. En async,
+        # tocar un atributo expirado lanza "greenlet_spawn has not been called":
+        # el refresh necesita IO y el acceso al atributo es sincrónico, así que
+        # SQLAlchemy no puede awaitarlo.
+        acc_id = ad_account.id
+        org_id = ad_account.organization_id
+
         records = 0
         done = 0
         for gap in status.gaps:
@@ -814,9 +823,16 @@ class MetaAdsSyncService:
                 # detectar en la próxima corrida.
                 logger.exception(
                     "Fallo bajando el mes %s de la cuenta %s; se continúa con los demás.",
-                    gap.year_month, ad_account.id,
+                    gap.year_month, acc_id,
                 )
                 await self.db.rollback()
+                # Rehidratar lo que el rollback expiró, ANTES de volver a tocar
+                # sus atributos. Sin esto el except no salvaba nada: el mes
+                # siguiente moría en el primer `ad_account.algo`, y el backfill
+                # entero se caía con "greenlet_spawn has not been called" en vez
+                # de saltear el mes malo.
+                await self.db.refresh(job)
+                await self.db.refresh(ad_account)
 
             job.payload_json = {
                 "months_total": total,
@@ -828,8 +844,8 @@ class MetaAdsSyncService:
             await self.db.commit()
 
             SyncProgressTracker.report_progress(
-                organization_id=ad_account.organization_id,
-                ad_account_id=ad_account.id,
+                organization_id=org_id,
+                ad_account_id=acc_id,
                 step=done,
                 total_steps=total,
                 step_name="backfill",
