@@ -14,7 +14,20 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger("lejovista.grounding")
 
-MAX_GROUNDING_VALUES = 220
+# Cuantos valores distintos puede respaldar una respuesta. NO es una medida de
+# seguridad: la guarda verifica pertenencia a un set de Python, y comprobar
+# contra 220 o contra 4000 cuesta lo mismo.
+#
+# Estaba en 220, y ESA era la razon de que el analista no analizara. Una cuenta
+# con 182 campanas produce ~820 valores; al pasarse del tope, `_safe_add_block`
+# descartaba BLOQUES ENTEROS -- desgloses, alertas, estructura -- y el modelo
+# recibia un puñado de cifras con las que no se puede decir nada interesante.
+# El sintoma se leia como "el chat suena a bot" y la causa era inanicion, no la
+# guarda.
+#
+# El costo de subirlo es de tokens de entrada, y es despreciable: ~3.000 tokens
+# mas por consulta, menos de un milesimo de dolar con el modelo por defecto.
+MAX_GROUNDING_VALUES = 4000
 # Tope de la respuesta del analista. Subio de 2000 cuando el prompt paso a
 # pedir el formato de cuatro pasos (resumen -> tabla -> que significa ->
 # sugerencia): una tabla de cinco campanas con sus ids ya se comia los 2000, y
