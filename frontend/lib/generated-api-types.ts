@@ -99,6 +99,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/tenant-brand": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Tenant Brand
+         * @description Devuelve la información de marca (nombre, logo, color) del tenant activo
+         *     resuelto por subdominio (X-Tenant-Slug) o query param. Si no hay tenant resuelto
+         *     o no existe, devuelve la marca neutra de LejoVista (nunca la de otro cliente).
+         */
+        get: operations["get_tenant_brand_api_v1_auth_tenant_brand_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations/ai-models": {
         parameters: {
             query?: never;
@@ -108,10 +130,9 @@ export interface paths {
         };
         /**
          * Get Available Ai Models
-         * @description Modelos de IA que el selector de Preferencias debería ofrecer: solo los del
-         *     proveedor realmente activo (según qué API key esté configurada), para que
-         *     la organización no pueda guardar un modelo que el proveedor activo no
-         *     reconoce (ver AI-4/hallazgo del selector estático).
+         * @description Modelos de IA que el selector de Preferencias debería ofrecer: si se pasa un
+         *     proveedor específico, sus modelos; si no, los del proveedor activo de la
+         *     organización o del sistema.
          */
         get: operations["get_available_ai_models_api_v1_organizations_ai_models_get"];
         put?: never;
@@ -137,6 +158,47 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
+        /** Update My Organization */
+        patch: operations["update_my_organization_api_v1_organizations_my_patch"];
+        trace?: never;
+    };
+    "/api/v1/organizations/my/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Org Logo
+         * @description Sube el logo de la organización (PNG, JPG, WebP, SVG).
+         */
+        post: operations["upload_org_logo_api_v1_organizations_my_logo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/llm-key/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Llm Key
+         * @description Prueba una API Key de LLM contra el proveedor seleccionado antes de guardarla.
+         */
+        post: operations["test_llm_key_api_v1_organizations_my_llm_key_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
         patch?: never;
         trace?: never;
     };
@@ -155,6 +217,34 @@ export interface paths {
          *     endpoint para poblar el selector de rubro.
          */
         get: operations["get_my_business_policies_api_v1_organizations_my_policies_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Modules
+         * @description Módulos habilitados de la organización activa.
+         *
+         *     El frontend lo pide una vez al montar el layout para armar el menú. El
+         *     catálogo es del backend y no del frontend a propósito: dos listas separadas
+         *     se desincronizan, y el día que eso pasa un módulo "apagado" sigue
+         *     respondiendo por la API.
+         *
+         *     Devuelve también el catálogo completo para que Configuración pueda mostrar
+         *     los que están apagados sin pedir otro endpoint.
+         */
+        get: operations["get_my_modules_api_v1_organizations_my_modules_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -226,6 +316,47 @@ export interface paths {
          */
         post: operations["restore_ad_account_api_v1_organizations_my_ad_accounts__ad_account_id__restore_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/ad-accounts/{ad_account_id}/check-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Ad Account Token
+         * @description Inspecciona el estado y expiración del token de Meta para esta cuenta.
+         */
+        post: operations["check_ad_account_token_api_v1_organizations_my_ad_accounts__ad_account_id__check_token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/ad-accounts/{ad_account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Ad Account
+         * @description Eliminación definitiva de una cuenta publicitaria archivada.
+         *     Exige status == 'ARCHIVED' (no se borra una cuenta activa).
+         */
+        delete: operations["delete_ad_account_api_v1_organizations_my_ad_accounts__ad_account_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -374,6 +505,138 @@ export interface paths {
         patch: operations["update_whatsapp_number_api_v1_organizations_my_whatsapp_numbers__number_id__patch"];
         trace?: never;
     };
+    "/api/v1/organizations/my/ad-accounts/{id}/reconnect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reconnect Ad Account
+         * @description 4.4: Reconexión simplificada de una cuenta EXPIRED con un nuevo token.
+         */
+        post: operations["reconnect_ad_account_api_v1_organizations_my_ad_accounts__id__reconnect_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Org Members
+         * @description Lista todos los usuarios miembros de la organización activa con sus roles.
+         */
+        get: operations["list_org_members_api_v1_organizations_my_members_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/invitations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Org Invitations
+         * @description Lista las invitaciones enviadas para la organización activa.
+         */
+        get: operations["list_org_invitations_api_v1_organizations_my_invitations_get"];
+        put?: never;
+        /**
+         * Create Org Invitation
+         * @description Crea una invitación para unirse a la organización y le envía un correo.
+         */
+        post: operations["create_org_invitation_api_v1_organizations_my_invitations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/invitations/{invitation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Org Invitation
+         * @description Revoca o elimina una invitación pendiente.
+         */
+        delete: operations["delete_org_invitation_api_v1_organizations_my_invitations__invitation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/campaign-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Campaign Rules
+         * @description Devuelve las reglas de campaña efectivas para la organización, sus overrides y los defaults globales.
+         */
+        get: operations["get_my_campaign_rules_api_v1_organizations_my_campaign_rules_get"];
+        /**
+         * Update My Campaign Rules
+         * @description Actualiza los overrides de reglas de campaña con validación estricta (evita fallos tardíos en la Saga).
+         */
+        put: operations["update_my_campaign_rules_api_v1_organizations_my_campaign_rules_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/ai-thresholds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Ai Thresholds
+         * @description Devuelve los umbrales de IA efectivos para la organización, sus overrides y los defaults del sistema.
+         */
+        get: operations["get_my_ai_thresholds_api_v1_organizations_my_ai_thresholds_get"];
+        /**
+         * Update My Ai Thresholds
+         * @description Actualiza los umbrales de IA de la organización con validación de claves numéricas positivas.
+         */
+        put: operations["update_my_ai_thresholds_api_v1_organizations_my_ai_thresholds_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaigns/chat/sessions": {
         parameters: {
             query?: never;
@@ -386,9 +649,7 @@ export interface paths {
         put?: never;
         /**
          * Create Chat Session
-         * @description Arranca una conversación nueva: resuelve la cuenta activa y la página +
-         *     WhatsApp de destino (regla AI-1, sin ambigüedad) ANTES de saludar — si algo
-         *     falta, el error llega de una en vez de descubrirse a mitad de chat.
+         * @description Arranca una conversación nueva en modo BUILD o ASK.
          */
         post: operations["create_chat_session_api_v1_campaigns_chat_sessions_post"];
         delete?: never;
@@ -481,6 +742,16 @@ export interface paths {
          * List Recent Campaign Snapshots
          * @description Retorna la captura de métricas más reciente para cada campaña de la cuenta de
          *     anuncios activa (ver `get_active_ad_account_id`).
+         *
+         *     `only_delivering=true` deja solo lo que Meta reporta como entregando de
+         *     verdad. Se filtra por `effective_status` y NO por `status`: una campaña
+         *     puede estar ACTIVE y no gastar un sol porque su conjunto está pausado, se
+         *     agotó el presupuesto o la cuenta está topada.
+         *
+         *     Los snapshots anteriores a la migración `d4e5f6a7b8c9` tienen
+         *     `effective_status` nulo. Esos se dejan pasar: esconder campañas por un dato
+         *     que todavía no se sincronizó sería peor que mostrarlas: el operador vería
+         *     una pantalla vacía sin saber por qué.
          */
         get: operations["list_recent_campaign_snapshots_api_v1_campaigns_recent_get"];
         put?: never;
@@ -534,6 +805,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/campaigns/{campaign_id}/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Campaign Details
+         * @description Fase 6.9 (Roadmap 12): Detalle completo de una campaña individual con jerarquía
+         *     (AdSets y Ads sincronizados), métricas acumuladas, historial de cambios/acciones
+         *     aplicadas y enlace directo a Meta Ads Manager.
+         */
+        get: operations["get_campaign_details_api_v1_campaigns__campaign_id__details_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaigns/sync-trigger": {
         parameters: {
             query?: never;
@@ -548,6 +841,56 @@ export interface paths {
          * @description Dispara manualmente el worker de sincronización incremental para todas las cuentas del tenant.
          */
         post: operations["trigger_manual_sync_api_v1_campaigns_sync_trigger_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/history-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get History Status Endpoint
+         * @description Cuánto historial falta bajar y cuánto va a tardar.
+         *
+         *     El estimado NO es inventado: los meses faltantes salen de reconciliar el
+         *     gasto que Meta reporta por mes contra los snapshots que tenemos, y los
+         *     segundos por llamada del ritmo real medido en `APICallLog` de esta misma
+         *     cuenta. Todo se calcula en Python (regla AI-1).
+         *
+         *     `show_estimate` existe para que el frontend no tenga que decidir: solo la
+         *     PRIMERA vez hay algo que estimar. Los syncs incrementales duran segundos y
+         *     mostrar una barra ahí sería ruido.
+         */
+        get: operations["get_history_status_endpoint_api_v1_campaigns_history_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/sync-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Sync Status
+         * @description 3.1: Consulta el estado y progreso en vivo de la sincronización de una cuenta
+         *     (o de la primera cuenta activa de la organización).
+         */
+        get: operations["get_sync_status_api_v1_campaigns_sync_status_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -779,7 +1122,7 @@ export interface paths {
         /**
          * List Active Insights
          * @description Retorna la lista de insights generados por la IA que no han sido descartados,
-         *     para la cuenta de anuncios activa.
+         *     para la cuenta de anuncios activa, ordenados por severidad (CRITICAL -> WARNING -> INFO).
          */
         get: operations["list_active_insights_api_v1_insights_get"];
         put?: never;
@@ -1014,16 +1357,171 @@ export interface paths {
         };
         /**
          * Get Ai Usage
-         * @description Consumo de tokens de los últimos `days` días, agregado por funcionalidad.
-         *
-         *     Scopeado a la organización del usuario. Devuelve totales globales y un
-         *     desglose por `feature` (master_brief, campaign_copy, etc.) con tokens de
-         *     prompt/respuesta/razonamiento, número de llamadas, cuántas usaron cadena de
-         *     pensamiento y costo estimado en USD.
+         * @description Consumo de tokens de los últimos `days` días con desgloses por:
+         *     - feature (operación)
+         *     - model / provider
+         *     - ad_account
+         *     - daily_timeline (tendencia diaria)
          */
         get: operations["get_ai_usage_api_v1_ai_usage_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/invitations/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Invitation Details
+         * @description Consulta pública de los detalles de una invitación por su token.
+         */
+        get: operations["get_invitation_details_api_v1_invitations__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/invitations/{token}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Invitation
+         * @description Acepta una invitación, creando el usuario (si no existe) y vinculándolo con el rol asignado.
+         */
+        post: operations["accept_invitation_api_v1_invitations__token__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Available Modules
+         * @description Catálogo de módulos. El frontend arma los checkboxes con esto en vez de
+         *     tener su propia lista, que se desincronizaría.
+         */
+        get: operations["list_available_modules_api_v1_admin_modules_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Organizations
+         * @description Lista las organizaciones con datos de ADMINISTRACIÓN.
+         *
+         *     Se devuelven conteos —cuántos miembros, cuántas cuentas— y no contenido:
+         *     nombres de campañas, gastos o conversaciones serían datos del tenant.
+         */
+        get: operations["list_organizations_api_v1_admin_organizations_get"];
+        put?: never;
+        /**
+         * Create Organization
+         * @description Da de alta un cliente y, si se indica email, invita a su primer ADMIN.
+         *
+         *     La contraseña la pone el cliente desde el enlace de invitación. Este
+         *     endpoint no crea credenciales de nadie.
+         */
+        post: operations["create_organization_api_v1_admin_organizations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/modules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Organization Modules
+         * @description Prende y apaga módulos de un cliente.
+         *
+         *     Vive acá y NO en `PATCH /organizations/my` a propósito: si el ADMIN de la
+         *     organización pudiera cambiarlo, el módulo dejaría de ser una decisión
+         *     comercial y pasaría a ser una preferencia del cliente.
+         */
+        patch: operations["update_organization_modules_api_v1_admin_organizations__org_id__modules_patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Organization
+         * @description Marca y estado de una organización. El slug NO se puede cambiar: es el
+         *     subdominio del tenant y renombrarlo dejaría fuera a todos sus usuarios.
+         */
+        patch: operations["update_organization_api_v1_admin_organizations__org_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/invite-admin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Invite Organization Admin
+         * @description Invita al primer ADMIN de un cliente ya creado.
+         */
+        post: operations["invite_organization_admin_api_v1_admin_organizations__org_id__invite_admin_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1096,11 +1594,15 @@ export interface components {
             };
             /** Status */
             status: string;
+            /** Analysis Run Id */
+            analysis_run_id?: string | null;
             /**
              * Proposed At
              * Format: date-time
              */
             proposed_at: string;
+            /** Superseded At */
+            superseded_at?: string | null;
             /** Approved At */
             approved_at?: string | null;
             /** Approved By */
@@ -1146,6 +1648,28 @@ export interface components {
              */
             created_at: string;
         };
+        /** AIThresholdsConfigResponse */
+        AIThresholdsConfigResponse: {
+            /** Thresholds */
+            thresholds: {
+                [key: string]: unknown;
+            };
+            /** Overrides */
+            overrides: {
+                [key: string]: unknown;
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: unknown;
+            };
+        };
+        /** AIThresholdsConfigUpdate */
+        AIThresholdsConfigUpdate: {
+            /** Overrides */
+            overrides: {
+                [key: string]: unknown;
+            };
+        };
         /** ActionApprove */
         ActionApprove: {
             /** Approve */
@@ -1174,6 +1698,14 @@ export interface components {
              */
             page_id?: string | null;
         };
+        /** AdAccountReconnect */
+        AdAccountReconnect: {
+            /**
+             * Access Token
+             * @description Nuevo Access Token de Meta Graph API
+             */
+            access_token: string;
+        };
         /** AdAccountResponse */
         AdAccountResponse: {
             /** Id */
@@ -1192,11 +1724,90 @@ export interface components {
             spend_cap: number;
             /** Amount Spent */
             amount_spent: number;
+            /** Last Sync Error Code */
+            last_sync_error_code?: number | null;
+            /** Last Sync Error Detail */
+            last_sync_error_detail?: string | null;
+            /** Last Synced At */
+            last_synced_at?: string | null;
+            /** Token Expires At */
+            token_expires_at?: string | null;
+            /** Token Expires In Days */
+            token_expires_in_days?: number | null;
+            /** Token Warning */
+            token_warning?: boolean | null;
             /**
              * Created At
              * Format: date-time
              */
             created_at: string;
+        };
+        /** AdminBrandUpdate */
+        AdminBrandUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Display Name */
+            display_name?: string | null;
+            /** Accent Color */
+            accent_color?: string | null;
+            /** Industry */
+            industry?: string | null;
+            /** Status */
+            status?: string | null;
+        };
+        /** AdminModulesUpdate */
+        AdminModulesUpdate: {
+            /** Enabled Modules */
+            enabled_modules: string[];
+        };
+        /** AdminOrganizationCreate */
+        AdminOrganizationCreate: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Industry */
+            industry?: string | null;
+            /** Accent Color */
+            accent_color?: string | null;
+            /** Enabled Modules */
+            enabled_modules?: string[] | null;
+            /** Admin Email */
+            admin_email?: string | null;
+        };
+        /** AdminOrganizationSummary */
+        AdminOrganizationSummary: {
+            /** Id */
+            id: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Status */
+            status: string;
+            /** Industry */
+            industry?: string | null;
+            /** Accent Color */
+            accent_color?: string | null;
+            /** Enabled Modules */
+            enabled_modules: string[];
+            /** Miembros */
+            miembros: number;
+            /** Cuentas Publicitarias */
+            cuentas_publicitarias: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Invitacion */
+            invitacion?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** AiModelOption */
         AiModelOption: {
@@ -1211,6 +1822,37 @@ export interface components {
             active_provider: string;
             /** Models */
             models: components["schemas"]["AiModelOption"][];
+            /**
+             * Credential Ok
+             * @default true
+             */
+            credential_ok: boolean;
+            /** Effective Model */
+            effective_model?: string | null;
+        };
+        /** AiUsageAdAccount */
+        AiUsageAdAccount: {
+            /** Ad Account Id */
+            ad_account_id?: string | null;
+            /** Ad Account Name */
+            ad_account_name?: string | null;
+            /** Calls */
+            calls: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Estimated Cost Usd */
+            estimated_cost_usd: number;
+        };
+        /** AiUsageDaily */
+        AiUsageDaily: {
+            /** Date */
+            date: string;
+            /** Calls */
+            calls: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Estimated Cost Usd */
+            estimated_cost_usd: number;
         };
         /** AiUsageFeature */
         AiUsageFeature: {
@@ -1231,6 +1873,23 @@ export interface components {
             /** Estimated Cost Usd */
             estimated_cost_usd: number;
         };
+        /** AiUsageModel */
+        AiUsageModel: {
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Calls */
+            calls: number;
+            /** Prompt Tokens */
+            prompt_tokens: number;
+            /** Completion Tokens */
+            completion_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Estimated Cost Usd */
+            estimated_cost_usd: number;
+        };
         /** AiUsageResponse */
         AiUsageResponse: {
             /** Days */
@@ -1238,6 +1897,12 @@ export interface components {
             totals: components["schemas"]["AiUsageTotals"];
             /** By Feature */
             by_feature: components["schemas"]["AiUsageFeature"][];
+            /** By Model */
+            by_model?: components["schemas"]["AiUsageModel"][];
+            /** By Ad Account */
+            by_ad_account?: components["schemas"]["AiUsageAdAccount"][];
+            /** Daily Timeline */
+            daily_timeline?: components["schemas"]["AiUsageDaily"][];
         };
         /** AiUsageTotals */
         AiUsageTotals: {
@@ -1281,6 +1946,11 @@ export interface components {
             /** File */
             file: string;
         };
+        /** Body_upload_org_logo_api_v1_organizations_my_logo_post */
+        Body_upload_org_logo_api_v1_organizations_my_logo_post: {
+            /** File */
+            file: string;
+        };
         /** BriefDataResponse */
         BriefDataResponse: {
             /** Organization Name */
@@ -1315,6 +1985,87 @@ export interface components {
             policies: components["schemas"]["PolicyItem"][];
             /** Available Industries */
             available_industries: components["schemas"]["IndustryOption"][];
+        };
+        /** CampaignActionDetail */
+        CampaignActionDetail: {
+            /** Id */
+            id: string;
+            /** Action Type */
+            action_type: string;
+            /** Risk Level */
+            risk_level: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Status */
+            status: string;
+            /** Proposed At */
+            proposed_at: string;
+            /** Approved At */
+            approved_at?: string | null;
+            /** Executed At */
+            executed_at?: string | null;
+            /** Rejected At */
+            rejected_at?: string | null;
+            /** Reject Reason */
+            reject_reason?: string | null;
+        };
+        /** CampaignAdDetail */
+        CampaignAdDetail: {
+            /** Ad Id */
+            ad_id: string;
+            /** Adset Id */
+            adset_id: string;
+            /** Name */
+            name: string;
+            /** Creative Title */
+            creative_title?: string | null;
+            /** Creative Body */
+            creative_body?: string | null;
+            /** Creative Cta Type */
+            creative_cta_type?: string | null;
+            /** Spend */
+            spend: number;
+            /** Impressions */
+            impressions: number;
+            /** Clicks */
+            clicks: number;
+            /** Conversions */
+            conversions: number;
+            /** Cpl */
+            cpl: number;
+            /** Ctr */
+            ctr: number;
+            /** Date */
+            date: string;
+        };
+        /** CampaignAdsetDetail */
+        CampaignAdsetDetail: {
+            /** Adset Id */
+            adset_id: string;
+            /** Name */
+            name: string;
+            /** Budget */
+            budget: number;
+            /** Spend */
+            spend: number;
+            /** Impressions */
+            impressions: number;
+            /** Clicks */
+            clicks: number;
+            /** Conversions */
+            conversions: number;
+            /** Cpl */
+            cpl: number;
+            /** Ctr */
+            ctr: number;
+            /** Targeting Summary */
+            targeting_summary?: {
+                [key: string]: unknown;
+            };
+            /** Date */
+            date: string;
         };
         /** CampaignCreateAcceptedResponse */
         CampaignCreateAcceptedResponse: {
@@ -1410,6 +2161,47 @@ export interface components {
              */
             description?: string | null;
         };
+        /** CampaignDetailResponse */
+        CampaignDetailResponse: {
+            /** Campaign Id */
+            campaign_id: string;
+            /** Campaign Name */
+            campaign_name: string;
+            /** Status */
+            status: string;
+            /** Objective */
+            objective?: string | null;
+            /** Ad Account Id */
+            ad_account_id: string;
+            /** Ad Account Name */
+            ad_account_name?: string | null;
+            /** External Account Id */
+            external_account_id: string;
+            /** Total Spend */
+            total_spend: number;
+            /** Total Conversions */
+            total_conversions: number;
+            /** Total Impressions */
+            total_impressions: number;
+            /** Total Clicks */
+            total_clicks: number;
+            /** Average Cpl */
+            average_cpl: number;
+            /** Average Ctr */
+            average_ctr: number;
+            /** Latest Frequency */
+            latest_frequency: number;
+            /** Ads Manager Url */
+            ads_manager_url: string;
+            /** Adsets */
+            adsets?: components["schemas"]["CampaignAdsetDetail"][];
+            /** Ads */
+            ads?: components["schemas"]["CampaignAdDetail"][];
+            /** Actions */
+            actions?: components["schemas"]["CampaignActionDetail"][];
+            /** History */
+            history?: components["schemas"]["CampaignSnapshotItem"][];
+        };
         /** CampaignDraftResponse */
         CampaignDraftResponse: {
             /** Id */
@@ -1481,6 +2273,11 @@ export interface components {
             ok: boolean;
             /** Checks */
             checks: components["schemas"]["PreflightCheck"][];
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: components["schemas"]["PreflightWarning"][];
         };
         /**
          * CampaignRiskPreviewRequest
@@ -1498,6 +2295,82 @@ export interface components {
              */
             copy_text: string;
         };
+        /** CampaignRulesConfigResponse */
+        CampaignRulesConfigResponse: {
+            /** Rules */
+            rules: {
+                [key: string]: unknown;
+            };
+            /** Overrides */
+            overrides: {
+                [key: string]: unknown;
+            };
+            /** Defaults */
+            defaults: {
+                [key: string]: unknown;
+            };
+        };
+        /** CampaignRulesConfigUpdate */
+        CampaignRulesConfigUpdate: {
+            /** Overrides */
+            overrides: {
+                [key: string]: unknown;
+            };
+        };
+        /** CampaignSnapshotItem */
+        CampaignSnapshotItem: {
+            /** Id */
+            id: string;
+            /** Campaign Id */
+            campaign_id: string;
+            /** Campaign Name */
+            campaign_name: string;
+            /** Objective */
+            objective?: string | null;
+            /** Status */
+            status: string;
+            /** Budget */
+            budget: number;
+            /** Spend */
+            spend: number;
+            /**
+             * Reach
+             * @default 0
+             */
+            reach: number;
+            /** Impressions */
+            impressions: number;
+            /** Clicks */
+            clicks: number;
+            /** Conversions */
+            conversions: number;
+            /**
+             * Conversations
+             * @default 0
+             */
+            conversations: number;
+            /**
+             * Cpc
+             * @default 0
+             */
+            cpc: number;
+            /** Cpl */
+            cpl: number;
+            /** Ctr */
+            ctr: number;
+            /** Frequency */
+            frequency: number;
+            /** Placements Breakdown */
+            placements_breakdown?: {
+                [key: string]: unknown;
+            } | null;
+            /** Demographics Breakdown */
+            demographics_breakdown?: {
+                [key: string]: unknown;
+            } | null;
+            /** Date */
+            date: string;
+        };
         /** CampaignSnapshotResponse */
         CampaignSnapshotResponse: {
             /** Id */
@@ -1508,6 +2381,8 @@ export interface components {
             campaign_name: string;
             /** Status */
             status: string;
+            /** Effective Status */
+            effective_status?: string | null;
             /** Budget */
             budget: number;
             /** Spend */
@@ -1813,6 +2688,11 @@ export interface components {
         ChatSessionCreateRequest: {
             /** Ad Account Id */
             ad_account_id?: string | null;
+            /**
+             * Mode
+             * @default BUILD
+             */
+            mode: ("BUILD" | "ASK") | null;
         };
         /** ChatSessionResponse */
         ChatSessionResponse: {
@@ -1822,6 +2702,11 @@ export interface components {
             state: string;
             /** Status */
             status: string;
+            /**
+             * Mode
+             * @default BUILD
+             */
+            mode: string;
             /** Ad Account Id */
             ad_account_id: string;
             /** Draft Id */
@@ -1842,6 +2727,11 @@ export interface components {
             state: string;
             /** Status */
             status: string;
+            /**
+             * Mode
+             * @default BUILD
+             */
+            mode: string;
             /** Ad Account Id */
             ad_account_id: string;
             /** Draft Id */
@@ -1914,6 +2804,63 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** InvitationAcceptRequest */
+        InvitationAcceptRequest: {
+            /** Full Name */
+            full_name: string;
+            /** Password */
+            password: string;
+        };
+        /** InvitationCreateRequest */
+        InvitationCreateRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /**
+             * Role
+             * @default OPERATOR
+             * @enum {string}
+             */
+            role: "ADMIN" | "OPERATOR" | "VIEWER";
+        };
+        /** InvitationDetailsResponse */
+        InvitationDetailsResponse: {
+            /** Email */
+            email: string;
+            /** Role */
+            role: string;
+            /** Organization Name */
+            organization_name: string;
+            /** Organization Slug */
+            organization_slug: string;
+            /** Is Expired */
+            is_expired: boolean;
+            /** Is Accepted */
+            is_accepted: boolean;
+        };
+        /** InvitationResponse */
+        InvitationResponse: {
+            /** Id */
+            id: string;
+            /** Email */
+            email: string;
+            /** Role */
+            role: string;
+            /** Organization Id */
+            organization_id: string;
+            /** Token */
+            token: string;
+            /** Invite Url */
+            invite_url: string;
+            /** Expires At */
+            expires_at: string;
+            /** Accepted At */
+            accepted_at?: string | null;
+            /** Created At */
+            created_at: string;
+        };
         /** KpisSummaryResponse */
         KpisSummaryResponse: {
             kpis_7d: components["schemas"]["WindowKpis"];
@@ -1923,6 +2870,24 @@ export interface components {
             critical_alerts_count: number;
             /** Last Sync At */
             last_sync_at?: string | null;
+        };
+        /** LLMKeyTestRequest */
+        LLMKeyTestRequest: {
+            /** Provider */
+            provider: string;
+            /** Api Key */
+            api_key: string;
+            /** Model */
+            model?: string | null;
+        };
+        /** LLMKeyTestResponse */
+        LLMKeyTestResponse: {
+            /** Valid */
+            valid: boolean;
+            /** Message */
+            message: string;
+            /** Provider */
+            provider: string;
         };
         /** LearningLogResponse */
         LearningLogResponse: {
@@ -1998,8 +2963,23 @@ export interface components {
             slug: string;
             /** Name */
             name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Accent Color */
+            accent_color?: string | null;
             /** Ai Model */
             ai_model: string;
+            /** Llm Provider */
+            llm_provider?: string | null;
+            /**
+             * Has Llm Api Key
+             * @default false
+             */
+            has_llm_api_key: boolean;
+            /** Llm Api Key Preview */
+            llm_api_key_preview?: string | null;
             /** Max Budget */
             max_budget: number;
             /** Status */
@@ -2016,8 +2996,16 @@ export interface components {
         OrganizationUpdate: {
             /** Name */
             name?: string | null;
+            /** Display Name */
+            display_name?: string | null;
+            /** Accent Color */
+            accent_color?: string | null;
             /** Ai Model */
             ai_model?: string | null;
+            /** Llm Provider */
+            llm_provider?: string | null;
+            /** Llm Api Key */
+            llm_api_key?: string | null;
             /** Max Budget */
             max_budget?: number | null;
             /** Industry */
@@ -2050,6 +3038,23 @@ export interface components {
             parent_campaign?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * PreflightWarning
+         * @description Aviso que NO bloquea la creación.
+         *
+         *     Se separa de `checks` a propósito: un check fallido significa que Meta va a
+         *     rechazar el payload; un aviso significa que la campaña se va a crear igual
+         *     pero hay algo que conviene saber antes. Mezclarlos haría que un consejo
+         *     parezca un error y que el usuario deje de leer los dos.
+         */
+        PreflightWarning: {
+            /** Code */
+            code: string;
+            /** Title */
+            title: string;
+            /** Detail */
+            detail: string;
         };
         /** Report */
         Report: {
@@ -2334,6 +3339,8 @@ export interface components {
             description: string;
             /** Welcome Message */
             welcome_message: string;
+            /** Suggested Product Name */
+            suggested_product_name?: string | null;
         };
         /** SuggestionMaturity */
         SuggestionMaturity: {
@@ -2380,6 +3387,8 @@ export interface components {
             /** Evidence */
             evidence: string[];
             copy: components["schemas"]["SuggestionCopy"];
+            /** Suggested Product Name */
+            suggested_product_name?: string | null;
         };
         /** SuggestionWinningCampaign */
         SuggestionWinningCampaign: {
@@ -2422,6 +3431,17 @@ export interface components {
             observations?: string[] | null;
             /** Created At */
             created_at?: string | null;
+        };
+        /** TenantBrandResponse */
+        TenantBrandResponse: {
+            /** Name */
+            name: string;
+            /** Display Name */
+            display_name?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Accent Color */
+            accent_color?: string | null;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -2666,9 +3686,42 @@ export interface operations {
             };
         };
     };
+    get_tenant_brand_api_v1_auth_tenant_brand_get: {
+        parameters: {
+            query?: {
+                slug?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TenantBrandResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_available_ai_models_api_v1_organizations_ai_models_get: {
         parameters: {
-            query?: never;
+            query?: {
+                provider?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2682,6 +3735,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiModelsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -2739,6 +3801,105 @@ export interface operations {
             };
         };
     };
+    update_my_organization_api_v1_organizations_my_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_org_logo_api_v1_organizations_my_logo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_org_logo_api_v1_organizations_my_logo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_llm_key_api_v1_organizations_my_llm_key_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LLMKeyTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMKeyTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_my_business_policies_api_v1_organizations_my_policies_get: {
         parameters: {
             query?: never;
@@ -2755,6 +3916,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BusinessPoliciesResponse"];
+                };
+            };
+        };
+    };
+    get_my_modules_api_v1_organizations_my_modules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -2872,6 +4053,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdAccountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_ad_account_token_api_v1_organizations_my_ad_accounts__ad_account_id__check_token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ad_account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdAccountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_ad_account_api_v1_organizations_my_ad_accounts__ad_account_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                ad_account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3114,6 +4357,251 @@ export interface operations {
             };
         };
     };
+    reconnect_ad_account_api_v1_organizations_my_ad_accounts__id__reconnect_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdAccountReconnect"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdAccountResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_org_members_api_v1_organizations_my_members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_org_invitations_api_v1_organizations_my_invitations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationResponse"][];
+                };
+            };
+        };
+    };
+    create_org_invitation_api_v1_organizations_my_invitations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvitationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_org_invitation_api_v1_organizations_my_invitations__invitation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                invitation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_campaign_rules_api_v1_organizations_my_campaign_rules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignRulesConfigResponse"];
+                };
+            };
+        };
+    };
+    update_my_campaign_rules_api_v1_organizations_my_campaign_rules_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CampaignRulesConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignRulesConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_ai_thresholds_api_v1_organizations_my_ai_thresholds_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIThresholdsConfigResponse"];
+                };
+            };
+        };
+    };
+    update_my_ai_thresholds_api_v1_organizations_my_ai_thresholds_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIThresholdsConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIThresholdsConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_chat_sessions_api_v1_campaigns_chat_sessions_get: {
         parameters: {
             query?: never;
@@ -3301,7 +4789,9 @@ export interface operations {
     };
     list_recent_campaign_snapshots_api_v1_campaigns_recent_get: {
         parameters: {
-            query?: never;
+            query?: {
+                only_delivering?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -3315,6 +4805,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CampaignSnapshotResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3381,6 +4880,37 @@ export interface operations {
             };
         };
     };
+    get_campaign_details_api_v1_campaigns__campaign_id__details_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                campaign_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     trigger_manual_sync_api_v1_campaigns_sync_trigger_post: {
         parameters: {
             query?: never;
@@ -3397,6 +4927,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageResponse"];
+                };
+            };
+        };
+    };
+    get_history_status_endpoint_api_v1_campaigns_history_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_sync_status_api_v1_campaigns_sync_status_get: {
+        parameters: {
+            query?: {
+                ad_account_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -3975,6 +5556,7 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
+                ad_account_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -3989,6 +5571,252 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiUsageResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_invitation_details_api_v1_invitations__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvitationDetailsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_invitation_api_v1_invitations__token__accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvitationAcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_available_modules_api_v1_admin_modules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_organizations_api_v1_admin_organizations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganizationSummary"][];
+                };
+            };
+        };
+    };
+    create_organization_api_v1_admin_organizations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminOrganizationCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganizationSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_organization_modules_api_v1_admin_organizations__org_id__modules_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminModulesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganizationSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_organization_api_v1_admin_organizations__org_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminBrandUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrganizationSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    invite_organization_admin_api_v1_admin_organizations__org_id__invite_admin_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

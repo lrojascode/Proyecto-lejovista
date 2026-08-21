@@ -369,6 +369,12 @@ class AiModelOption(BaseModel):
 class AiModelsResponse(BaseModel):
     active_provider: str
     models: List[AiModelOption]
+    # El proveedor y el modelo que se van a usar DE VERDAD, y si hay credencial
+    # para ellos. La pantalla mostraba la key guardada y el modelo elegido como
+    # si estuviera todo conectado, mientras las llamadas salían a otro proveedor
+    # sin credencial: el analista contestaba con plantillas y nada se veía roto.
+    credential_ok: bool = True
+    effective_model: Optional[str] = None
 
 
 # --- Políticas de Meta por rubro de negocio ---

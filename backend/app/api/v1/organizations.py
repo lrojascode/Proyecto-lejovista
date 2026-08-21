@@ -36,7 +36,7 @@ from app.utils.security import get_current_user, require_role
 from app.utils.throttle import enforce_cooldown
 from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
 from app.workers.tasks import sync_ad_account, refresh_org_pages
-from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER
+from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER, pick_model
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
 from app.tenant_rules.modules import AVAILABLE_MODULES, UNDISABLEABLE_MODULES, enabled_modules_for
 from app.services.email_service import send_email
@@ -63,7 +63,16 @@ async def get_available_ai_models(
     org = await db.get(Organization, current_user.organization_id)
     client = OpenRouterClient(organization=org)
     active_provider = client.provider
-    return {"active_provider": active_provider, "models": MODELS_BY_PROVIDER.get(active_provider, [])}
+    # Se devuelve lo EFECTIVO, no lo elegido. Una credencial guardada en otra
+    # organización deja a ésta resolviendo a un proveedor sin key, y hasta ahora
+    # la pantalla no tenía forma de mostrarlo: se veía todo conectado mientras
+    # el analista contestaba con plantillas.
+    return {
+        "active_provider": active_provider,
+        "models": MODELS_BY_PROVIDER.get(active_provider, []),
+        "credential_ok": bool(client.api_key),
+        "effective_model": pick_model(org, active_provider),
+    }
 
 @router.get("/my", response_model=OrganizationResponse)
 async def get_my_organization(

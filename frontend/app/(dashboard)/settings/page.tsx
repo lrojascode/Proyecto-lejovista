@@ -20,6 +20,12 @@ export default function Settings() {
   const [aiModel, setAiModel] = useState("google/gemini-3.5-flash");
   const [maxBudget, setMaxBudget] = useState(1000);
   const [aiModels, setAiModels] = useState<{ value: string; label: string }[]>([]);
+  // Lo que se va a usar DE VERDAD. La pantalla mostraba la key guardada y el
+  // modelo elegido como si estuviera todo conectado, mientras las llamadas
+  // salían a otro proveedor sin credencial y el analista contestaba con
+  // plantillas. Sin esto no había forma de darse cuenta.
+  const [credentialOk, setCredentialOk] = useState(true);
+  const [effectiveModel, setEffectiveModel] = useState<string | null>(null);
   const [aiProvider, setAiProvider] = useState<string>("");
   const [industry, setIndustry] = useState("");
   const [industries, setIndustries] = useState<{ value: string; label: string }[]>([]);
@@ -163,6 +169,8 @@ export default function Settings() {
       const modelsData = await api.getAiModels(orgData.llm_provider || undefined);
       setAiProvider(modelsData.active_provider);
       setAiModels(modelsData.models);
+      setCredentialOk(modelsData.credential_ok ?? true);
+      setEffectiveModel(modelsData.effective_model ?? null);
       const isKnownModel = modelsData.models.some((m) => m.value === orgData.ai_model);
       setAiModel(isKnownModel ? orgData.ai_model : modelsData.models[0]?.value ?? orgData.ai_model);
     } catch (e) {
@@ -637,6 +645,27 @@ export default function Settings() {
                   </span>
                 )}
               </div>
+
+              {!credentialOk && (
+                <div style={{
+                  fontSize: "0.8rem",
+                  lineHeight: 1.5,
+                  padding: "0.7rem 0.85rem",
+                  borderRadius: "6px",
+                  background: "rgba(248, 113, 113, 0.1)",
+                  border: "1px solid rgba(248, 113, 113, 0.3)",
+                  color: "var(--color-paper)",
+                }}>
+                  <strong>Esta organización no tiene credencial de IA.</strong> Las
+                  llamadas están saliendo a{" "}
+                  {({ openai: "OpenAI", gemini_direct: "Gemini", openrouter: "OpenRouter" }[aiProvider] ?? aiProvider)}
+                  {effectiveModel ? ` con ${effectiveModel}` : ""} y fallan todas, así que
+                  el analista responde con textos genéricos en vez de analizar tus datos.
+                  {org?.has_llm_api_key
+                    ? " Hay una key guardada, pero no resuelve para esta organización — guardala de nuevo desde acá."
+                    : " Pegá tu API key abajo y guardá."}
+                </div>
+              )}
 
               <select
                 className="form-input"

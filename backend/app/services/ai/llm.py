@@ -407,6 +407,27 @@ _PARAM_RECHAZADO_RE = re.compile(
 # clave "provider:model" -> {parámetro rechazado: reemplazo o None}
 _INCOMPATIBLES: Dict[str, Dict[str, Optional[str]]] = {}
 
+# Organizaciones a las que ya se les avisó que no tienen credencial. El aviso
+# tiene que aparecer, pero una vez — no en cada mensaje del chat.
+_SIN_CREDENCIAL_AVISADO: set = set()
+
+
+def _proveedor_por_forma(key: str) -> str:
+    """Deduce el proveedor mirando la credencial.
+
+    Sirve cuando `llm_provider` quedó en NULL: la key sola alcanza para saber a
+    qué endpoint va. Es mejor que asumir un default, que manda la credencial de
+    un proveedor al endpoint de otro y devuelve un 401 que no explica nada.
+    """
+    k = (key or "").strip()
+    if k.startswith("sk-or-"):
+        return "openrouter"
+    if k.startswith("sk-"):
+        return "openai"
+    if k.startswith("AIza"):
+        return "gemini_direct"
+    return "openrouter"
+
 
 def _param_rechazado(texto: str) -> Optional[str]:
     m = _PARAM_RECHAZADO_RE.search(texto or "")
@@ -483,9 +504,21 @@ class OpenRouterClient:
         org_provider = target_org.llm_provider if target_org else None
 
         # 1. Credencial configurada en la organización
-        if org_key and org_provider:
-            provider = org_provider
+        #
+        # Alcanza con la key. `llm_provider` es otra columna y se guarda por
+        # separado, así que puede quedar en NULL con la credencial presente —
+        # pasó en producción. Exigir las dos hacía que la key se descartara y
+        # la organización quedara sin IA **en silencio**, con la pantalla de
+        # Configuración mostrando la credencial como si todo estuviera bien.
+        if org_key:
+            provider = org_provider or _proveedor_por_forma(org_key)
             api_key = org_key
+            if not org_provider:
+                logger.warning(
+                    "La organización %s tiene credencial de IA pero no proveedor; "
+                    "se dedujo '%s' por la forma de la key.",
+                    getattr(target_org, "slug", "?"), provider,
+                )
             if provider == "openai":
                 return api_key, "https://api.openai.com/v1/chat/completions", "openai", False
             elif provider == "gemini_direct":
@@ -509,8 +542,22 @@ class OpenRouterClient:
             return settings.OPENAI_API_KEY, "https://api.openai.com/v1/chat/completions", "openai", False
         elif settings.GEMINI_API_KEY:
             return settings.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
-        else:
-            return settings.OPENROUTER_API_KEY or "", "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
+        # Sin credencial de ningún lado. Es un estado ROTO, no un default: cada
+        # llamada va a dar 401, cada 401 devuelve None y el chat va a contestar
+        # con texto de plantilla para siempre. El producto sigue "andando" y
+        # nadie se entera — eso ya costó un día entero de buscar el problema en
+        # el lugar equivocado. Que grite.
+        if not settings.OPENROUTER_API_KEY:
+            slug = getattr(target_org, "slug", "?")
+            if slug not in _SIN_CREDENCIAL_AVISADO:
+                _SIN_CREDENCIAL_AVISADO.add(slug)
+                logger.error(
+                    "La organización %s no tiene credencial de IA, y tampoco hay una "
+                    "global. El analista va a devolver texto de plantilla en TODAS las "
+                    "respuestas. Cargá la key en Configuración de ESA organización.",
+                    slug,
+                )
+        return settings.OPENROUTER_API_KEY or "", "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
 
     async def test_key(self, model: Optional[str] = None) -> tuple[bool, str]:
         """
