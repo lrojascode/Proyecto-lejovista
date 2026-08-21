@@ -28,6 +28,7 @@ from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.ai.llm import ChatPlan, OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
 from app.services.campaign_chat import cards, extraction, facts as facts_module, questions, rephrase
+from app.services.campaign_chat.tools import ChatTools
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
 from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
 from app.services.campaign_chat.slots import sanitize_product_name, strip_accents
@@ -666,6 +667,7 @@ async def _say(
 async def _analyze(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
     user_text: str, topic: str, canonical: str, facts: Dict[str, Any],
+    previous_exchange: Optional[Tuple[str, str]] = None,
 ) -> Dict[str, Any]:
     """Respuesta sobre el historial, redactada por el LLM desde las cifras
     reales (CH-8).
@@ -689,6 +691,41 @@ async def _analyze(
         feature="campaign_chat", organization_id=current_user.organization_id,
         ad_account_id=session.ad_account_id,
     )
+    # Camino preferido: que el analista CONSULTE la base y responda con lo que
+    # encontró. El anterior le armaba una bolsa de datos de antemano, y si la
+    # pregunta necesitaba algo que no estaba ahí no había análisis posible.
+    #
+    # La respuesta se valida contra lo que devolvieron SUS consultas, no contra
+    # la bolsa: puede usar libremente cualquier cifra que trajo de la base, y
+    # sigue sin poder inventar una.
+    if session.ad_account_id:
+        try:
+            resultado = await OpenRouterClient(organization=org).answer_with_tools(
+                org, user_text,
+                ChatTools(db, current_user.organization_id, session.ad_account_id),
+                previous_exchange=previous_exchange,
+                usage_ctx=usage_ctx,
+            )
+        except Exception:
+            logger.exception("Fallo el analista con consultas (sesión %s)", session.id)
+            resultado = None
+
+        if resultado:
+            texto, consultado = resultado
+            validado = rephrase.grounded_or_canonical(consultado, canonical, texto)
+            if validado is texto or validado == texto:
+                logger.info(
+                    "Analista respondió con %d consulta(s) a la base (sesión %s).",
+                    len(consultado), session.id,
+                )
+                return cards.text_message(texto)
+            logger.warning(
+                "La respuesta del analista con consultas no paso la validacion; "
+                "se usa el texto canonico (sesión %s).", session.id,
+            )
+
+    # Fallback: la bolsa de datos precargada. Sigue sirviendo cuando no hay
+    # cuenta seleccionada o cuando el camino con consultas falla.
     facts_blob = json.dumps(facts, ensure_ascii=False, default=str)
     try:
         written = await OpenRouterClient(organization=org).compose_chat_answer(
@@ -756,7 +793,10 @@ async def _answer_and_resume(
         messages.append(await _say(db, current_user, session, answer, user_text))
     else:
         # Preguntas sobre el pasado: el LLM redacta el análisis desde las cifras (CH-8).
-        messages.append(await _analyze(db, current_user, session, user_text, topic, answer, facts))
+        messages.append(await _analyze(
+            db, current_user, session, user_text, topic, answer, facts,
+            previous_exchange=_ultimo_intercambio(messages),
+        ))
 
     pendiente = _pending_prompt_for_state(session.state)
     if pendiente:

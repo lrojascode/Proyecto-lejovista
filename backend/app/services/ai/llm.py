@@ -161,6 +161,64 @@ _PROMPT_INJECTION_GUARD = (
 )
 
 
+_ANALISTA_CON_CONSULTAS = (
+    "Sos el analista de Meta Ads de un dueño de negocio peruano que no sabe de "
+    "marketing. Tenés HERRAMIENTAS para consultar su cuenta: usalas antes de "
+    "responder.\n\n"
+
+    "CÓMO TRABAJÁS:\n"
+    "- Ante cualquier pregunta, primero consultá. No respondas de memoria ni "
+    "digas que no tenés el dato sin haberlo buscado.\n"
+    "- Podés hacer varias consultas seguidas. Si la primera no alcanza, pedí "
+    "otra: comparar dos períodos, mirar el desglose, abrir los anuncios de una "
+    "campaña. Eso es analizar.\n"
+    "- Si una consulta vuelve vacía, decilo y probá otra ventana o otro filtro "
+    "antes de rendirte.\n\n"
+
+    "REGLAS INQUEBRANTABLES:\n"
+    "- Los números que escribas tienen que venir de las consultas. Copiálos "
+    "exactos, con sus decimales.\n"
+    "- PROHIBIDO calcular. Si necesitás un total, un promedio o un porcentaje, "
+    "PEDILO en una consulta: las herramientas ya devuelven costo por resultado, "
+    "CTR y promedios diarios. Comparar con palabras siempre se puede "
+    "('bastante más caro', 'casi el doble').\n"
+    "- No inventes campañas, anuncios ni fechas que no aparecieron en una "
+    "consulta.\n\n"
+
+    "CÓMO SE ARMA LA RESPUESTA (en este orden):\n"
+    "1. RESUMEN en una o dos frases, simple, ANTES de cualquier tabla. "
+    "Respondé primero exactamente lo que preguntó.\n"
+    "2. LOS DATOS. Si son más de tres cifras, tabla markdown.\n"
+    "3. QUÉ SIGNIFICA, en criollo: si eso es bueno, malo o normal, y por qué.\n"
+    "4. SUGERENCIA, solo si la pidió o si el dato la vuelve evidente. Apoyada "
+    "en una cifra y citando la campaña exacta. Nunca consejos genéricos.\n\n"
+
+    "EXACTITUD:\n"
+    "- Nombres de campaña y anuncio COMPLETOS, tal cual vinieron.\n"
+    "- Incluí el id entre paréntesis la primera vez que nombres una.\n"
+    "- Fechas completas: '18 de agosto de 2026', nunca '18/08'.\n"
+    "- `estado` es cómo quedó configurada; `estado_efectivo` es si ESTÁ "
+    "ENTREGANDO. Para 'qué está corriendo', mirá el efectivo.\n"
+    "- Los resultados son leads de formulario MÁS conversaciones de WhatsApp. "
+    "Nunca dividas el gasto de una campaña de WhatsApp entre los leads: da "
+    "cifras absurdas.\n\n"
+
+    "LENGUAJE: simple. La primera vez que uses un término técnico explicalo "
+    "entre paréntesis. Montos con S/. Un emoji como mucho. Sin saludos ni "
+    "despedidas: es una conversación en curso.\n\n"
+
+    "LO QUE ESTA CUENTA NO PUEDE SABER: ventas, ingresos, matrículas, ROAS o "
+    "retorno. El píxel registra contactos, no compras, y sin CRM conectado no "
+    "hay forma de saber cuántos compraron. Se mide costo por contacto, no "
+    "costo por venta. Si preguntan eso, decilo.\n\n"
+
+    "Solo podés hablar de esta cuenta. Si preguntan por otra marca, otro "
+    "cliente o promedios del mercado, decí que no tenés acceso.\n\n"
+    f"{_PROMPT_INJECTION_GUARD}"
+)
+
+
+
 # La imagen se manda al modelo reescalada: una foto de celular (3-6 MB) en
 # base64 crece ~33% y se cobra por tokens de imagen sin aportar detalle útil
 # para juzgar un anuncio. 1024px de lado mayor es de sobra.
@@ -759,6 +817,131 @@ class OpenRouterClient:
         if intent not in cls._CHAT_EXTRACT_INTENTS:
             return None
         return {k: v for k, v in data.items() if k in cls._CHAT_EXTRACT_KEYS}
+
+    async def answer_with_tools(
+        self,
+        org: Organization,
+        question: str,
+        tools_runtime: Any,
+        previous_exchange: Optional[Tuple[str, str]] = None,
+        usage_ctx: Optional[UsageContext] = None,
+        max_rondas: int = 4,
+    ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
+        """El analista consulta la base y responde con lo que encontró.
+
+        Devuelve `(texto, resultados_de_las_consultas)`, o `None` si no hay LLM
+        o si el modelo nunca llegó a una respuesta.
+
+        A diferencia de `compose_chat_answer`, acá el modelo NO recibe una bolsa
+        de datos armada de antemano: recibe herramientas y decide qué preguntar.
+        Esa era la limitación de fondo — si la pregunta necesitaba un dato que
+        no estaba en la bolsa, no había análisis posible, y no por falta de
+        permiso sino de datos.
+
+        Los números siguen sin salir del modelo: salen de las queries que
+        ejecuta Python. `resultados_de_las_consultas` es lo que se le devolvió,
+        y es contra eso que el motor valida la respuesta final.
+
+        `max_rondas` acota el ida y vuelta. Sin tope, un modelo que se confunde
+        puede quedarse consultando y gastando tokens indefinidamente.
+        """
+        from app.services.campaign_chat import tools as chat_tools
+
+        api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
+        if settings.MOCK_SERVICES or not api_key:
+            return None
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": f"http://{settings.BASE_DOMAIN}",
+            "X-Title": "Agente DX IA",
+            "Content-Type": "application/json",
+        }
+
+        contexto = ""
+        if previous_exchange:
+            previa, respuesta = previous_exchange
+            contexto = (
+                "\n\nTurno anterior, solo para resolver referencias como \"eso\" o "
+                f"\"¿cómo que...?\":\n- Preguntó: {_delimit_untrusted(previa[:300])}"
+                f"\n- Respondiste: {_delimit_untrusted(respuesta[:600])}"
+            )
+
+        mensajes: List[Dict[str, Any]] = [
+            {"role": "system", "content": _ANALISTA_CON_CONSULTAS + contexto},
+            {"role": "user", "content": _delimit_untrusted(question or "(sin texto)")},
+        ]
+
+        model = pick_model(org, provider)
+        if is_gemini_direct and model.startswith("google/"):
+            model = model.replace("google/", "")
+
+        recolectado: List[Dict[str, Any]] = []
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                for _ronda in range(max_rondas):
+                    res = await client.post(base_url, headers=headers, json={
+                        "model": model,
+                        "temperature": 0.3,
+                        "messages": mensajes,
+                        "tools": chat_tools.TOOL_SCHEMAS,
+                    })
+                    if res.status_code != 200:
+                        logger.error("El analista con consultas devolvió %s: %s",
+                                     res.status_code, res.text[:400])
+                        return None
+                    cuerpo = res.json()
+                    await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"))
+                    msg = cuerpo["choices"][0]["message"]
+                    llamadas = msg.get("tool_calls") or []
+
+                    if not llamadas:
+                        texto = (msg.get("content") or "").strip()
+                        return (texto, recolectado) if texto else None
+
+                    # El mensaje del modelo va al historial TAL CUAL: la API
+                    # exige que cada tool_call tenga su respuesta enlazada por id.
+                    mensajes.append(msg)
+                    for llamada in llamadas:
+                        fn = (llamada.get("function") or {})
+                        nombre = fn.get("name") or ""
+                        try:
+                            args = json.loads(fn.get("arguments") or "{}")
+                        except json.JSONDecodeError:
+                            args = {}
+                        resultado = await chat_tools.ejecutar(tools_runtime, nombre, args)
+                        recolectado.append({"consulta": nombre, "argumentos": args,
+                                            "resultado": resultado})
+                        logger.info("Analista consultó %s(%s)", nombre, args)
+                        mensajes.append({
+                            "role": "tool",
+                            "tool_call_id": llamada.get("id"),
+                            "content": json.dumps(resultado, ensure_ascii=False, default=str),
+                        })
+        except Exception:
+            logger.exception("Fallo el analista con consultas.")
+            return None
+
+        # Se acabaron las rondas sin respuesta final. Se pide el cierre sin
+        # herramientas: mejor una respuesta con lo consultado que ninguna.
+        try:
+            async with httpx.AsyncClient(timeout=40.0) as client:
+                mensajes.append({
+                    "role": "user",
+                    "content": "Ya no consultes más. Respondé con lo que encontraste.",
+                })
+                res = await client.post(base_url, headers=headers, json={
+                    "model": model, "temperature": 0.3, "messages": mensajes,
+                })
+                if res.status_code != 200:
+                    return None
+                cuerpo = res.json()
+                await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"))
+                texto = (cuerpo["choices"][0]["message"].get("content") or "").strip()
+                return (texto, recolectado) if texto else None
+        except Exception:
+            logger.exception("Fallo el cierre del analista con consultas.")
+            return None
 
     async def compose_chat_answer(
         self,
