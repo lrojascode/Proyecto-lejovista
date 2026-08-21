@@ -109,7 +109,7 @@ async def test_resolve_facts_ranking_filters_zero_conversations_and_reads_cost_p
     assert len(ranking_camps) == 2
     assert ranking_camps[0]["name"] == "Camp Ganadora"
     assert ranking_camps[0]["cost_per_conv"] == 12.5
-    assert ranking_camps[0]["conversations"] == 20
+    assert ranking_camps[0]["resultados"] == 20
     assert "S/. 0.00" not in canonical
     assert "Camp Ganadora" in canonical
     assert "S/. 12.50" in canonical
