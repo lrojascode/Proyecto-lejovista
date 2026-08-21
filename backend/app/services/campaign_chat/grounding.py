@@ -15,7 +15,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 logger = logging.getLogger("lejovista.grounding")
 
 MAX_GROUNDING_VALUES = 220
-MAX_ANALYSIS_CHARS = 2000
+# Tope de la respuesta del analista. Subio de 2000 cuando el prompt paso a
+# pedir el formato de cuatro pasos (resumen -> tabla -> que significa ->
+# sugerencia): una tabla de cinco campanas con sus ids ya se comia los 2000, y
+# la respuesta se descartaba ENTERA por larga, cayendo al texto de plantilla.
+# Sigue habiendo tope: sin el, un modelo en bucle podria devolver kilobytes.
+MAX_ANALYSIS_CHARS = 4000
 
 OPAQUE_KEYS = frozenset({
     "campaign_id",
@@ -240,11 +245,30 @@ def _parse_float_candidates(raw: str) -> List[float]:
 
 
 def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
-    """Verifica si todos los números de la respuesta están respaldados en facts_data."""
+    """¿Todos los números de la respuesta están respaldados en `facts_data`?
+
+    Cuando devuelve False el motor descarta la respuesta del analista y muestra
+    el texto de plantilla. Eso antes pasaba **en silencio**: el cliente veía una
+    respuesta robótica y no había forma de saber si el modelo había escrito mal,
+    si se había pasado de largo o si ni siquiera se lo había llamado.
+
+    Por eso cada rechazo se loguea con su motivo. Es la única manera de
+    distinguir "el analista no funciona" de "el analista funciona y esta
+    respuesta puntual se descartó bien".
+    """
     answer = (answer or "").strip()
-    if not answer or len(answer) > MAX_ANALYSIS_CHARS:
+    if not answer:
+        logger.warning("Respuesta del analista descartada: vacía.")
+        return False
+    if len(answer) > MAX_ANALYSIS_CHARS:
+        logger.warning(
+            "Respuesta del analista descartada: %d caracteres, el tope es %d. "
+            "Si esto se repite, el formato pedido no entra en el tope.",
+            len(answer), MAX_ANALYSIS_CHARS,
+        )
         return False
     if _URL_RE.search(answer):
+        logger.warning("Respuesta del analista descartada: contiene un enlace.")
         return False
 
     gset = GroundingSet.from_data(facts_data)
@@ -264,10 +288,19 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
 
         candidates = _parse_float_candidates(raw_num)
         if not candidates:
+            logger.warning(
+                "Respuesta del analista descartada: no se pudo interpretar el número %r.",
+                raw_num,
+            )
             return False
 
         # Si ninguna interpretación numérica de este token tiene respaldo, rechazar
         if not any(gset.contains(c, required_unit=req_unit) for c in candidates):
+            logger.warning(
+                "Respuesta del analista descartada: el número %r (%s) no está en los datos. "
+                "O el modelo lo calculó, o el dato no se le pasó en los facts.",
+                raw_num, req_unit.name if hasattr(req_unit, "name") else req_unit,
+            )
             return False
 
     return True

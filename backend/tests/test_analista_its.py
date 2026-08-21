@@ -138,3 +138,43 @@ def test_sin_modelo_configurado_usa_el_primero_del_proveedor():
     class Org:
         ai_model = None
     assert pick_model(Org(), "openai") == MODELS_BY_PROVIDER["openai"][0]["value"]
+
+
+# --- Se tiene que poder saber POR QUE se descartó una respuesta ---
+
+def test_cada_descarte_dice_su_motivo(caplog):
+    """Antes el rechazo era silencioso: el cliente veía texto de plantilla y no
+    había forma de distinguir "el analista no funciona" de "el analista funciona
+    y esta respuesta puntual se descartó bien"."""
+    import logging
+    from app.services.campaign_chat.grounding import numbers_are_grounded
+
+    facts = {"kpis": {"spend": 300.0, "resultados": 20}}
+
+    with caplog.at_level(logging.WARNING, logger="lejovista.grounding"):
+        assert numbers_are_grounded(facts, "Gastaste S/. 999.99") is False
+    assert "999.99" in caplog.text and "no está en los datos" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="lejovista.grounding"):
+        assert numbers_are_grounded(facts, "x" * 9999) is False
+    assert "el tope es" in caplog.text
+
+
+def test_una_cifra_calculada_se_descarta_y_se_ve():
+    """300/20 = 15. El modelo lo dividió, no lo copió: la respuesta entera muere
+    —correcto por AI-1— pero tiene que quedar registro."""
+    from app.services.campaign_chat.grounding import numbers_are_grounded
+
+    facts = {"kpis": {"spend": 300.0, "resultados": 20}}
+    assert numbers_are_grounded(facts, "Te salieron a S/. 15.00 cada uno") is False
+
+
+def test_el_tope_entra_una_respuesta_con_tabla():
+    """El formato de cuatro pasos con una tabla de campañas no puede pasarse
+    del tope y morir por largo."""
+    from app.services.campaign_chat.grounding import MAX_ANALYSIS_CHARS
+
+    # Una tabla de 5 campañas con nombre, id, gasto, resultados y costo ronda
+    # los 900-1200 caracteres; más el resumen y la interpretación.
+    assert MAX_ANALYSIS_CHARS >= 3500

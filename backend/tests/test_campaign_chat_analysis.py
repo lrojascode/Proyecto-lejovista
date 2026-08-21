@@ -70,7 +70,12 @@ def test_empty_answers_are_rejected(mala):
 
 
 def test_an_absurdly_long_answer_is_rejected():
-    assert numbers_are_grounded(_FACTS, "palabra " * 500) is False
+    """Se ata a la constante y no a un largo fijo: el tope subio de 2000 a 4000
+    cuando el prompt paso a pedir el formato de cuatro pasos con tabla, y este
+    test se rompio por medir 4000 exactos."""
+    from app.services.campaign_chat.grounding import MAX_ANALYSIS_CHARS
+
+    assert numbers_are_grounded(_FACTS, "palabra " * (MAX_ANALYSIS_CHARS // 4)) is False
 
 
 def test_grounded_or_canonical_falls_back():
