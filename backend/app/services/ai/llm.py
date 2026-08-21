@@ -1031,11 +1031,22 @@ class OpenRouterClient:
         user_text: str,
         available_campaigns: Optional[List[str]] = None,
         usage_ctx: Optional[UsageContext] = None,
+        previous_exchange: Optional[Tuple[str, str]] = None,
     ) -> ChatPlan:
         """Planificador abierto de consultas para el chat (CH-10/CH-11).
-        
+
         Preserva AI-1: solo devuelve etiquetas de bloques, períodos y nombres de campaña
         reales existentes. Cero números en la salida del modelo.
+
+        `previous_exchange` es el último par (pregunta, respuesta) de la
+        conversación. Sin él, una repregunta llega sin referente: "¿cómo que 0
+        por contacto?" no se puede clasificar mirándola sola, y el chat
+        contestaba "eso se me escapa" a alguien que preguntaba por la respuesta
+        que él mismo acababa de dar.
+
+        Va como contexto, NO como instrucción: el modelo sigue devolviendo solo
+        etiquetas, y la respuesta anterior entra delimitada como texto no
+        confiable igual que la pregunta.
         """
         api_key, base_url, provider, is_gemini_direct = self._resolve_config(org)
         if settings.MOCK_SERVICES or not api_key:
@@ -1058,9 +1069,23 @@ class OpenRouterClient:
             "Bloques disponibles: kpis, reach, ranking, breakdowns, timeseries, alerts, recommendations, account, destination, creative, product.\n"
             f"{camp_block}"
             "REGLA AI-1: NUNCA devuelvas cifras ni cálculos. Solo etiquetas de bloques y períodos.\n"
+            "Si la consulta es una REPREGUNTA sobre el turno anterior (\"¿cómo que...?\", "
+            "\"¿por qué?\", \"no entiendo\", \"y eso?\"), planificá los MISMOS bloques que "
+            "responderían la pregunta original, no la trates como fuera de tema.\n"
             f"{_PROMPT_INJECTION_GUARD}"
         )
-        user_prompt = f"Consulta del cliente: {_delimit_untrusted(user_text)}"
+        contexto = ""
+        if previous_exchange:
+            pregunta_previa, respuesta_previa = previous_exchange
+            # Recortada: al planificador le alcanza el tema, no el detalle, y
+            # una respuesta larga desplazaria la consulta actual.
+            contexto = (
+                "Turno anterior de esta misma conversación, solo como contexto para "
+                "resolver referencias como \"eso\", \"por qué\" o \"cómo que\":\n"
+                f"- El cliente preguntó: {_delimit_untrusted(pregunta_previa[:300])}\n"
+                f"- Se le respondió: {_delimit_untrusted(respuesta_previa[:600])}\n\n"
+            )
+        user_prompt = f"{contexto}Consulta del cliente: {_delimit_untrusted(user_text)}"
         candidates = MODELS_BY_PROVIDER.get(provider) or []
         model = candidates[0]["value"] if candidates else (org.ai_model or settings.DEFAULT_AI_MODEL)
         if is_gemini_direct and model.startswith("google/"):

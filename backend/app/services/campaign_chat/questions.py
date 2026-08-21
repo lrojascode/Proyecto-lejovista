@@ -208,6 +208,22 @@ def looks_like_question(text: str) -> bool:
     return bool(_QUESTION_SHAPE_RE.search(strip_accents(text or "")))
 
 
+# Temas que NO pueden convivir en la misma pregunta: no son dos cosas que
+# alguien quiera saber a la vez, son dos LECTURAS distintas de la misma frase.
+# El que gana es el que aparece primero en _TOPIC_PATTERNS.
+#
+# El caso real que motivó esto: "¿hasta cuándo llega la información?" matcheaba
+# COVERAGE y SCHEDULE. El chat contestó con las fechas de las campañas —
+# "creada el 2024-09-25, sigue activa (695 días corriendo)"— a alguien que
+# preguntaba hasta qué día había datos. Las dos respuestas eran correctas para
+# SU lectura; juntas no tenían sentido.
+_EXCLUYENTES = {
+    "COVERAGE": ("SCHEDULE",),
+    "NOT_MEASURED": ("SPEND", "LEADS", "CPL"),
+    "OUT_OF_ACCOUNT": ("SPEND", "LEADS", "CPL", "BEST_CAMPAIGN", "CAMPAIGNS_OVERVIEW"),
+}
+
+
 def classify_question_topics(text: str, max_topics: int = 3) -> List[str]:
     """TODOS los temas cuyo regex matchea, en orden de prioridad de _TOPIC_PATTERNS.
     `classify_question` se conserva devolviendo el primero (compatibilidad).
@@ -217,6 +233,8 @@ def classify_question_topics(text: str, max_topics: int = 3) -> List[str]:
     matched: List[str] = []
     for topic, pattern in _TOPIC_PATTERNS:
         if pattern.search(ascii_text):
+            if any(topic in _EXCLUYENTES.get(previo, ()) for previo in matched):
+                continue
             matched.append(topic)
             if len(matched) >= max_topics:
                 break
@@ -254,10 +272,16 @@ WHY_PAUSED_TEXT = (
     "automática, y no vale la pena arriesgar tu cuenta por ahorrarte un clic."
 )
 
+# Antes decia "solo se de tus campanas de Meta Ads", y salia tambien cuando la
+# pregunta ERA sobre las campanas -- por ejemplo "quien creo las ultimas
+# campanas", que es un dato que no sincronizamos. Negar conocer el tema del que
+# uno mismo habla es lo que hace que la conversacion no cierre.
 OUT_OF_SCOPE_TEXT = (
-    "Eso se me escapa — solo sé de tus campañas de Meta Ads.\n\n"
-    "Puedo contarte cuánto gastaste, cuántos leads trajiste, cuál campaña rinde mejor, "
-    "qué conviene hacer, o armarte una campaña nueva."
+    "Esa no te la puedo responder con lo que tengo sincronizado de tu cuenta.\n\n"
+    "Sí puedo: cuánto gastaste, cuántos resultados trajiste y a qué costo, qué campañas "
+    "están al aire, cuál rinde mejor o peor, hasta qué fecha llegan los datos, y armarte "
+    "una campaña nueva.\n\n"
+    "Si me la reformulás o me decís qué parte te interesa, lo intento de nuevo."
 )
 
 NO_DATA_TEXT = (
@@ -297,7 +321,22 @@ def _pct(value: Optional[float]) -> str:
 
 
 def _campaigns_with_results(report: Dict[str, Any]) -> List[Dict[str, Any]]:
-    return [c for c in (report.get("campaigns") or []) if c.get("conversations", 0) > 0]
+    """Campañas que se pueden rankear por eficiencia.
+
+    Exige resultados Y gasto. El gasto no es un detalle: `_agg_campaigns`
+    calcula `cost_per_conv = spend / resultados`, así que una campaña con gasto
+    0 da costo 0 y —al ordenar de menor a mayor— queda PRIMERA. El chat llegó a
+    contestar "tu mejor campaña ... a S/. 0.00 por contacto", que es un número
+    imposible presentado como un logro.
+
+    Gasto 0 con resultados pasa de verdad: atribución que cae en un día cuyo
+    gasto todavía no sincronizó. No es una campaña gratis, es un dato
+    incompleto — y no se puede comparar su eficiencia con nada.
+    """
+    return [
+        c for c in (report.get("campaigns") or [])
+        if c.get("conversations", 0) > 0 and float(c.get("spend") or 0) > 0
+    ]
 
 
 # --- Respuestas con datos reales ---

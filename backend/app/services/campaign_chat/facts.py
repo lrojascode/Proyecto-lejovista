@@ -305,7 +305,14 @@ async def resolve_facts(
         elif b == "ranking" and report:
             if "campaigns" not in facts:
                 all_camps = report.get("campaigns", [])
-                camps_with_conv = [c for c in all_camps if int(c.get("conversations", 0)) > 0]
+                # Resultados Y gasto: `cost_per_conv = spend / resultados`, asi
+                # que gasto 0 da costo 0 y al ordenar de menor a mayor queda
+                # PRIMERA. De ahi salia el "tu mejor campana a S/. 0.00 por
+                # contacto" -- un numero imposible presentado como un logro.
+                camps_with_conv = [
+                    c for c in all_camps
+                    if int(c.get("conversations", 0)) > 0 and float(c.get("spend") or 0) > 0
+                ]
                 top_camps = []
                 for c in camps_with_conv[:RANKING_TOP_K]:
                     top_camps.append({
