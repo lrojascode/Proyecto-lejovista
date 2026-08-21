@@ -528,7 +528,7 @@ class MetaAdsSyncService:
                 instagram_actor_id="mock_ig_1",
             ))
 
-    async def refresh_pages(self, ad_account: AdAccount) -> None:
+    async def refresh_pages(self, ad_account: AdAccount) -> set:
         """Corre SOLO el descubrimiento de páginas + WhatsApp para una cuenta,
         sin el resto del sync (campañas/insights/breakdowns). Lo dispara
         `POST /organizations/my/pages/refresh` para que el usuario no tenga que
@@ -539,12 +539,12 @@ class MetaAdsSyncService:
         if settings.MOCK_SERVICES:
             # El sync mock ya siembra su página de ejemplo; nada que refrescar.
             logger.info("refresh_pages en modo mock: no-op (cuenta %s).", ad_account.id)
-            return
+            return set()
         token = ad_account.get_access_token()
         if not token:
             raise ValueError("Token de acceso de la cuenta no válido o expirado.")
         limiter = MetaAPIRateLimiter(ad_account_id=ad_account.id, external_account_id=ad_account.external_account_id)
-        await self._sync_real_pages(ad_account, token, limiter)
+        return await self._sync_real_pages(ad_account, token, limiter) or set()
         await self.db.commit()
 
     async def _sync_real_data(
@@ -1377,6 +1377,13 @@ class MetaAdsSyncService:
                 # cargado a mano vía PATCH /my/pages/{id}/whatsapp — antes el
                 # sync nocturno lo pisaba con None.
                 row.whatsapp_number = wa_res.get("whatsapp_number")
+
+        # Se devuelve QUÉ se vio. Acá no se poda: el descubrimiento es por
+        # cuenta y `MetaPage` es por organización, así que una cuenta no sabe
+        # lo que ven las demás. Podar desde acá borraría las páginas de la otra
+        # cuenta de la misma organización. La poda vive en `refresh_org_pages`,
+        # que sí recorre todas.
+        return set(discovered)
 
     async def _sync_whatsapp_numbers(self, ad_account, token, limiter, business_ids):
         """Descubre los números de WhatsApp verificados del negocio (F1).

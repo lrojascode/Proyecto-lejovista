@@ -8,6 +8,7 @@ from app.models.ad_account import AdAccount
 from app.models.sync_job import SyncJob
 from app.models.organization import Organization
 from app.models.ai_action import AIAction
+from app.models.meta_page import MetaPage
 from app.services.meta_ads.sync import MetaAdsSyncService, SYNC_TYPE_BACKFILL
 from app.services.meta_ads.exceptions import TransientMetaError
 from app.services.ai.engine import AIEngine
@@ -265,25 +266,75 @@ def refresh_org_pages(org_id: str):
     usuario acaba de otorgar acceso a una página nueva en el Business Manager
     y quiere verla en el dropdown sin esperar al sync de las 06:00.
     """
-    async def _impl():
-        async with async_session() as db:
-            q = select(AdAccount).where(
-                AdAccount.organization_id == org_id,
-                AdAccount.status == "ACTIVE",
-            )
-            res = await db.execute(q)
-            accounts = res.scalars().all()
-            sync_service = MetaAdsSyncService(db)
-            for acc in accounts:
-                try:
-                    await sync_service.refresh_pages(acc)
-                except Exception:
-                    # Una cuenta con token caído no debe impedir refrescar las demás.
-                    logger.exception("No se pudieron refrescar las páginas de la cuenta %s", acc.id)
-            logger.info("Refresh de páginas completado para %d cuentas de la org %s.",
-                        len(accounts), org_id)
+    run_async(refresh_org_pages_impl_wrapper(org_id))
 
-    run_async(_impl())
+
+async def refresh_org_pages_impl_wrapper(org_id: str):
+    async with async_session() as db:
+        await refresh_org_pages_impl(db, org_id)
+
+
+async def refresh_org_pages_impl(db, org_id: str):
+    """El trabajo real, separado de Celery para poder testearlo.
+
+    La tarea envuelve todo en `asyncio.run`, que no se puede llamar desde un
+    loop ya corriendo — o sea que la poda de páginas quedaba inalcanzable para
+    un test. Un leak entre clientes sin test de regresión vuelve.
+    """
+    accounts = (await db.execute(
+        select(AdAccount).where(
+            AdAccount.organization_id == org_id,
+            AdAccount.status == "ACTIVE",
+        )
+    )).scalars().all()
+
+    sync_service = MetaAdsSyncService(db)
+    vistas: set = set()
+    alguna_ok = False
+    for acc in accounts:
+        try:
+            vistas |= await sync_service.refresh_pages(acc)
+            alguna_ok = True
+        except Exception:
+            # Una cuenta con token caído no debe impedir refrescar las demás.
+            logger.exception("No se pudieron refrescar las páginas de la cuenta %s", acc.id)
+
+    # Podar lo que ya no corresponde a esta organización.
+    #
+    # El guardado de páginas es puro upsert. Cuando el descubrimiento viejo
+    # traía de más —recorría TODOS los Business Manager del token, así que a un
+    # cliente le aparecían las páginas de los otros— acotarlo dejó de agregarlas,
+    # pero las ya guardadas se quedaron para siempre. Es un leak entre clientes
+    # que sobrevive a su propio arreglo, y sólo se limpia reconciliando.
+    #
+    # `alguna_ok` es la red de seguridad: si TODAS las cuentas fallaron (token
+    # vencido, Meta caído) no se vio nada, y podar dejaría a la organización sin
+    # ninguna página.
+    podadas = 0
+    if alguna_ok:
+        sobrantes = (await db.execute(
+            select(MetaPage).where(
+                MetaPage.organization_id == org_id,
+                MetaPage.status == "ACTIVE",
+                MetaPage.external_page_id.notin_(vistas or [""]),
+            )
+        )).scalars().all()
+        for pagina in sobrantes:
+            # Se marca, no se borra: puede estar referenciada por campañas ya
+            # creadas, y el listado de la UI ya filtra por ACTIVE.
+            pagina.status = "REVOKED"
+            podadas += 1
+            logger.info(
+                "La página %s (%s) ya no es accesible para la org %s: se marca REVOKED.",
+                pagina.external_page_id, pagina.name, org_id,
+            )
+        await db.commit()
+
+    logger.info(
+        "Refresh de páginas de la org %s: %d cuentas, %d páginas vigentes, %d dadas de baja.",
+        org_id, len(accounts), len(vistas), podadas,
+    )
+
 
 @celery_app.task(name="app.workers.tasks.schedule_all_analyses")
 def schedule_all_analyses():

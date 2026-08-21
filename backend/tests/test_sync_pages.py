@@ -410,3 +410,48 @@ async def test_me_accounts_no_agrega_paginas_por_su_cuenta(db_session: AsyncSess
         )).scalars().all()
     }
     assert "page_biz_agencia" not in ids
+
+
+# --- Arreglar el descubrimiento no limpia lo que el bug ya guardó ---
+
+@pytest.mark.asyncio
+async def test_el_refresh_da_de_baja_las_paginas_que_ya_no_corresponden(
+    db_session: AsyncSession, mocker
+):
+    """El descubrimiento viejo recorría TODOS los Business Manager del token,
+    así que a ITS le aparecían las páginas de Expert Farma y Círculo Educativo.
+    Acotarlo dejó de agregarlas — pero las cinco ya guardadas se quedaron ahí,
+    porque el guardado es puro upsert y nada las saca.
+
+    Un leak entre clientes que sobrevive a su propio arreglo sólo se limpia
+    reconciliando: lo que no se ve, se da de baja.
+    """
+    from app.workers import tasks
+
+    org, acc = await _make_org_and_account(db_session, "poda-org")
+    for ext_id, nombre in [
+        ("106686772334869", "ITS Institute"),
+        ("861255400405184", "Agencia Kibo"),
+        ("845080588695600", "Expert Farma"),
+        ("312044271990101", "Círculo Educativo"),
+    ]:
+        db_session.add(MetaPage(organization_id=org.id, external_page_id=ext_id,
+                                name=nombre, status="ACTIVE"))
+    await db_session.commit()
+
+    async def _solo_its(self, ad_account):
+        return {"106686772334869"}
+
+    mocker.patch.object(MetaAdsSyncService, "refresh_pages", _solo_its)
+
+    await tasks.refresh_org_pages_impl(db_session, org.id)
+
+    activas = (await db_session.execute(select(MetaPage).where(
+        MetaPage.organization_id == org.id, MetaPage.status == "ACTIVE",
+    ))).scalars().all()
+    assert [p.external_page_id for p in activas] == ["106686772334869"]
+
+    # No se borran: pueden estar referenciadas por campañas ya creadas.
+    todas = (await db_session.execute(select(MetaPage).where(
+        MetaPage.organization_id == org.id))).scalars().all()
+    assert len(todas) == 4
