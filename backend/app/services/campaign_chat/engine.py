@@ -11,7 +11,6 @@ construye su propio `CampaignDraft` ni su propio chain de Celery.
 """
 import json
 import logging
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException
@@ -31,9 +30,8 @@ from app.services.campaign_chat import cards, extraction, facts as facts_module,
 from app.services.campaign_chat.tools import ChatTools
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
 from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
-from app.services.campaign_chat.slots import sanitize_product_name, strip_accents
+from app.services.campaign_chat.slots import sanitize_product_name
 
-_COORDINATION_RE = re.compile(r"\b(y|ademas|además|tambien|también|y tambien|y también|junto con)\b", re.IGNORECASE)
 from app.services.campaign_creation import (
     CAMPAIGN_SESSION_WINDOW_HOURS,
     MAX_CAMPAIGNS_PER_SESSION,
@@ -54,6 +52,10 @@ logger = logging.getLogger(__name__)
 MAX_UNDERSTANDING_CALLS: Dict[str, int] = {"BUILD": 12, "ASK": 40}
 MAX_ANALYSIS_TURNS: Dict[str, int] = {"BUILD": 30, "ASK": 60}
 MAX_MESSAGES_PERSISTED = 200
+
+# Temas que NO van al analista: son explicaciones de cómo funciona el producto,
+# no cifras de la cuenta. Consultarlas contra la base no aportaría nada.
+_TEMAS_DETERMINISTAS = frozenset({"HOW_IT_WORKS", "WHY_PAUSED"})
 
 # Compatibilidad hacia atrás
 MAX_LLM_TURNS_PER_SESSION = 12
@@ -591,6 +593,35 @@ def _ultimo_intercambio(messages: List[Dict[str, Any]]) -> Optional[Tuple[str, s
     return (pregunta, respuesta) if pregunta and respuesta else None
 
 
+def _hilo_reciente(
+    messages: List[Dict[str, Any]], pregunta_actual: str = "", turnos: int = 6,
+) -> List[Dict[str, str]]:
+    """Los últimos turnos de la conversación, para que el analista tenga hilo.
+
+    `_ultimo_intercambio` devuelve un solo intercambio y recortado, que alcanza
+    para resolver un "eso" pero no para seguir una conversación: "ya pero
+    listamelas" llegaba sin saber qué había que listar y terminaba en "no te
+    entendí bien".
+
+    Se excluye el mensaje que se está respondiendo — el llamador ya lo agregó a
+    `messages` y `answer_with_tools` lo manda por separado.
+    """
+    hilo: List[Dict[str, str]] = []
+    for msg in messages:
+        if msg.get("type") != "text":
+            continue
+        texto = (msg.get("text") or "").strip()
+        rol = msg.get("role")
+        if not texto or rol not in ("user", "assistant"):
+            continue
+        hilo.append({"role": rol, "content": texto})
+
+    actual = (pregunta_actual or "").strip()
+    if actual and hilo and hilo[-1]["role"] == "user" and hilo[-1]["content"] == actual:
+        hilo.pop()
+    return hilo[-(turnos * 2):]
+
+
 async def _try_llm_plan(
     db: AsyncSession, current_user: User, session: CampaignChatSession, text: str,
     messages: Optional[List[Dict[str, Any]]] = None,
@@ -667,7 +698,6 @@ async def _say(
 async def _analyze(
     db: AsyncSession, current_user: User, session: CampaignChatSession,
     user_text: str, topic: str, canonical: str, facts: Dict[str, Any],
-    previous_exchange: Optional[Tuple[str, str]] = None,
 ) -> Dict[str, Any]:
     """Respuesta sobre el historial, redactada por el LLM desde las cifras
     reales (CH-8).
@@ -691,41 +721,10 @@ async def _analyze(
         feature="campaign_chat", organization_id=current_user.organization_id,
         ad_account_id=session.ad_account_id,
     )
-    # Camino preferido: que el analista CONSULTE la base y responda con lo que
-    # encontró. El anterior le armaba una bolsa de datos de antemano, y si la
-    # pregunta necesitaba algo que no estaba ahí no había análisis posible.
-    #
-    # La respuesta se valida contra lo que devolvieron SUS consultas, no contra
-    # la bolsa: puede usar libremente cualquier cifra que trajo de la base, y
-    # sigue sin poder inventar una.
-    if session.ad_account_id:
-        try:
-            resultado = await OpenRouterClient(organization=org).answer_with_tools(
-                org, user_text,
-                ChatTools(db, current_user.organization_id, session.ad_account_id),
-                previous_exchange=previous_exchange,
-                usage_ctx=usage_ctx,
-            )
-        except Exception:
-            logger.exception("Fallo el analista con consultas (sesión %s)", session.id)
-            resultado = None
-
-        if resultado:
-            texto, consultado = resultado
-            validado = rephrase.grounded_or_canonical(consultado, canonical, texto)
-            if validado is texto or validado == texto:
-                logger.info(
-                    "Analista respondió con %d consulta(s) a la base (sesión %s).",
-                    len(consultado), session.id,
-                )
-                return cards.text_message(texto)
-            logger.warning(
-                "La respuesta del analista con consultas no paso la validacion; "
-                "se usa el texto canonico (sesión %s).", session.id,
-            )
-
-    # Fallback: la bolsa de datos precargada. Sigue sirviendo cuando no hay
-    # cuenta seleccionada o cuando el camino con consultas falla.
+    # Camino de respaldo: la bolsa de datos precargada. El camino preferido —el
+    # analista consultando la base— ya se intentó antes, en
+    # `_responder_como_analista`; acá se llega cuando no hubo LLM disponible o
+    # cuando su respuesta no pasó la guarda.
     facts_blob = json.dumps(facts, ensure_ascii=False, default=str)
     try:
         written = await OpenRouterClient(organization=org).compose_chat_answer(
@@ -738,6 +737,91 @@ async def _analyze(
     if written is None:
         return cards.text_message(canonical)
     return cards.text_message(rephrase.grounded_or_canonical(facts_blob, canonical, written))
+
+
+async def _analista_con_consultas(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    user_text: str, messages: List[Dict[str, Any]],
+) -> Optional[str]:
+    """El analista consulta la base y responde. `None` si no pudo.
+
+    Es el camino por defecto de cualquier mensaje que no sea una instrucción del
+    armado de campaña. Antes vivía al final de `_analyze`, o sea después de que
+    un regex hubiera reconocido el tema — y si no lo reconocía, estas siete
+    herramientas no llegaban a correr nunca. Preguntas que el producto sabía
+    contestar ("¿qué anuncios rinden mejor y qué dicen?") morían en
+    `OUT_OF_SCOPE` sin que el modelo existiera.
+
+    AI-1 sigue en pie: los números salen de las queries que ejecuta Python, y la
+    respuesta se valida contra lo que devolvieron SUS consultas. Si escribe una
+    cifra que no trajo de la base, se descarta entera y el llamador cae al
+    camino determinista.
+    """
+    if not session.ad_account_id:
+        return None
+    if (session.turn_count or 0) >= _max_analysis_turns(session):
+        return None
+
+    org = await db.get(Organization, current_user.organization_id)
+    usage_ctx = UsageContext(
+        feature="campaign_chat", organization_id=current_user.organization_id,
+        ad_account_id=session.ad_account_id,
+    )
+    try:
+        resultado = await OpenRouterClient(organization=org).answer_with_tools(
+            org, user_text,
+            ChatTools(db, current_user.organization_id, session.ad_account_id),
+            thread=_hilo_reciente(messages, pregunta_actual=user_text),
+            usage_ctx=usage_ctx,
+        )
+    except Exception:
+        logger.exception("Fallo el analista con consultas (sesión %s)", session.id)
+        return None
+
+    if not resultado:
+        return None
+    texto, consultado = resultado
+    if rephrase.numbers_are_grounded(consultado, texto):
+        logger.info(
+            "Analista respondió con %d consulta(s) a la base (sesión %s).",
+            len(consultado), session.id,
+        )
+        return texto
+    logger.warning(
+        "La respuesta del analista con consultas no pasó la validación; "
+        "se cae al camino determinista (sesión %s).", session.id,
+    )
+    return None
+
+
+async def _responder_como_analista(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    text: str, messages: List[Dict[str, Any]], result: Any,
+) -> None:
+    """Contesta con el analista; si no pudo, con la maquinaria determinista.
+
+    El orden importa y es el cambio de fondo: el LLM con herramientas primero,
+    el regex como respaldo. Al revés —que era lo de antes— el regex decidía si
+    el modelo llegaba a existir.
+    """
+    texto = await _analista_con_consultas(db, current_user, session, text, messages)
+    if texto is not None:
+        messages.append(cards.text_message(texto))
+        pendiente = _pending_prompt_for_state(session.state)
+        if pendiente:
+            messages.append(cards.text_message(pendiente))
+        return
+
+    topics = result.question_topics or (
+        [result.question_topic] if result.question_topic else []
+    )
+    if topics:
+        await _answer_and_resume(
+            db, current_user, session, topics if len(topics) > 1 else topics[0],
+            messages, user_text=text, period=result.question_period,
+        )
+        return
+    await _handle_off_topic(db, current_user, session, text, messages)
 
 
 async def _handle_off_topic(
@@ -795,7 +879,6 @@ async def _answer_and_resume(
         # Preguntas sobre el pasado: el LLM redacta el análisis desde las cifras (CH-8).
         messages.append(await _analyze(
             db, current_user, session, user_text, topic, answer, facts,
-            previous_exchange=_ultimo_intercambio(messages),
         ))
 
     pendiente = _pending_prompt_for_state(session.state)
@@ -852,39 +935,9 @@ async def _handle_text(
             messages.append(cards.text_message("Entendido, seguimos consultando métricas. ¿Qué otra duda tenés?"))
             return
 
-    # Una pregunta reconocida por regex se responde con datos reales sin gastar
-    # un token (CH-6). Si ningún regex la reconoce, recién ahí entra el LLM a
-    # elegir el tema — antes se rechazaba de una, y eso descartaba preguntas
-    # que el sistema sabía responder con datos que ya tenía en la base.
-    if result.intent == "question":
-        topics = result.question_topics or ([result.question_topic] if result.question_topic else [])
-        if len(topics) >= 2:
-            # Pregunta compuesta con múltiples temas detectados por regex: 0 tokens
-            await _answer_and_resume(
-                db, current_user, session, topics, messages,
-                user_text=text, period=result.question_period,
-            )
-            return
-        elif len(topics) == 1:
-            # Si hay coordinación explícita (e.g. "y", "además"), evaluamos si el LLM
-            # puede planificar una segunda intención abierta no cubierta por regex
-            if _COORDINATION_RE.search(strip_accents(text)):
-                plan, period = await _try_llm_plan(db, current_user, session, text, messages)
-                if plan and plan.blocks and len(plan.blocks) > 1:
-                    await _answer_and_resume(
-                        db, current_user, session, plan, messages,
-                        user_text=text, period=period or result.question_period,
-                    )
-                    return
-            await _answer_and_resume(
-                db, current_user, session, topics[0], messages,
-                user_text=text, period=result.question_period,
-            )
-            return
-    if result.intent == "off_topic":
-        await _handle_off_topic(db, current_user, session, text, messages)
-        return
-
+    # En modo consulta, algo que suena a "quiero vender zapatillas" es una
+    # intención de armar campaña, no una pregunta sobre los datos: se ofrece
+    # armarla antes de mandarlo al analista.
     if session.mode == "ASK" and (session.state == "BROWSING"):
         if result.intent in ("provide_info", "change") and not result.question_topic:
             slots["_pending_escalation"] = True
@@ -897,10 +950,30 @@ async def _handle_text(
             ))
             return
 
-    if result.intent == "unclear":
+    # Mientras se arma una campaña, un mensaje incomprensible suele ser un slot
+    # mal escrito: se intenta recuperar antes de tratarlo como pregunta.
+    if result.intent == "unclear" and session.mode == "BUILD":
         llm_result = await _try_llm_extraction(db, current_user, session, text)
         if llm_result is not None:
             result = llm_result
+
+    # "¿Cómo funciona esto?" y "¿por qué está pausada?" son explicaciones del
+    # producto, no datos de la cuenta: las contesta el código.
+    _topics = result.question_topics or ([result.question_topic] if result.question_topic else [])
+    if result.intent == "question" and len(_topics) == 1 and _topics[0] in _TEMAS_DETERMINISTAS:
+        await _answer_and_resume(
+            db, current_user, session, _topics[0], messages,
+            user_text=text, period=result.question_period,
+        )
+        return
+
+    # Todo lo demás que no sea armar una campaña lo contesta el analista
+    # consultando la base. El regex quedó de respaldo — antes era la compuerta,
+    # y lo que no reconocía moría en OUT_OF_SCOPE sin llegar al modelo. Dos de
+    # los tres botones que ofrece el propio chat caían ahí.
+    if result.intent in ("question", "off_topic", "unclear"):
+        await _responder_como_analista(db, current_user, session, text, messages, result)
+        return
 
     if result.intent == "cancel":
         _close_as_cancelled(session, messages, cards.CANCELLED_TEXT)

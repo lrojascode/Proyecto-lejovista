@@ -58,6 +58,81 @@ def _redondear(v, n=2):
     return round(float(v or 0), n)
 
 
+def _pct(parte, total, n=1) -> Optional[float]:
+    """Porcentaje ya calculado. `None` si no hay base — nunca 0, que miente."""
+    return _redondear(float(parte or 0) / float(total) * 100, n) if total else None
+
+
+def _enriquecer(filas: List[Dict[str, Any]], campo: str = "gasto") -> None:
+    """Agrega a cada fila su peso sobre el total y su distancia del promedio.
+
+    **Todo número que el analista pueda querer decir tiene que volver ya
+    calculado.** Un número que el modelo deriva a mano no está en el resultado
+    de la consulta, y `numbers_are_grounded` descarta por él la respuesta
+    entera — el cliente ve la plantilla robótica y nadie sabe por qué. Ésa es la
+    razón mecánica de que el chat sonara a formulario, y por eso pre-calcular
+    acá es más barato que aflojar la guarda.
+    """
+    total = sum(float(f.get(campo) or 0) for f in filas)
+    promedio = (total / len(filas)) if filas else 0.0
+    for f in filas:
+        valor = float(f.get(campo) or 0)
+        f[f"porcentaje_del_{campo}"] = _pct(valor, total)
+        f["vs_promedio_pct"] = (
+            _redondear((valor - promedio) / promedio * 100, 1) if promedio else None
+        )
+
+
+def _resumir_serie(
+    puntos: List[Dict[str, Any]], campo: str = "gasto", clave: str = "periodo",
+) -> Dict[str, Any]:
+    """Variación punto a punto, extremos, total y promedio — todo ya hecho.
+
+    "Subió un 30% respecto al mes pasado" es justo la clase de número que el
+    modelo calcularía a mano y que le costaría la respuesta entera. Además le
+    marca los extremos, que es lo que suele querer decir.
+    """
+    previo = None
+    for p in puntos:
+        actual = float(p.get(campo) or 0)
+        p["variacion_pct"] = (
+            _redondear((actual - previo) / previo * 100, 1) if previo else None
+        )
+        previo = actual
+
+    if not puntos:
+        return {f"{campo}_total": 0.0, f"{campo}_promedio": None}
+
+    total = _redondear(sum(float(p.get(campo) or 0) for p in puntos))
+    con_costo = [p for p in puntos if p.get("costo_por_resultado") is not None]
+    resumen: Dict[str, Any] = {
+        f"{campo}_total": total,
+        f"{campo}_promedio": _redondear(total / len(puntos)),
+        f"mayor_{campo}": max(puntos, key=lambda p: float(p.get(campo) or 0))[clave],
+        f"menor_{campo}": min(puntos, key=lambda p: float(p.get(campo) or 0))[clave],
+    }
+    if con_costo:
+        resumen["mejor_costo_por_resultado"] = min(
+            con_costo, key=lambda p: p["costo_por_resultado"])[clave]
+        resumen["peor_costo_por_resultado"] = max(
+            con_costo, key=lambda p: p["costo_por_resultado"])[clave]
+    return resumen
+
+
+def _conteo_por_estado(filas: List[Dict[str, Any]]) -> Dict[str, int]:
+    """Cuántas hay de cada estado efectivo, ya contadas.
+
+    Sin esto el modelo tiene que contar a mano "13 activas" mirando la lista, y
+    ese 13 no aparece en el JSON que se le devolvió: la guarda lo rechaza y sale
+    la plantilla. Pasó tal cual en producción.
+    """
+    conteo: Dict[str, int] = {}
+    for f in filas:
+        clave = f.get("estado_efectivo") or f.get("estado") or "DESCONOCIDO"
+        conteo[clave] = conteo.get(clave, 0) + 1
+    return conteo
+
+
 class ChatTools:
     """Ejecuta las consultas del analista, siempre acotadas a una cuenta."""
 
@@ -84,7 +159,7 @@ class ChatTools:
         solo_sin_resultados: bool = False,
         min_gasto: Optional[float] = None,
         ordenar_por: str = "gasto",
-        limite: int = 25,
+        limite: int = 60,
         nombre_contiene: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Campañas agregadas en un período, con filtros."""
@@ -145,12 +220,27 @@ class ChatTools:
         }
         campanas.sort(key=claves.get(ordenar_por, claves["gasto"]))
         total = len(campanas)
-        campanas = campanas[: max(1, min(int(limite or 25), MAX_FILAS))]
+        # Los conteos y los pesos se calculan sobre TODAS las encontradas, antes
+        # de recortar: "tenés 13 activas" tiene que ser cierto aunque la lista
+        # devuelta venga cortada.
+        conteo = _conteo_por_estado(campanas)
+        gasto_total = _redondear(sum(c["gasto"] for c in campanas))
+        resultados_total = sum(c["resultados"] for c in campanas)
+        _enriquecer(campanas, "gasto")
+        campanas = campanas[: max(1, min(int(limite or 60), MAX_FILAS))]
 
         return {
             "periodo": {"desde": ini.isoformat(), "hasta": fin.isoformat()},
             "campanas_encontradas": total,
             "campanas_devueltas": len(campanas),
+            "campanas_activas": conteo.get("ACTIVE", 0),
+            "campanas_no_activas": total - conteo.get("ACTIVE", 0),
+            "conteo_por_estado": conteo,
+            "gasto_total": gasto_total,
+            "resultados_total": resultados_total,
+            "costo_por_resultado_promedio": (
+                _redondear(gasto_total / resultados_total) if resultados_total else None
+            ),
             "campanas": campanas,
         }
 
@@ -177,10 +267,33 @@ class ChatTools:
         gasto = _redondear(gasto)
         resultados = int(resultados or 0)
         leads = int(leads or 0)
+
+        # Cuántas están entregando de verdad, ya contadas. El estado efectivo se
+        # resuelve por campaña antes de contar: una campaña que cambió de estado
+        # dentro del período no puede sumar en dos casilleros.
+        sub = (
+            select(
+                CampaignSnapshot.campaign_id.label("cid"),
+                func.max(CampaignSnapshot.effective_status).label("efectivo"),
+            ).where(and_(*self._scope(CampaignSnapshot),
+                         CampaignSnapshot.date >= ini, CampaignSnapshot.date <= fin))
+            .group_by(CampaignSnapshot.campaign_id)
+        ).subquery()
+        conteo = {
+            (efectivo or "DESCONOCIDO"): int(n or 0)
+            for efectivo, n in (await self.db.execute(
+                select(sub.c.efectivo, func.count()).group_by(sub.c.efectivo)
+            )).all()
+        }
+        activas = conteo.get("ACTIVE", 0)
+
         return {
             "periodo": {"desde": ini.isoformat(), "hasta": fin.isoformat()},
             "dias_con_datos": int(n_dias or 0),
             "campanas_con_actividad": int(n_camp or 0),
+            "campanas_activas": activas,
+            "campanas_no_activas": max(0, int(n_camp or 0) - activas),
+            "conteo_por_estado": conteo,
             "gasto": gasto,
             "impresiones": int(impr or 0),
             "clics": int(clics or 0),
@@ -235,7 +348,12 @@ class ChatTools:
                 "resultados": resultados,
                 "costo_por_resultado": _redondear(gasto / resultados) if resultados else None,
             })
-        return {"granularidad": granularidad, "puntos": len(puntos), "serie": puntos}
+        return {
+            "granularidad": granularidad,
+            "puntos": len(puntos),
+            **_resumir_serie(puntos, "gasto", "periodo"),
+            "serie": puntos,
+        }
 
     async def gasto_mensual_historico(self) -> Dict[str, Any]:
         """Gasto por mes desde el inicio de la cuenta. Llega más atrás que el
@@ -262,6 +380,7 @@ class ChatTools:
             "primer_mes": meses[0]["mes"] if meses else None,
             "ultimo_mes": meses[-1]["mes"] if meses else None,
             "gasto_total_historico": _redondear(sum(m["gasto"] for m in meses)),
+            **_resumir_serie(meses, "gasto", "mes"),
             "meses": meses,
         }
 
@@ -306,9 +425,18 @@ class ChatTools:
             for k, v in acumulado.items()
         ]
         segmentos.sort(key=lambda s: -s["gasto"])
+        _enriquecer(segmentos, "gasto")
+        gasto_total = _redondear(sum(s["gasto"] for s in segmentos))
+        resultados_total = sum(s["resultados"] for s in segmentos)
         return {
             "tipo": tipo,
             "periodo": {"desde": ini.isoformat(), "hasta": fin.isoformat()},
+            "segmentos_encontrados": len(segmentos),
+            "gasto_total": gasto_total,
+            "resultados_total": resultados_total,
+            "costo_por_resultado_promedio": (
+                _redondear(gasto_total / resultados_total) if resultados_total else None
+            ),
             "segmentos": segmentos[:MAX_FILAS],
         }
 
@@ -374,9 +502,21 @@ class ChatTools:
         }
         anuncios.sort(key=claves.get(ordenar_por, claves["gasto"]))
         total = len(anuncios)
+        conteo = _conteo_por_estado(anuncios)
+        gasto_total = _redondear(sum(a["gasto"] for a in anuncios))
+        resultados_total = sum(a["resultados"] for a in anuncios)
+        con_acortador = sum(1 for a in anuncios if a.get("tiene_acortador"))
+        _enriquecer(anuncios, "gasto")
         return {
             "periodo": {"desde": ini.isoformat(), "hasta": fin.isoformat()},
             "anuncios_encontrados": total,
+            "anuncios_activos": conteo.get("ACTIVE", 0),
+            "anuncios_con_acortador": con_acortador,
+            "gasto_total": gasto_total,
+            "resultados_total": resultados_total,
+            "costo_por_resultado_promedio": (
+                _redondear(gasto_total / resultados_total) if resultados_total else None
+            ),
             "anuncios": anuncios[: max(1, min(int(limite or 15), 40))],
         }
 

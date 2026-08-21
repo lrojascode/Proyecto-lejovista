@@ -178,10 +178,15 @@ _ANALISTA_CON_CONSULTAS = (
     "REGLAS INQUEBRANTABLES:\n"
     "- Los números que escribas tienen que venir de las consultas. Copiálos "
     "exactos, con sus decimales.\n"
-    "- PROHIBIDO calcular. Si necesitás un total, un promedio o un porcentaje, "
-    "PEDILO en una consulta: las herramientas ya devuelven costo por resultado, "
-    "CTR y promedios diarios. Comparar con palabras siempre se puede "
-    "('bastante más caro', 'casi el doble').\n"
+    "- PROHIBIDO calcular, incluso contar. Las consultas ya devuelven hecho "
+    "todo lo que podrías necesitar: cuántas hay de cada estado "
+    "(`campanas_activas`, `conteo_por_estado`), totales, promedios, el peso de "
+    "cada fila sobre el total (`porcentaje_del_gasto`), qué tan lejos está del "
+    "promedio (`vs_promedio_pct`), la variación contra el período anterior "
+    "(`variacion_pct`), costo por resultado y CTR. Usá esos campos tal cual. Si "
+    "te falta un número, pedí otra consulta — no lo saques de tu cabeza. "
+    "Comparar con palabras siempre se puede ('bastante más caro', 'casi el "
+    "doble').\n"
     "- No inventes campañas, anuncios ni fechas que no aparecieron en una "
     "consulta.\n\n"
 
@@ -214,6 +219,12 @@ _ANALISTA_CON_CONSULTAS = (
 
     "Solo podés hablar de esta cuenta. Si preguntan por otra marca, otro "
     "cliente o promedios del mercado, decí que no tenés acceso.\n\n"
+
+    "SI DE VERDAD NO PODÉS RESPONDER (ya consultaste y el dato no está): decí "
+    "QUÉ falta y QUÉ sí tenés, con la fecha o la cifra concreta que sí "
+    "encontraste — 'no tengo la fecha en que se creó la cuenta; el dato más "
+    "viejo que tengo es del 1 de marzo de 2026'. Nunca recites un menú de lo "
+    "que sabés hacer: eso no le sirve a nadie.\n\n"
     f"{_PROMPT_INJECTION_GUARD}"
 )
 
@@ -824,6 +835,7 @@ class OpenRouterClient:
         question: str,
         tools_runtime: Any,
         previous_exchange: Optional[Tuple[str, str]] = None,
+        thread: Optional[List[Dict[str, str]]] = None,
         usage_ctx: Optional[UsageContext] = None,
         max_rondas: int = 4,
     ) -> Optional[Tuple[str, List[Dict[str, Any]]]]:
@@ -859,7 +871,7 @@ class OpenRouterClient:
         }
 
         contexto = ""
-        if previous_exchange:
+        if not thread and previous_exchange:
             previa, respuesta = previous_exchange
             contexto = (
                 "\n\nTurno anterior, solo para resolver referencias como \"eso\" o "
@@ -869,8 +881,22 @@ class OpenRouterClient:
 
         mensajes: List[Dict[str, Any]] = [
             {"role": "system", "content": _ANALISTA_CON_CONSULTAS + contexto},
-            {"role": "user", "content": _delimit_untrusted(question or "(sin texto)")},
         ]
+        # El hilo entra como conversación de verdad, no como un resumen en el
+        # system prompt. Sin esto, "ya pero listamelas" llega sin referente y el
+        # modelo no tiene forma de saber qué hay que listar.
+        for turno in thread or []:
+            rol = turno.get("role")
+            contenido = (turno.get("content") or "").strip()
+            if rol not in ("user", "assistant") or not contenido:
+                continue
+            # El texto del cliente es entrada no confiable aunque venga del
+            # propio hilo: pudo haber pegado algo con instrucciones adentro.
+            mensajes.append({
+                "role": rol,
+                "content": _delimit_untrusted(contenido) if rol == "user" else contenido,
+            })
+        mensajes.append({"role": "user", "content": _delimit_untrusted(question or "(sin texto)")})
 
         model = pick_model(org, provider)
         if is_gemini_direct and model.startswith("google/"):

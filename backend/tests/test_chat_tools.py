@@ -208,3 +208,110 @@ def test_el_catalogo_y_los_metodos_coinciden():
     siempre falla."""
     for nombre in TOOL_NAMES:
         assert hasattr(ChatTools, nombre), f"'{nombre}' está en el contrato pero no existe"
+
+
+# --- Todo número que el analista pueda decir tiene que volver ya calculado ---
+#
+# La guarda descarta la respuesta ENTERA por un número que el modelo derivó a
+# mano. En producción contestó "tenés 13 campañas activas" contando la lista, y
+# ese 13 no estaba en el JSON: se descartó y salió la plantilla. Pre-calcular es
+# lo que evita eso sin aflojar AI-1.
+
+@pytest.mark.asyncio
+async def test_las_activas_vienen_contadas(db_session: AsyncSession):
+    org, acc = await _cuenta(db_session, "tools-conteo")
+    for i in range(13):
+        await _campana(db_session, org, acc, cid=f"a{i}", nombre=f"Activa {i}",
+                       gasto=10.0, resultados=2, efectivo="ACTIVE")
+    for i in range(4):
+        await _campana(db_session, org, acc, cid=f"p{i}", nombre=f"Pausada {i}",
+                       gasto=5.0, resultados=1, efectivo="PAUSED")
+    await db_session.commit()
+
+    res = await ChatTools(db_session, org.id, acc.id).buscar_campanas(periodo_dias=30)
+    assert res["campanas_activas"] == 13
+    assert res["campanas_no_activas"] == 4
+    assert res["conteo_por_estado"] == {"ACTIVE": 13, "PAUSED": 4}
+
+
+@pytest.mark.asyncio
+async def test_el_conteo_no_miente_cuando_la_lista_viene_cortada(db_session: AsyncSession):
+    """"Tenés 13 activas" tiene que ser cierto aunque se devuelvan 3."""
+    org, acc = await _cuenta(db_session, "tools-corte")
+    for i in range(13):
+        await _campana(db_session, org, acc, cid=f"a{i}", nombre=f"Activa {i}",
+                       gasto=10.0 + i, resultados=2, efectivo="ACTIVE")
+    await db_session.commit()
+
+    res = await ChatTools(db_session, org.id, acc.id).buscar_campanas(
+        periodo_dias=30, limite=3)
+    assert len(res["campanas"]) == 3
+    assert res["campanas_activas"] == 13
+
+
+@pytest.mark.asyncio
+async def test_una_respuesta_que_cita_el_conteo_pasa_la_guarda(db_session: AsyncSession):
+    """El test de fondo: el número que el modelo quiere decir tiene que estar
+    en lo que se le devolvió."""
+    from app.services.campaign_chat.grounding import numbers_are_grounded
+
+    org, acc = await _cuenta(db_session, "tools-guarda")
+    for i in range(13):
+        await _campana(db_session, org, acc, cid=f"a{i}", nombre=f"Activa {i}",
+                       gasto=10.0, resultados=2, efectivo="ACTIVE")
+    await db_session.commit()
+
+    res = await ChatTools(db_session, org.id, acc.id).buscar_campanas(periodo_dias=30)
+    consultado = [{"consulta": "buscar_campanas", "argumentos": {}, "resultado": res}]
+    assert numbers_are_grounded(consultado, "Tenés 13 campañas activas al aire.")
+
+
+@pytest.mark.asyncio
+async def test_cada_campana_trae_su_peso_y_su_distancia_del_promedio(db_session: AsyncSession):
+    org, acc = await _cuenta(db_session, "tools-peso")
+    await _campana(db_session, org, acc, cid="c1", nombre="Grande", gasto=75.0, resultados=10)
+    await _campana(db_session, org, acc, cid="c2", nombre="Chica", gasto=25.0, resultados=5)
+    await db_session.commit()
+
+    res = await ChatTools(db_session, org.id, acc.id).buscar_campanas(periodo_dias=30)
+    grande = next(c for c in res["campanas"] if c["nombre"] == "Grande")
+    assert grande["porcentaje_del_gasto"] == 75.0
+    assert grande["vs_promedio_pct"] == 50.0
+    assert res["gasto_total"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_la_serie_trae_la_variacion_contra_el_periodo_previo(db_session: AsyncSession):
+    org, acc = await _cuenta(db_session, "tools-variacion")
+    await _campana(db_session, org, acc, cid="c1", nombre="X", gasto=100.0,
+                   resultados=10, dias_atras=2)
+    await _campana(db_session, org, acc, cid="c1", nombre="X", gasto=150.0,
+                   resultados=10, dias_atras=1)
+    await db_session.commit()
+
+    res = await ChatTools(db_session, org.id, acc.id).serie_temporal(
+        granularidad="dia", periodo_dias=30)
+    assert res["serie"][0]["variacion_pct"] is None      # no hay contra qué comparar
+    assert res["serie"][1]["variacion_pct"] == 50.0
+    assert res["gasto_total"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_sin_base_de_comparacion_devuelve_None_no_cero(db_session: AsyncSession):
+    """Un 0 miente: dice "no cambió" cuando lo cierto es "no se puede saber"."""
+    org, acc = await _cuenta(db_session, "tools-sin-base")
+    await _campana(db_session, org, acc, cid="c1", nombre="Sola", gasto=0.0, resultados=0)
+    await db_session.commit()
+
+    res = await ChatTools(db_session, org.id, acc.id).buscar_campanas(periodo_dias=30)
+    sola = res["campanas"][0]
+    assert sola["costo_por_resultado"] is None
+    assert sola["porcentaje_del_gasto"] is None
+    assert res["costo_por_resultado_promedio"] is None
+
+
+def test_los_campos_nuevos_no_abrieron_el_scope():
+    """Agregar pre-cálculo no puede haber metido el scope en el contrato."""
+    contrato = json.dumps(TOOL_SCHEMAS)
+    for prohibido in ("organization_id", "ad_account_id", "organizacion", "tenant"):
+        assert prohibido not in contrato, prohibido
