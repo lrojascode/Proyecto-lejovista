@@ -178,3 +178,85 @@ def test_el_tope_entra_una_respuesta_con_tabla():
     # Una tabla de 5 campañas con nombre, id, gasto, resultados y costo ronda
     # los 900-1200 caracteres; más el resumen y la interpretación.
     assert MAX_ANALYSIS_CHARS >= 3500
+
+
+# --- El analista tiene que RECIBIR datos, no solo permiso para hablar ---
+
+def test_ve_muchas_mas_campanas_que_antes():
+    """Eran 8, de 182 que puede tener una cuenta real. Con ocho filas no hay
+    análisis posible: no se ve la cola, ni las que gastan sin resultados, ni un
+    patrón."""
+    from app.services.campaign_chat.facts import RANKING_TOP_K
+
+    assert RANKING_TOP_K >= 50
+
+
+def test_el_presupuesto_de_grounding_no_descarta_bloques():
+    """`MAX_GROUNDING_VALUES` estaba en 220 y una cuenta de 182 campañas produce
+    ~820 valores: al pasarse, `_safe_add_block` tiraba BLOQUES ENTEROS y el
+    modelo recibía un puñado de cifras.
+
+    No es una medida de seguridad: la guarda comprueba pertenencia a un set, y
+    hacerlo contra 220 o contra 4000 cuesta lo mismo.
+    """
+    from app.services.campaign_chat.grounding import GroundingSet, MAX_GROUNDING_VALUES
+    from app.services.campaign_chat.facts import RANKING_TOP_K
+
+    camps = [
+        {"campaign_id": f"120223365313040{i:03d}", "name": f"JMM{i:03d}-SAP-CP",
+         "status": "ACTIVE", "effective_status": "ACTIVE", "spend": 100.0 + i,
+         "resultados": 20 + i, "cost_per_conv": 3.4 + i / 100, "ctr": 1.7}
+        for i in range(RANKING_TOP_K)
+    ]
+    facts = {"kpis_del_periodo": {"spend": 7417.19, "resultados": 2160}, "campaigns": camps}
+    assert GroundingSet.from_data(facts).size() <= MAX_GROUNDING_VALUES
+
+
+# --- Las comparaciones vienen hechas, porque el modelo no puede calcularlas ---
+
+def _cuenta_de_ejemplo():
+    return [
+        {"name": "Ganadora", "spend": 1000.0, "conversations": 400, "cost_per_conv": 2.5},
+        {"name": "Cara", "spend": 500.0, "conversations": 50, "cost_per_conv": 10.0},
+        {"name": "Quema A", "spend": 800.0, "conversations": 0, "cost_per_conv": 800.0},
+        {"name": "Quema B", "spend": 300.0, "conversations": 0, "cost_per_conv": 300.0},
+    ]
+
+
+def test_la_diferencia_entre_la_mejor_y_la_peor_viene_calculada():
+    """"35% más caro" es una división. Por AI-1 el modelo no puede hacerla: si
+    la escribe, su respuesta entera se descarta."""
+    from app.services.campaign_chat.facts import _comparativas
+
+    todas = _cuenta_de_ejemplo()
+    comp = _comparativas([dict(c) for c in todas[:2]], todas)
+    assert comp["la_mas_cara_cuesta_mas_pct"] == 300.0
+    assert comp["campana_mas_barata"] == "Ganadora"
+
+
+def test_se_sabe_donde_se_esta_yendo_la_plata():
+    """"¿Dónde estoy perdiendo plata?" es uno de los botones sugeridos del chat,
+    y hasta ahora no había con qué contestarlo: las campañas que gastan sin
+    resultados quedan FUERA del ranking por costo."""
+    from app.services.campaign_chat.facts import _comparativas
+
+    todas = _cuenta_de_ejemplo()
+    comp = _comparativas([dict(c) for c in todas[:2]], todas)
+    assert comp["campanas_que_gastan_sin_resultados"] == 2
+    assert comp["gasto_sin_resultados"] == 1100.0
+    assert comp["las_que_mas_queman"][0]["name"] == "Quema A"
+
+
+def test_cada_campana_trae_cuanto_pesa_en_el_gasto():
+    from app.services.campaign_chat.facts import _comparativas
+
+    todas = _cuenta_de_ejemplo()
+    top = [dict(c) for c in todas[:2]]
+    _comparativas(top, todas)
+    assert top[0]["pct_del_gasto"] == 38.5
+
+
+def test_sin_campanas_no_inventa_comparaciones():
+    from app.services.campaign_chat.facts import _comparativas
+
+    assert _comparativas([], []) == {}

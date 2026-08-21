@@ -27,7 +27,10 @@ from app.services.report_cache import get_report
 
 logger = logging.getLogger("lejovista.facts")
 
-RANKING_TOP_K = 8
+# Campanas que se le pasan al analista. Eran 8 -- de 182 que puede tener una
+# cuenta real. Con ocho filas no hay analisis posible: no se ve la cola, ni las
+# que gastan sin resultados, ni un patron.
+RANKING_TOP_K = 60
 BREAKDOWN_TOP_K = 3
 
 BLOCK_PRIORITY: List[str] = [
@@ -61,6 +64,51 @@ BLOCK_DESCRIPTIONS: Dict[str, str] = {
 # exactamente lo que produjo que el mismo monto saliera con dos formatos.
 _money = formatting.money
 _fmt_int = formatting.fmt_int
+
+
+def _comparativas(top: List[Dict[str, Any]], todas: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Cifras derivadas que un analista necesita y el modelo no puede calcular.
+
+    Todo lo de acá sale de una división o un porcentaje: exactamente lo que la
+    regla AI-1 le prohíbe hacer al LLM. Si no se las damos hechas, o no compara
+    —y suena a robot— o compara inventando un número y su respuesta entera se
+    descarta.
+    """
+    if not top:
+        return {}
+
+    out: Dict[str, Any] = {}
+    gasto_total = sum(float(c.get("spend") or 0) for c in todas)
+
+    mejor, peor = top[0], top[-1]
+    costo_mejor = float(mejor.get("cost_per_conv") or 0)
+    costo_peor = float(peor.get("cost_per_conv") or 0)
+
+    if costo_mejor > 0 and costo_peor > costo_mejor:
+        out["la_mas_cara_cuesta_mas_pct"] = round((costo_peor / costo_mejor - 1) * 100, 1)
+        out["campana_mas_barata"] = mejor.get("name")
+        out["campana_mas_cara"] = peor.get("name")
+
+    # Cuánto pesa cada campaña en el gasto: es la pregunta "¿dónde se me va la
+    # plata?", y sin esto el modelo tendría que dividir para responderla.
+    if gasto_total > 0:
+        for c in top:
+            c["pct_del_gasto"] = round(float(c.get("spend") or 0) / gasto_total * 100, 1)
+
+    # Campañas que gastan sin traer nada: el peor agujero de una cuenta, y no
+    # aparece en un ranking ordenado por costo porque quedan fuera del filtro.
+    quemando = [
+        c for c in todas
+        if float(c.get("spend") or 0) > 0 and int(c.get("conversations") or 0) == 0
+    ]
+    if quemando:
+        out["campanas_que_gastan_sin_resultados"] = len(quemando)
+        out["gasto_sin_resultados"] = round(sum(float(c.get("spend") or 0) for c in quemando), 2)
+        out["las_que_mas_queman"] = [
+            {"name": c.get("name"), "spend": round(float(c.get("spend") or 0), 2)}
+            for c in sorted(quemando, key=lambda x: -float(x.get("spend") or 0))[:3]
+        ]
+    return out
 
 
 def _safe_add_block(facts: Dict[str, Any], block_dict: Dict[str, Any], block_name: str) -> bool:
@@ -338,8 +386,14 @@ async def resolve_facts(
                         fila["leads_formulario"] = int(c["leads"])
                         fila["conversaciones_whatsapp"] = int(c["whatsapp"])
                     top_camps.append(fila)
+                # Comparaciones YA CALCULADAS. Un analista dice "35% mas caro",
+                # y por AI-1 el modelo no puede dividir: si escribe un numero
+                # derivado, la respuesta entera se descarta. La unica forma de
+                # que pueda comparar es darle la comparacion hecha.
+                comparativas = _comparativas(top_camps, all_camps)
                 rank_dict = {
                     "campaigns": top_camps,
+                    **({"comparativas": comparativas} if comparativas else {}),
                     "total_campanas_activas": sum(1 for c in all_camps if c.get("status") == "ACTIVE"),
                     "total_campanas": len(all_camps),
                 }
