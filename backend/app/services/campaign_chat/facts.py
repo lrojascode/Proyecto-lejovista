@@ -391,10 +391,19 @@ async def resolve_facts(
                 # derivado, la respuesta entera se descarta. La unica forma de
                 # que pueda comparar es darle la comparacion hecha.
                 comparativas = _comparativas(top_camps, all_camps)
+                # Los nombres de las activas, TODOS. `campaigns` es el ranking
+                # —filtrado a las que tuvieron resultados y gasto— así que sus
+                # primeros nombres no son "las activas": pedir el listado
+                # devolvía tres campañas que ni siquiera tenían por qué estarlo.
+                activas = [
+                    c.get("name") for c in all_camps
+                    if c.get("status") == "ACTIVE" and c.get("name")
+                ]
                 rank_dict = {
                     "campaigns": top_camps,
                     **({"comparativas": comparativas} if comparativas else {}),
-                    "total_campanas_activas": sum(1 for c in all_camps if c.get("status") == "ACTIVE"),
+                    "campanas_activas_nombres": activas[:RANKING_TOP_K],
+                    "total_campanas_activas": len(activas),
                     "total_campanas": len(all_camps),
                 }
                 _safe_add_block(facts, rank_dict, "ranking")
@@ -617,8 +626,18 @@ def narrate_facts(facts: Dict[str, Any], topic: Any, ad_account: AdAccount) -> s
         if single_topic == "CAMPAIGNS_OVERVIEW":
             total_act = facts.get("total_campanas_activas", 0)
             total = facts.get("total_campanas", 0)
-            names = ", ".join(c["name"] for c in camps[:3])
-            return f"Tenés {total_act} campañas activas (de {total} totales en {ventana}): {names}."
+            # Se listan TODAS las activas, una por línea. Antes eran tres, en
+            # una sola frase y sacadas del ranking: alguien que pedía el listado
+            # recibía "tenés 13 activas" seguido de tres nombres, y por más que
+            # insistiera la plantilla no tenía los otros diez para darle.
+            activas = facts.get("campanas_activas_nombres") or []
+            if not activas:
+                return f"Tenés {total_act} campañas activas de {total} totales en {ventana}."
+            lineas = [f"Tenés {total_act} campañas activas (de {total} totales en {ventana}):"]
+            lineas += [f"• {n}" for n in activas]
+            if total_act > len(activas):
+                lineas.append(f"…y {total_act - len(activas)} más.")
+            return "\n".join(lineas)
 
         if single_topic == "BUDGET_ADVICE":
             spend = kpis.get("spend", 0.0)

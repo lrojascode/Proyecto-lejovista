@@ -124,3 +124,54 @@ def test_las_tarjetas_no_cuentan_como_intercambio():
         {"type": "review_card", "role": "assistant", "card_id": "c1"},
         {"type": "text", "role": "user", "text": "dale"},
     ]) is None
+
+
+# --- 4. "listame las campañas activas" contestado con tres nombres ---
+
+def test_el_listado_de_activas_las_trae_todas():
+    """El chat contestó "tenés 13 campañas activas" y nombró tres. Por más que
+    el cliente insistiera, la plantilla no tenía los otros diez para darle:
+    `camps[:3]` estaba escrito a mano en el narrador.
+
+    Peor: esos tres salían del RANKING —campañas con resultados y gasto— así
+    que ni siquiera tenían por qué estar activas.
+    """
+    from app.services.campaign_chat.facts import narrate_facts
+
+    facts = {
+        "ventana": "los últimos 30 días",
+        "campanas_activas_nombres": [f"CAMP-{i:02d}" for i in range(13)],
+        "total_campanas_activas": 13,
+        "total_campanas": 17,
+        "campaigns": [{"name": "OTRA-DEL-RANKING", "cost_per_conv": 2.0, "resultados": 5}],
+    }
+    texto = narrate_facts(facts, "CAMPAIGNS_OVERVIEW", None)
+
+    for i in range(13):
+        assert f"CAMP-{i:02d}" in texto, f"falta CAMP-{i:02d}"
+    assert "OTRA-DEL-RANKING" not in texto, "listó una del ranking, no una activa"
+
+
+def test_el_listado_avisa_cuando_quedan_afuera():
+    from app.services.campaign_chat.facts import narrate_facts
+
+    facts = {
+        "ventana": "los últimos 30 días",
+        "campanas_activas_nombres": ["A", "B"],
+        "total_campanas_activas": 40,
+        "total_campanas": 50,
+        "campaigns": [],
+    }
+    texto = narrate_facts(facts, "CAMPAIGNS_OVERVIEW", None)
+    assert "38 más" in texto
+
+
+def test_sin_nombres_no_promete_un_listado():
+    from app.services.campaign_chat.facts import narrate_facts
+
+    facts = {
+        "ventana": "los últimos 30 días",
+        "total_campanas_activas": 3, "total_campanas": 9, "campaigns": [],
+    }
+    texto = narrate_facts(facts, "CAMPAIGNS_OVERVIEW", None)
+    assert "3 campañas activas" in texto and "•" not in texto

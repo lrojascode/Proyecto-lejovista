@@ -1,3 +1,4 @@
+import re
 import logging
 import json
 import datetime
@@ -380,6 +381,90 @@ Responde EXACTAMENTE con este contrato de salida en Markdown, sin texto antes ni
 """
 
 
+# --- Compatibilidad de parámetros entre modelos -----------------------------
+#
+# Cada familia de modelos acepta un juego distinto de parámetros, y cambian sin
+# aviso. Los de razonamiento de OpenAI (gpt-5.x, o1, o3, o4) ya nos rompieron
+# dos veces: primero `max_tokens` —hay que mandar `max_completion_tokens`— y
+# después la `temperature` distinta de la default.
+#
+# El costo de equivocarse es alto y silencioso: la API responde 400, el cliente
+# devuelve None, y el chat contesta con plantillas para siempre sin que nada se
+# vea roto. El cliente sigue "funcionando", solo que sin IA.
+#
+# En vez de mantener a mano una tabla de qué acepta cada modelo —que va a
+# quedar vieja igual— se le pregunta a la API: si responde 400 nombrando un
+# parámetro, se lo saca (o se lo renombra) y se reintenta. Lo aprendido se
+# recuerda por modelo, así que se paga una sola vez.
+_RENOMBRES = {"max_tokens": "max_completion_tokens"}
+
+# "Unsupported parameter: 'max_tokens' is not supported with this model."
+# "Unsupported value: 'temperature' does not support 0.3 with this model."
+_PARAM_RECHAZADO_RE = re.compile(
+    r"unsupported\s+(?:parameter|value)[^']*'([a-zA-Z_]+)'", re.IGNORECASE
+)
+
+# clave "provider:model" -> {parámetro rechazado: reemplazo o None}
+_INCOMPATIBLES: Dict[str, Dict[str, Optional[str]]] = {}
+
+
+def _param_rechazado(texto: str) -> Optional[str]:
+    m = _PARAM_RECHAZADO_RE.search(texto or "")
+    return m.group(1) if m else None
+
+
+def _adaptar_payload(payload: Dict[str, Any], clave: str) -> Dict[str, Any]:
+    """Saca del cuerpo lo que este modelo ya rechazó antes."""
+    conocidos = _INCOMPATIBLES.get(clave)
+    if not conocidos:
+        return payload
+    cuerpo = dict(payload)
+    for param, reemplazo in conocidos.items():
+        if param in cuerpo:
+            valor = cuerpo.pop(param)
+            if reemplazo and reemplazo not in cuerpo:
+                cuerpo[reemplazo] = valor
+    return cuerpo
+
+
+async def _post_chat(
+    client: "httpx.AsyncClient", url: str, headers: Dict[str, str],
+    payload: Dict[str, Any], *, provider: str = "", intentos: int = 3,
+):
+    """POST al endpoint de chat, adaptándose a lo que el modelo rechace.
+
+    Devuelve la respuesta de httpx. Un 400 que nombra un parámetro no es un
+    fallo: es la API diciendo qué no soporta. Se corrige y se reintenta.
+    """
+    clave = f"{provider}:{payload.get('model', '')}"
+    cuerpo = _adaptar_payload(payload, clave)
+
+    res = None
+    for _ in range(max(1, intentos)):
+        res = await client.post(url, headers=headers, json=cuerpo)
+        if res.status_code != 400:
+            return res
+        param = _param_rechazado(res.text)
+        if not param or param not in cuerpo:
+            return res
+
+        reemplazo = _RENOMBRES.get(param)
+        _INCOMPATIBLES.setdefault(clave, {})[param] = reemplazo
+        valor = cuerpo.pop(param)
+        if reemplazo and reemplazo not in cuerpo:
+            cuerpo[reemplazo] = valor
+            logger.warning(
+                "%s rechazó '%s'; se reintenta como '%s' y queda anotado.",
+                clave, param, reemplazo,
+            )
+        else:
+            logger.warning(
+                "%s rechazó '%s'; se reintenta sin ese parámetro y queda anotado.",
+                clave, param,
+            )
+    return res
+
+
 class OpenRouterClient:
     def __init__(
         self,
@@ -470,7 +555,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(self.base_url, json=payload, headers=headers)
+                response = await _post_chat(client, self.base_url, headers, payload, provider=self.provider)
                 if response.status_code == 200:
                     return True, f"Credencial de {self.provider} verificada correctamente."
                 else:
@@ -547,7 +632,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(base_url, json=payload, headers=headers)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if response.status_code == 200:
                     result = response.json()
                     await record_token_usage(usage_ctx, provider, model, result.get("usage"))
@@ -699,7 +784,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await client.post(base_url, json=payload, headers=headers)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if response.status_code == 200:
                     result = response.json()
                     await record_token_usage(usage_ctx, provider, model, result.get("usage"))
@@ -804,7 +889,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(base_url, json=payload, headers=headers)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (extracción del chat) devolvió error %s: %s",
@@ -906,15 +991,21 @@ class OpenRouterClient:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 for _ronda in range(max_rondas):
-                    res = await client.post(base_url, headers=headers, json={
+                    res = await _post_chat(client, base_url, headers, {
                         "model": model,
                         "temperature": 0.3,
                         "messages": mensajes,
                         "tools": chat_tools.TOOL_SCHEMAS,
-                    })
+                    }, provider=provider)
                     if res.status_code != 200:
-                        logger.error("El analista con consultas devolvió %s: %s",
-                                     res.status_code, res.text[:400])
+                        # Se loguea el cuerpo entero del error, no un prefijo: si
+                        # el modelo no soporta herramientas, el motivo está acá y
+                        # es la diferencia entre "el analista no anda" y "esta
+                        # respuesta puntual falló".
+                        logger.error(
+                            "El analista con consultas devolvió %s con el modelo %s: %s",
+                            res.status_code, model, res.text[:1200],
+                        )
                         return None
                     cuerpo = res.json()
                     await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"))
@@ -956,10 +1047,12 @@ class OpenRouterClient:
                     "role": "user",
                     "content": "Ya no consultes más. Respondé con lo que encontraste.",
                 })
-                res = await client.post(base_url, headers=headers, json={
+                res = await _post_chat(client, base_url, headers, {
                     "model": model, "temperature": 0.3, "messages": mensajes,
-                })
+                }, provider=provider)
                 if res.status_code != 200:
+                    logger.error("El cierre del analista devolvió %s: %s",
+                                 res.status_code, res.text[:1200])
                     return None
                 cuerpo = res.json()
                 await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"))
@@ -1080,7 +1173,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
-                response = await client.post(base_url, json=payload, headers=headers)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (análisis del chat) devolvió error %s: %s",
@@ -1168,7 +1261,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await client.post(base_url, json=payload, headers=headers)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (reescritura del chat) devolvió error %s: %s",
@@ -1264,7 +1357,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(base_url, json=payload, headers=headers)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (clasificación de preguntas) devolvió error %s: %s",
@@ -1366,7 +1459,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await client.post(base_url, json=payload, headers=headers)
+                res = await _post_chat(client, base_url, headers, payload, provider=provider)
                 if res.status_code != 200:
                     return ChatPlan(blocks=[])
                 result = res.json()
