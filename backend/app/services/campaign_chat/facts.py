@@ -480,7 +480,16 @@ async def resolve_facts(
             if "destino" not in facts:
                 page_info = None
                 if db is not None:
-                    pages = (await db.execute(select(MetaPage).where(MetaPage.organization_id == organization_id))).scalars().all()
+                    # Acotado a la cuenta activa, no a la organización. Con las
+                    # páginas de tres clientes en la misma organización,
+                    # `pages[0]` le contestaba al cliente A con la página del B
+                    # —y el analista lo dice como un hecho verificado.
+                    from app.services.asset_scope import page_ids_of_accounts
+
+                    pages = (await db.execute(select(MetaPage).where(
+                        MetaPage.organization_id == organization_id,
+                        MetaPage.id.in_(page_ids_of_accounts([ad_account.id])),
+                    ))).scalars().all()
                     if pages:
                         p = pages[0]
                         page_info = {"name": p.name, "whatsapp_number": p.whatsapp_number, "id": p.external_page_id}

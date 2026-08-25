@@ -109,3 +109,90 @@ async def conceder_a_los_miembros(db, org_id: str) -> None:
     )).scalars().all()
     for user_id in miembros:
         await conceder_todas_las_cuentas(db, user_id, org_id)
+
+
+async def enlazar_paginas_y_numeros(db, org_id: str) -> None:
+    """Enlaza cada página y cada número de `org_id` con cada cuenta de `org_id`.
+
+    Las páginas y los números son por organización, pero su ALCANCE es por
+    cuenta (`meta_page_ad_accounts`, `whatsapp_number_ad_accounts`): en una
+    organización que aloja las cuentas de varios clientes, el dropdown de
+    "Crear campaña" mostraba las de todos. En producción el enlace lo mantiene
+    el sync —y lo poda— o el alta manual; el seed de la migración hizo esto
+    mismo para lo que ya existía.
+
+    Los tests que insertan `MetaPage`/`WhatsAppNumber` a mano se saltean los dos
+    caminos, así que necesitan este equivalente. Un test que quiera probar el
+    aislamiento enlaza a mano solo lo que corresponda.
+    """
+    from sqlalchemy import select
+    from app.models.ad_account import AdAccount
+    from app.models.meta_page import MetaPage
+    from app.models.meta_page_ad_account import MetaPageAdAccount
+    from app.models.whatsapp_number import WhatsAppNumber
+    from app.models.whatsapp_number_ad_account import WhatsAppNumberAdAccount
+
+    cuentas = (await db.execute(
+        select(AdAccount.id).where(AdAccount.organization_id == org_id)
+    )).scalars().all()
+    if not cuentas:
+        return
+
+    for origen, enlace, columna in (
+        (MetaPage, MetaPageAdAccount, "meta_page_id"),
+        (WhatsAppNumber, WhatsAppNumberAdAccount, "whatsapp_number_id"),
+    ):
+        ids = (await db.execute(
+            select(origen.id).where(origen.organization_id == org_id)
+        )).scalars().all()
+        ya = {
+            (getattr(f, columna), f.ad_account_id)
+            for f in (await db.execute(
+                select(enlace).where(enlace.organization_id == org_id)
+            )).scalars().all()
+        }
+        for propio_id in ids:
+            for acc_id in cuentas:
+                if (propio_id, acc_id) not in ya:
+                    db.add(enlace(
+                        **{columna: propio_id},
+                        ad_account_id=acc_id,
+                        organization_id=org_id,
+                    ))
+    await db.flush()
+
+
+async def cablear_org(db, org_id: str) -> None:
+    """Deja una organización de test en el estado que produce producción.
+
+    Tres cosas que en la app las hacen tres flujos distintos —conectar una
+    cuenta, aceptar una invitación, el sync de páginas— y que un test que
+    inserta filas a mano se saltea las tres:
+
+    * cada miembro tiene concedidas las cuentas de su organización;
+    * cada página y cada número están al alcance de esas cuentas.
+    """
+    await conceder_a_los_miembros(db, org_id)
+    await enlazar_paginas_y_numeros(db, org_id)
+
+
+async def cuenta_de_prueba(db, org_id: str, external_account_id: str = "act_test"):
+    """Una `AdAccount` ACTIVE, ya cableada con los miembros de la organización.
+
+    Las páginas y los números existen POR una cuenta —el sync los descubre
+    recorriendo lo que esa cuenta alcanza—, así que una organización sin
+    ninguna cuenta no tiene de dónde sacarlos. Los tests que solo hacían signup
+    y agregaban páginas describían un estado que producción no produce.
+    """
+    from app.models.ad_account import AdAccount
+
+    acc = AdAccount(
+        organization_id=org_id, platform="META",
+        external_account_id=external_account_id, name="Cuenta de prueba",
+        status="ACTIVE",
+    )
+    acc.set_access_token("mock-token")
+    db.add(acc)
+    await db.flush()
+    await conceder_a_los_miembros(db, org_id)
+    return acc

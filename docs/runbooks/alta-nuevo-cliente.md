@@ -206,3 +206,17 @@ Miembros** → **Cambiar**, en la fila del miembro.
 > aloja cuentas de más de un cliente, hay que **quitar** las ajenas a mano — no
 > se quitaron solas a propósito, para no dejar a nadie sin acceso en el
 > despliegue.
+
+### Páginas y números de WhatsApp
+
+Van por el mismo eje: cada página y cada número pertenecen a una o más **cuentas
+publicitarias**, no a la organización entera. El dropdown de "Crear campaña"
+muestra solo los de la cuenta activa.
+
+- **Páginas**: el enlace lo mantiene el sync y lo **poda** — no hay que tocar
+  nada. Tras un ciclo de sync por cuenta, cada página queda con las cuentas que
+  de verdad pueden promocionarla.
+- **Números MANUAL**: no hay nada en Meta contra qué reconciliarlos, así que la
+  migración los dejó alcanzables desde **todas** las cuentas de su organización.
+  Se acotan en **Configuración → Páginas y WhatsApp** → *Editar* en el número,
+  marcando las cuentas que corresponden.

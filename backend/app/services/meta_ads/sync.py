@@ -15,6 +15,8 @@ from app.models.ad_snapshot import AdSnapshot
 from app.models.meta_creative import MetaCreative
 from app.models.custom_audience import CustomAudience
 from app.models.meta_page import MetaPage
+from app.models.meta_page_ad_account import MetaPageAdAccount
+from app.models.whatsapp_number_ad_account import WhatsAppNumberAdAccount
 from app.models.sync_job import SyncJob
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
@@ -33,6 +35,48 @@ class MetaAdsSyncService:
         # están acotados por tiempo: pedirlos en cada chunk multiplicaría las
         # llamadas por la cantidad de meses sin traer un solo dato nuevo.
         self._structure_cache: Dict[str, Any] = {}
+
+    async def _reconciliar_alcance(
+        self, modelo, columna: str, ad_account: AdAccount, ids_propios: set
+    ) -> None:
+        """Deja los enlaces de ESTA cuenta exactamente en `ids_propios`.
+
+        Guardar solo hacia adelante no alcanza: el seed de la migración enlazó
+        cada página y cada número con TODAS las cuentas de su organización
+        —había que hacerlo, si no "Crear campaña" se quedaba sin páginas hasta
+        el sync siguiente— y sin poda ese seed amplio se quedaría amplio para
+        siempre. Es exactamente lo que pasó con las páginas en 44f4ec2: se acotó
+        el descubrimiento, pero lo ya guardado sobrevivió al arreglo.
+
+        **No se poda con la lista vacía.** Un token vencido, un permiso que
+        falta o Meta caído dan cero resultados igual que "esta cuenta no
+        promociona ninguna página", y no hay forma de distinguirlos desde acá.
+        Entre dejar un enlace de más y dejar una cuenta sin ninguna página para
+        crear campañas, se deja el de más: la próxima corrida que sí vea algo lo
+        corrige. Mismo criterio que `alguna_ok` en `refresh_org_pages_impl`.
+        """
+        if not ids_propios:
+            return
+
+        actuales = {
+            getattr(fila, columna): fila
+            for fila in (await self.db.execute(
+                select(modelo).where(modelo.ad_account_id == ad_account.id)
+            )).scalars().all()
+        }
+        for propio_id, fila in actuales.items():
+            if propio_id not in ids_propios:
+                await self.db.delete(fila)
+                logger.info(
+                    "La cuenta %s ya no alcanza %s=%s: se quita el enlace.",
+                    ad_account.id, columna, propio_id,
+                )
+        for propio_id in ids_propios - set(actuales):
+            self.db.add(modelo(
+                **{columna: propio_id},
+                ad_account_id=ad_account.id,
+                organization_id=ad_account.organization_id,
+            ))
 
     async def _structure_once(self, key: str, factory):
         """Ejecuta `factory()` la primera vez y reusa el resultado después.
@@ -1319,6 +1363,9 @@ class MetaAdsSyncService:
         que el bug de `customaudiences`/`approximate_count`, HANDOFF 3.8).
         """
         discovered: Dict[str, dict] = {}
+        # Las filas de MetaPage que toca ESTA cuenta, para acotar su alcance al
+        # final (ver `_reconciliar_alcance`).
+        filas_vistas: list = []
 
         def _collect(res, source: str):
             if self._has_error(res):
@@ -1419,6 +1466,7 @@ class MetaAdsSyncService:
             if info.get("instagram_actor_id"):
                 row.instagram_actor_id = info["instagram_actor_id"]
             row.status = "ACTIVE"
+            filas_vistas.append(row)
 
             # `whatsapp_number` del nodo Page se lee con el TOKEN DE LA PÁGINA,
             # no con el del usuario: con el de usuario Meta responde error y el
@@ -1442,11 +1490,23 @@ class MetaAdsSyncService:
                 # sync nocturno lo pisaba con None.
                 row.whatsapp_number = wa_res.get("whatsapp_number")
 
-        # Se devuelve QUÉ se vio. Acá no se poda: el descubrimiento es por
-        # cuenta y `MetaPage` es por organización, así que una cuenta no sabe
-        # lo que ven las demás. Podar desde acá borraría las páginas de la otra
-        # cuenta de la misma organización. La poda vive en `refresh_org_pages`,
-        # que sí recorre todas.
+        # Qué páginas alcanza ESTA cuenta. `MetaPage` sigue siendo por
+        # organización —una página puede promocionarse desde dos cuentas del
+        # mismo cliente— pero el enlace por cuenta es lo que permite que el
+        # dropdown de "Crear campaña" muestre las de la cuenta y no las de todos
+        # los clientes de la organización.
+        #
+        # El flush va antes: `MetaPage.id` se genera al volcar, así que sin esto
+        # las páginas nuevas de este sync entrarían al enlace con id `None`.
+        await self.db.flush()
+        await self._reconciliar_alcance(
+            MetaPageAdAccount, "meta_page_id", ad_account,
+            {fila.id for fila in filas_vistas},
+        )
+
+        # Se devuelve QUÉ se vio. El estado ACTIVE/REVOKED de la página no se
+        # poda acá: eso es por organización y una cuenta no sabe lo que ven las
+        # demás, así que vive en `refresh_org_pages`, que sí las recorre todas.
         return set(discovered)
 
     async def _sync_whatsapp_numbers(self, ad_account, token, limiter, business_ids):
@@ -1478,6 +1538,7 @@ class MetaAdsSyncService:
                     continue
                 waba_ids.extend(w["id"] for w in res.get("data", []) if w.get("id"))
 
+        filas_vistas: list = []
         for waba_id in dict.fromkeys(waba_ids):  # dedup preservando orden
             res = await limiter.call_api(
                 f"{waba_id}/phone_numbers",
@@ -1516,6 +1577,20 @@ class MetaAdsSyncService:
                 row.verified_name = phone.get("verified_name")
                 row.source = "META"
                 row.status = "ACTIVE"
+                filas_vistas.append(row)
+
+        # Igual que con las páginas: qué números alcanza ESTA cuenta. Un número
+        # de WhatsApp ajeno en un anuncio no es un dato de más — es que los
+        # mensajes del cliente A le lleguen al B.
+        #
+        # Los MANUAL no pasan por acá y por eso no se los reconcilia: no hay
+        # nada en Meta contra qué compararlos. Su alcance se fija donde se
+        # cargan y se corrige a mano en Configuración.
+        await self.db.flush()
+        await self._reconciliar_alcance(
+            WhatsAppNumberAdAccount, "whatsapp_number_id", ad_account,
+            {fila.id for fila in filas_vistas},
+        )
 
     # Cada dimensión de breakdown es una llamada aparte: la Graph API no permite
     # combinar publisher_platform+platform_position con age/gender/region en una

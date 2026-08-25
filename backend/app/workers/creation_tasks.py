@@ -50,9 +50,14 @@ async def _get_page_instagram_id(db, acc: AdAccount, external_page_id: str) -> s
     from app.models.meta_page import MetaPage
     from sqlalchemy import select
 
+    from app.services.asset_scope import page_ids_of_accounts
+
     row = (await db.execute(select(MetaPage).where(
         MetaPage.organization_id == acc.organization_id,
         MetaPage.external_page_id == str(external_page_id),
+        # Acotado a la cuenta: si la página es de otro cliente, no se le presta
+        # su identidad de Instagram al creativo.
+        MetaPage.id.in_(page_ids_of_accounts([acc.id])),
     ))).scalar_one_or_none()
     return row.instagram_actor_id if row else None
 

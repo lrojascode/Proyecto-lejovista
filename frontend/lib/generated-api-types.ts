@@ -475,6 +475,11 @@ export interface paths {
          *     Es el camino principal, no un parche: el descubrimiento automático necesita
          *     el permiso `whatsapp_business_management`, que la mayoría de los tokens
          *     conectados no trae.
+         *
+         *     Por eso también el alcance se fija acá: un número MANUAL no se puede
+         *     reconciliar contra Meta como sí se hace con los de origen META. Sin
+         *     `ad_account_ids`, queda alcanzable desde todas las cuentas de quien lo carga
+         *     —que es lo que hacía siempre— y se acota después en Configuración.
          */
         post: operations["add_whatsapp_number_api_v1_organizations_my_whatsapp_numbers_post"];
         delete?: never;
@@ -538,6 +543,38 @@ export interface paths {
          */
         get: operations["list_org_members_api_v1_organizations_my_members_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/members/{user_id}/ad-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Member Ad Accounts
+         * @description Qué cuentas publicitarias de esta organización ve un miembro.
+         *
+         *     Devuelve el catálogo completo de la organización más los ids concedidos, en
+         *     una sola llamada: la pantalla necesita las dos cosas para dibujar los
+         *     checkboxes, y pedirlas por separado abre la puerta a mostrarlas
+         *     desincronizadas.
+         */
+        get: operations["get_member_ad_accounts_api_v1_organizations_my_members__user_id__ad_accounts_get"];
+        /**
+         * Set Member Ad Accounts
+         * @description Fija exactamente a qué cuentas accede un miembro (reemplaza, no suma).
+         *
+         *     Un ADMIN no puede quitarse a sí mismo la última cuenta: quedaría sin acceso
+         *     y sin forma de devolvérselo desde la propia pantalla que acaba de usar.
+         */
+        put: operations["set_member_ad_accounts_api_v1_organizations_my_members__user_id__ad_accounts_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2824,6 +2861,8 @@ export interface components {
              * @enum {string}
              */
             role: "ADMIN" | "OPERATOR" | "VIEWER";
+            /** Ad Account Ids */
+            ad_account_ids?: string[] | null;
         };
         /** InvitationDetailsResponse */
         InvitationDetailsResponse: {
@@ -2917,6 +2956,14 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+        };
+        /** MemberAdAccountsUpdate */
+        MemberAdAccountsUpdate: {
+            /**
+             * Ad Account Ids
+             * @default []
+             */
+            ad_account_ids: string[];
         };
         /** MessageResponse */
         MessageResponse: {
@@ -3523,6 +3570,8 @@ export interface components {
              * @description Número de WhatsApp sin + ni espacios
              */
             display_number: string;
+            /** Ad Account Ids */
+            ad_account_ids?: string[] | null;
         };
         /** WhatsAppNumberResponse */
         WhatsAppNumberResponse: {
@@ -3536,11 +3585,15 @@ export interface components {
             verified_name?: string | null;
             /** Status */
             status: string;
+            /** Ad Account Ids */
+            ad_account_ids?: string[];
         };
         /** WhatsAppNumberUpdate */
         WhatsAppNumberUpdate: {
             /** Display Number */
             display_number: string;
+            /** Ad Account Ids */
+            ad_account_ids?: string[] | null;
         };
         /** WindowKpis */
         WindowKpis: {
@@ -4408,6 +4461,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_member_ad_accounts_api_v1_organizations_my_members__user_id__ad_accounts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_member_ad_accounts_api_v1_organizations_my_members__user_id__ad_accounts_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemberAdAccountsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -686,9 +686,15 @@ async def preflight_campaign(
     # Mismos datos derivados que usaría la Saga: identidad de IG de la página y
     # el nombre inferido del histórico. Así `validate_only` evalúa el payload
     # real, no una aproximación.
+    # Acotado a la cuenta: el preflight tiene que evaluar el payload REAL, y el
+    # real no puede llevar la identidad de Instagram de la página de otro
+    # cliente.
+    from app.services.asset_scope import page_ids_of_accounts
+
     page = (await db.execute(select(MetaPage).where(
         MetaPage.organization_id == current_user.organization_id,
         MetaPage.external_page_id == request.page_id,
+        MetaPage.id.in_(page_ids_of_accounts([ad_account.id])),
     ))).scalar_one_or_none()
 
     result = await CampaignPreflight(ad_account, rules).run(

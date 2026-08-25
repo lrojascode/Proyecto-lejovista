@@ -13,6 +13,7 @@ from app.utils import formatting
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.meta_page import MetaPage
+from conftest import enlazar_paginas_y_numeros
 
 
 async def _signup_with_ad_account_and_page(async_client: AsyncClient, db_session: AsyncSession, slug: str):
@@ -39,6 +40,10 @@ async def _signup_with_ad_account_and_page(async_client: AsyncClient, db_session
         organization_id=org_id, external_page_id="page_1", name="Mi Página",
         whatsapp_number="51999888777", status="ACTIVE",
     ))
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica lo
+    # que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org_id)
     await db_session.commit()
 
     return headers, org_id, ad_account_id

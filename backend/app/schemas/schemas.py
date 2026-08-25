@@ -153,6 +153,11 @@ class WhatsAppNumberResponse(BaseModel):
     source: str
     verified_name: Optional[str] = None
     status: str
+    # Desde qué cuentas se puede usar. Va en la respuesta para que la pantalla
+    # pueda mostrarlo y corregirlo: los números MANUAL quedaron enlazados a
+    # TODAS las cuentas de la organización al migrar (no había cómo saber de
+    # cuál eran), así que acotarlos es un acto del usuario.
+    ad_account_ids: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -160,10 +165,17 @@ class WhatsAppNumberResponse(BaseModel):
 class WhatsAppNumberCreate(BaseModel):
     display_number: str = Field(..., min_length=6, max_length=20,
                                 description="Número de WhatsApp sin + ni espacios")
+    # Desde qué cuentas se puede usar. `None` = todas las del usuario (lo que
+    # hacía siempre); una lista acota. Los números MANUAL no se pueden
+    # reconciliar contra Meta, así que su alcance se fija acá.
+    ad_account_ids: Optional[List[str]] = None
 
 
 class WhatsAppNumberUpdate(BaseModel):
     display_number: str = Field(..., min_length=6, max_length=20)
+    # `None` deja el alcance como está; una lista lo REEMPLAZA (la pantalla
+    # manda el estado final de los checkboxes).
+    ad_account_ids: Optional[List[str]] = None
 
 # --- CAMPAIGN SCHEMAS ---
 class CampaignSnapshotResponse(BaseModel):

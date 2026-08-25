@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
 from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
+from conftest import enlazar_paginas_y_numeros
 
 
 async def _signup(async_client: AsyncClient, slug: str):
@@ -52,6 +53,10 @@ async def test_set_and_clear_default_page(async_client: AsyncClient, db_session:
     page = MetaPage(organization_id=org_id, external_page_id="page_1",
                     name="Althea pack", whatsapp_number="51999888777", status="ACTIVE")
     db_session.add(page)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org_id)
     await db_session.commit()
 
     res = await async_client.patch(

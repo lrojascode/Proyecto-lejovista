@@ -2,6 +2,7 @@ import datetime
 import logging
 
 from celery import chain
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,7 @@ from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.campaign_validator import CampaignValidator, normalize_product_name
+from app.services.asset_scope import page_ids_of_accounts
 from app.workers.creation_tasks import (
     task_create_ad,
     task_create_adset,
@@ -152,6 +154,8 @@ async def start_campaign_creation(
     validator = CampaignValidator(ad_account, db=db)
     await validator.validate(request)
 
+    await _rechazar_pagina_ajena(db, tenant_id, ad_account, request.page_id)
+
     # Presupuesto normalizado a TOTAL. `budget` puede venir como monto diario
     # (budget_type="DAILY"); todo lo que razona sobre presupuesto —riesgo,
     # calibración R1 del suggester y el costo esperado del outcome loop
@@ -248,3 +252,51 @@ async def start_campaign_creation(
         "risk_reasons": risk["reasons"],
         "analysis": suggestion["analysis"],
     }
+
+
+async def _rechazar_pagina_ajena(
+    db: AsyncSession, tenant_id: str, ad_account: AdAccount, page_id
+) -> None:
+    """Que no se publique desde la página de otro cliente.
+
+    `page_id` llega en el cuerpo de la request. Antes no se validaba contra
+    nada: el único freno era que el token de Meta pudiera promocionar esa
+    página — y en una agencia cuyo token alcanza a varios clientes, eso no
+    frena nada.
+
+    Se rechaza solo cuando la página EXISTE en el catálogo de la organización y
+    NO la alcanza esta cuenta, que es exactamente el caso del cruce. Una página
+    que no está en el catálogo se deja pasar: el descubrimiento tiene huecos
+    conocidos (el caso "Althea pack", una página que Ads Manager ofrecía
+    promocionar y no figuraba en ninguna fuente directa), y bloquearla acá
+    convertiría ese hueco en una campaña que no se puede crear.
+    """
+    from app.models.meta_page import MetaPage
+
+    if not page_id:
+        return
+
+    conocida = (await db.execute(
+        select(MetaPage.id).where(
+            MetaPage.organization_id == tenant_id,
+            MetaPage.external_page_id == str(page_id),
+        )
+    )).scalar_one_or_none()
+    if not conocida:
+        return
+
+    alcanzable = (await db.execute(
+        select(MetaPage.id).where(
+            MetaPage.id == conocida,
+            MetaPage.id.in_(page_ids_of_accounts([ad_account.id])),
+        )
+    )).scalar_one_or_none()
+    if not alcanzable:
+        logger.warning(
+            "Se intentó crear una campaña en la cuenta %s con la página %s, que no "
+            "corresponde a esa cuenta.", ad_account.id, page_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Esa página de Facebook no corresponde a la cuenta publicitaria seleccionada.",
+        )

@@ -19,6 +19,8 @@ from app.models.ai_token_usage import AITokenUsage
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.user_ad_account import UserAdAccount
+from app.models.meta_page_ad_account import MetaPageAdAccount
+from app.models.whatsapp_number_ad_account import WhatsAppNumberAdAccount
 from dataclasses import asdict
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, LLMKeyTestRequest, LLMKeyTestResponse,
@@ -42,6 +44,10 @@ from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
 from app.workers.tasks import sync_ad_account, refresh_org_pages
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER, pick_model
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
+from app.services.asset_scope import (
+    page_ids_of_accounts, link_number_to_accounts, adoptar_huerfanos,
+    condiciones_de_pagina, condiciones_de_numero,
+)
 from app.tenant_rules.modules import AVAILABLE_MODULES, UNDISABLEABLE_MODULES, enabled_modules_for
 from app.services.email_service import send_email
 from app.tenant_rules.campaign_defaults import TENANT_CAMPAIGN_RULES, get_campaign_rules_for_org
@@ -369,9 +375,18 @@ async def set_ad_account_default_page(
     if payload.page_id is None:
         acc.default_page_id = None
     else:
-        page = await db.get(MetaPage, payload.page_id)
-        if not page or page.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=404, detail="Página no encontrada para esta organización.")
+        # No alcanza con que la página sea de la organización: tiene que ser una
+        # que ESTA cuenta pueda promocionar. Poner como predeterminada la página
+        # de otro cliente terminaría publicando anuncios desde ella.
+        page = (await db.execute(
+            select(MetaPage).where(
+                MetaPage.id == payload.page_id,
+                MetaPage.organization_id == current_user.organization_id,
+                MetaPage.id.in_(page_ids_of_accounts([acc.id])),
+            )
+        )).scalar_one_or_none()
+        if not page:
+            raise HTTPException(status_code=404, detail="Página no encontrada para esta cuenta.")
         acc.default_page_id = page.id
 
     db.add(acc)
@@ -389,11 +404,20 @@ async def list_my_pages(
     con su WhatsApp conectado, para que el formulario de "Crear campaña" ofrezca
     un dropdown en vez de que el usuario tipee page_id/whatsapp_number a mano.
     """
-    q = select(MetaPage).where(
+    # Acotado a las cuentas que este usuario tiene concedidas. `MetaPage` es por
+    # organización, y en una que aloja las cuentas de varios clientes eso le
+    # mostraba al usuario de uno las páginas de todos los demás.
+    concedidas = await granted_ad_account_ids(db, current_user)
+    # Sin ninguna cuenta conectada no hay clientes que separar, y una
+    # organización recién creada puede tener páginas cargadas antes de conectar
+    # Meta. En cuanto conecta la primera cuenta, esas quedan adoptadas por ella
+    # (ver `adoptar_huerfanos`) y el filtro por cuenta vuelve a aplicar.
+    condiciones = [
         MetaPage.organization_id == current_user.organization_id,
         MetaPage.status == "ACTIVE",
-    )
-    res = await db.execute(q)
+        *await condiciones_de_pagina(db, current_user.organization_id, concedidas),
+    ]
+    res = await db.execute(select(MetaPage).where(*condiciones))
     return res.scalars().all()
 
 @router.post("/my/pages/refresh", response_model=MessageResponse)
@@ -445,17 +469,35 @@ async def set_page_whatsapp_number(
     da error, Meta simplemente lo omite en la respuesta). Sin este fallback,
     esas cuentas quedarían bloqueadas para siempre en "Crear campaña".
     """
-    page = await db.get(MetaPage, page_id)
-    if not page or page.organization_id != current_user.organization_id:
+    concedidas = await granted_ad_account_ids(db, current_user)
+    page = (await db.execute(
+        select(MetaPage).where(
+            MetaPage.id == page_id,
+            MetaPage.organization_id == current_user.organization_id,
+            *await condiciones_de_pagina(db, current_user.organization_id, concedidas),
+        )
+    )).scalar_one_or_none()
+    if not page:
         raise HTTPException(status_code=404, detail="Página no encontrada para esta organización.")
 
     page.whatsapp_number = payload.whatsapp_number
     db.add(page)
 
-    # Que el número quede también en el catálogo de la organización: si se cargó
-    # para una página, sirve para cualquier campaña. Sin esto habría que
-    # escribirlo dos veces.
-    await _ensure_number_in_catalog(db, current_user.organization_id, payload.whatsapp_number)
+    # Que el número quede también en el catálogo: si se cargó para una página,
+    # sirve para cualquier campaña de las cuentas que alcanzan esa página. Sin
+    # esto habría que escribirlo dos veces.
+    #
+    # Y el alcance del número es el de la PÁGINA, no el de la organización: el
+    # número salió de ahí, así que llevarlo más lejos sería meter el WhatsApp de
+    # un cliente en el selector de otro.
+    cuentas_de_la_pagina = (await db.execute(
+        select(MetaPageAdAccount.ad_account_id).where(
+            MetaPageAdAccount.meta_page_id == page.id
+        )
+    )).scalars().all()
+    await _ensure_number_in_catalog(
+        db, current_user.organization_id, payload.whatsapp_number, cuentas_de_la_pagina
+    )
 
     await db.commit()
     await db.refresh(page)
@@ -467,18 +509,36 @@ async def set_page_whatsapp_number(
 # `MetaPage.whatsapp_number` sigue siendo el número POR DEFECTO de cada página;
 # esta lista es de la que se elige al crear una campaña, y admite varios.
 
-async def _ensure_number_in_catalog(db: AsyncSession, org_id: str, number: str) -> None:
-    """Agrega el número al catálogo si no estaba (idempotente)."""
+async def _ensure_number_in_catalog(
+    db: AsyncSession, org_id: str, number: str, ad_account_ids
+) -> None:
+    """Agrega el número al catálogo si no estaba (idempotente) y lo enlaza.
+
+    El enlace SUMA en vez de reemplazar: el mismo número puede estar conectado a
+    páginas de dos cuentas distintas del mismo cliente, y la segunda no tiene por
+    qué desalojar a la primera. Reemplazar es una decisión explícita del usuario
+    y vive en `PATCH /my/whatsapp-numbers/{id}`.
+    """
     number = (number or "").strip()
     if not number:
         return
-    exists = (await db.execute(select(WhatsAppNumber).where(
+    row = (await db.execute(select(WhatsAppNumber).where(
         WhatsAppNumber.organization_id == org_id,
         WhatsAppNumber.display_number == number,
     ))).scalar_one_or_none()
-    if not exists:
-        db.add(WhatsAppNumber(
+    if not row:
+        row = WhatsAppNumber(
             organization_id=org_id, display_number=number, source="MANUAL",
+        )
+        db.add(row)
+        await db.flush()
+
+    ya = set((await db.execute(select(WhatsAppNumberAdAccount.ad_account_id).where(
+        WhatsAppNumberAdAccount.whatsapp_number_id == row.id
+    ))).scalars().all())
+    for acc_id in set(ad_account_ids or []) - ya:
+        db.add(WhatsAppNumberAdAccount(
+            whatsapp_number_id=row.id, ad_account_id=acc_id, organization_id=org_id,
         ))
 
 
@@ -488,11 +548,34 @@ async def list_whatsapp_numbers(
     db: AsyncSession = Depends(get_db),
 ):
     """Números disponibles para elegir al crear una campaña."""
-    q = select(WhatsAppNumber).where(
+    # Acotado a las cuentas concedidas, igual que las páginas: un número de
+    # WhatsApp ajeno en un anuncio no es un dato de más — es que los mensajes de
+    # un cliente le lleguen a otro.
+    concedidas = await granted_ad_account_ids(db, current_user)
+    condiciones = [
         WhatsAppNumber.organization_id == current_user.organization_id,
         WhatsAppNumber.status == "ACTIVE",
-    ).order_by(WhatsAppNumber.source, WhatsAppNumber.display_number)
-    return (await db.execute(q)).scalars().all()
+        *await condiciones_de_numero(db, current_user.organization_id, concedidas),
+    ]
+    q = select(WhatsAppNumber).where(*condiciones).order_by(
+        WhatsAppNumber.source, WhatsAppNumber.display_number
+    )
+    filas = (await db.execute(q)).scalars().all()
+
+    # A qué cuentas alcanza cada uno, en UNA query y no una por número. La
+    # pantalla lo necesita para poder acotar los que la migración dejó amplios.
+    enlaces: Dict[str, List[str]] = {}
+    for numero_id, acc_id in (await db.execute(
+        select(
+            WhatsAppNumberAdAccount.whatsapp_number_id,
+            WhatsAppNumberAdAccount.ad_account_id,
+        ).where(WhatsAppNumberAdAccount.organization_id == current_user.organization_id)
+    )).all():
+        enlaces.setdefault(numero_id, []).append(acc_id)
+    for fila in filas:
+        # Atributo no mapeado: lo lee el `from_attributes` del response model.
+        fila.ad_account_ids = enlaces.get(fila.id, [])
+    return filas
 
 
 @router.post("/my/whatsapp-numbers", response_model=WhatsAppNumberResponse,
@@ -507,6 +590,11 @@ async def add_whatsapp_number(
     Es el camino principal, no un parche: el descubrimiento automático necesita
     el permiso `whatsapp_business_management`, que la mayoría de los tokens
     conectados no trae.
+
+    Por eso también el alcance se fija acá: un número MANUAL no se puede
+    reconciliar contra Meta como sí se hace con los de origen META. Sin
+    `ad_account_ids`, queda alcanzable desde todas las cuentas de quien lo carga
+    —que es lo que hacía siempre— y se acota después en Configuración.
     """
     number = payload.display_number.strip()
     existing = (await db.execute(select(WhatsAppNumber).where(
@@ -516,14 +604,37 @@ async def add_whatsapp_number(
     if existing:
         raise HTTPException(status_code=409, detail="Ese número ya está en la lista.")
 
+    concedidas = await granted_ad_account_ids(db, current_user)
+    destino = await _validar_cuentas_del_numero(payload.ad_account_ids, concedidas)
+
     row = WhatsAppNumber(
         organization_id=current_user.organization_id,
         display_number=number, source="MANUAL",
     )
     db.add(row)
+    await db.flush()
+    await link_number_to_accounts(
+        db, row.id, current_user.organization_id, destino
+    )
     await db.commit()
     await db.refresh(row)
     return row
+
+
+async def _validar_cuentas_del_numero(pedidas, concedidas: list) -> list:
+    """Las cuentas a las que se puede atar un número: siempre un subconjunto de
+    las que el usuario tiene concedidas. Sin esto, mandar un id ajeno en el
+    cuerpo de la request metería el WhatsApp de un cliente en el selector de
+    otro — el leak entrando por la puerta de atrás."""
+    if pedidas is None:
+        return list(concedidas)
+    ajenas = set(pedidas) - set(concedidas)
+    if ajenas:
+        raise HTTPException(
+            status_code=404,
+            detail="Alguna de las cuentas indicadas no está disponible para ti.",
+        )
+    return list(dict.fromkeys(pedidas))
 
 
 @router.patch("/my/whatsapp-numbers/{number_id}", response_model=WhatsAppNumberResponse)
@@ -535,7 +646,10 @@ async def update_whatsapp_number(
 ):
     """Corrige un número ya guardado — que era justamente lo que no se podía
     hacer: la UI solo ofrecía el campo mientras estuviera vacío."""
-    row = await _get_own_number(db, number_id, current_user.organization_id)
+    row = await _get_own_number(
+        db, number_id, current_user.organization_id,
+        await granted_ad_account_ids(db, current_user),
+    )
     if row.source == "META":
         raise HTTPException(
             status_code=400,
@@ -554,6 +668,14 @@ async def update_whatsapp_number(
 
     row.display_number = new_number
     db.add(row)
+
+    if payload.ad_account_ids is not None:
+        concedidas = await granted_ad_account_ids(db, current_user)
+        destino = await _validar_cuentas_del_numero(payload.ad_account_ids, concedidas)
+        await link_number_to_accounts(
+            db, row.id, current_user.organization_id, destino
+        )
+
     await db.commit()
     await db.refresh(row)
     return row
@@ -565,7 +687,10 @@ async def delete_whatsapp_number(
     current_user: User = Depends(require_role("OPERATOR")),
     db: AsyncSession = Depends(get_db),
 ):
-    row = await _get_own_number(db, number_id, current_user.organization_id)
+    row = await _get_own_number(
+        db, number_id, current_user.organization_id,
+        await granted_ad_account_ids(db, current_user),
+    )
     if row.source == "META":
         raise HTTPException(
             status_code=400,
@@ -576,9 +701,20 @@ async def delete_whatsapp_number(
     return {"message": "Número eliminado."}
 
 
-async def _get_own_number(db: AsyncSession, number_id: str, org_id: str) -> WhatsAppNumber:
-    row = await db.get(WhatsAppNumber, number_id)
-    if not row or row.organization_id != org_id:
+async def _get_own_number(
+    db: AsyncSession, number_id: str, org_id: str, concedidas=None
+) -> WhatsAppNumber:
+    """El número tiene que ser de la organización Y estar al alcance de alguna
+    de las cuentas del usuario. Con solo el filtro por organización, editar o
+    borrar el número de otro cliente era cuestión de pasar su id."""
+    q = select(WhatsAppNumber).where(
+        WhatsAppNumber.id == number_id,
+        WhatsAppNumber.organization_id == org_id,
+    )
+    if concedidas is not None:
+        q = q.where(*await condiciones_de_numero(db, org_id, concedidas))
+    row = (await db.execute(q)).scalar_one_or_none()
+    if not row:
         raise HTTPException(status_code=404, detail="Número no encontrado para esta organización.")
     return row
 
@@ -683,6 +819,12 @@ async def connect_ad_account(
             ad_account_id=ad_acc.id,
             organization_id=ad_acc.organization_id,
         ))
+
+    # Las páginas y números cargados cuando la organización todavía no tenía
+    # ninguna cuenta quedaron sin dueño. Al conectar la primera hay que
+    # dárselos: si no, desaparecen de la lista justo cuando el filtro por
+    # cuenta empieza a aplicar.
+    await adoptar_huerfanos(db, ad_acc.organization_id, ad_acc.id)
 
     await db.commit()
 

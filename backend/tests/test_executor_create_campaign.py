@@ -14,6 +14,7 @@ from app.models.meta_page import MetaPage
 from app.models.meta_creative import MetaCreative
 from app.models.campaign_draft import CampaignDraft
 from app.services.ai.executor import AIExecutor
+from conftest import enlazar_paginas_y_numeros
 
 
 @pytest.fixture(autouse=True)
@@ -74,6 +75,10 @@ async def test_approved_create_campaign_dispatches_saga_and_stays_executing(init
     db_session.add_all([page, creative])
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -101,6 +106,10 @@ async def test_needs_input_when_no_active_page_with_whatsapp(init_db, db_session
     db_session.add(MetaCreative(ad_account_id=acc.id, organization_id=org.id, image_hash="h1"))
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -121,6 +130,10 @@ async def test_needs_input_when_multiple_pages_with_whatsapp(init_db, db_session
     ])
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -139,6 +152,10 @@ async def test_needs_input_when_no_creative_available(init_db, db_session: Async
     ))
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -162,6 +179,10 @@ async def test_modify_action_unaffected_by_create_campaign_change(init_db, db_se
         planned_api_calls=[], status="APPROVED",
     )
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -187,6 +208,10 @@ async def test_default_page_resolves_ambiguity_with_multiple_pages(init_db, db_s
     acc.default_page_id = p2.id
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -213,6 +238,10 @@ async def test_default_page_without_whatsapp_needs_input(init_db, db_session: As
     acc.default_page_id = p2.id
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)
@@ -235,6 +264,10 @@ async def test_without_default_page_falls_back_to_single_page_rule(init_db, db_s
     ])
     action = _create_action(org, acc)
     db_session.add(action)
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     result = await AIExecutor(db_session).execute_action(acc, action)

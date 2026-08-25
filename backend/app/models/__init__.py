@@ -11,6 +11,8 @@ from app.models.organization_user import OrganizationUser
 from app.models.user_ad_account import UserAdAccount
 from app.models.meta_credential import MetaCredential
 from app.models.meta_page import MetaPage
+from app.models.meta_page_ad_account import MetaPageAdAccount
+from app.models.whatsapp_number_ad_account import WhatsAppNumberAdAccount
 from app.models.whatsapp_number import WhatsAppNumber
 from app.models.campaign_draft import CampaignDraft
 from app.models.adset_snapshot import AdsetSnapshot
@@ -40,6 +42,8 @@ __all__ = [
     "UserAdAccount",
     "MetaCredential",
     "MetaPage",
+    "MetaPageAdAccount",
+    "WhatsAppNumberAdAccount",
     "CampaignDraft",
     "AdsetSnapshot",
     "AdSnapshot",

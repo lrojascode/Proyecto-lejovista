@@ -375,9 +375,13 @@ export const api = {
     apiRequest<WhatsAppNumber>("/api/v1/organizations/my/whatsapp-numbers", "POST", {
       display_number: displayNumber,
     }),
-  updateWhatsAppNumber: (id: string, displayNumber: string) =>
+  // `adAccountIds` omitido deja el alcance como está; una lista lo REEMPLAZA.
+  // Los números MANUAL no se pueden reconciliar contra Meta, así que acotarlos
+  // a las cuentas que corresponden es un acto del usuario.
+  updateWhatsAppNumber: (id: string, displayNumber: string, adAccountIds?: string[]) =>
     apiRequest<WhatsAppNumber>(`/api/v1/organizations/my/whatsapp-numbers/${id}`, "PATCH", {
       display_number: displayNumber,
+      ...(adAccountIds ? { ad_account_ids: adAccountIds } : {}),
     }),
   deleteWhatsAppNumber: (id: string) =>
     apiRequest<{ message: string }>(`/api/v1/organizations/my/whatsapp-numbers/${id}`, "DELETE"),

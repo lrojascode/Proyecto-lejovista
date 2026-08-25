@@ -6,15 +6,27 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.meta_page import MetaPage
+from conftest import cablear_org, cuenta_de_prueba
 
 
-async def _signup(async_client: AsyncClient, slug: str):
+async def _signup(async_client: AsyncClient, slug: str, db: AsyncSession = None):
+    """Usuario + organización, y con `db` también una cuenta publicitaria.
+
+    Las páginas no existen sueltas: el sync las descubre POR cuenta, y su
+    alcance vive en `meta_page_ad_accounts`. Una organización sin cuentas no
+    tiene páginas que mostrar, así que probar el listado sin una cuenta sería
+    probar un estado que producción no produce.
+    """
     res = await async_client.post("/api/v1/auth/signup", json={
         "email": f"{slug}@example.com", "password": "securepassword123",
         "full_name": "Pages Tester", "organization_slug": slug, "organization_name": "Pages Org",
     })
     body = res.json()
-    return body["access_token"], body["user"]["organization_id"]
+    org_id = body["user"]["organization_id"]
+    if db is not None:
+        await cuenta_de_prueba(db, org_id, external_account_id=f"act_{slug}")
+        await db.commit()
+    return body["access_token"], org_id
 
 
 @pytest.mark.asyncio
@@ -27,7 +39,7 @@ async def test_list_my_pages_requires_auth(async_client: AsyncClient):
 async def test_list_my_pages_returns_active_pages_with_whatsapp(
     async_client: AsyncClient, db_session: AsyncSession
 ):
-    token, org_id = await _signup(async_client, "pages-list-org")
+    token, org_id = await _signup(async_client, "pages-list-org", db_session)
     db_session.add(MetaPage(
         organization_id=org_id, external_page_id="page_1", name="Mi Página",
         whatsapp_number="51999888777", instagram_actor_id="ig_1", status="ACTIVE",
@@ -36,6 +48,8 @@ async def test_list_my_pages_returns_active_pages_with_whatsapp(
         organization_id=org_id, external_page_id="page_inactive", name="Inactiva",
         status="INACTIVE",
     ))
+    await db_session.flush()
+    await cablear_org(db_session, org_id)
     await db_session.commit()
 
     res = await async_client.get(
@@ -50,12 +64,14 @@ async def test_list_my_pages_returns_active_pages_with_whatsapp(
 
 @pytest.mark.asyncio
 async def test_list_my_pages_scoped_per_organization(async_client: AsyncClient, db_session: AsyncSession):
-    _, org_a_id = await _signup(async_client, "pages-org-a")
-    token_b, _ = await _signup(async_client, "pages-org-b")
+    _, org_a_id = await _signup(async_client, "pages-org-a", db_session)
+    token_b, _ = await _signup(async_client, "pages-org-b", db_session)
 
     db_session.add(MetaPage(
         organization_id=org_a_id, external_page_id="page_a", name="Ajena", status="ACTIVE",
     ))
+    await db_session.flush()
+    await cablear_org(db_session, org_a_id)
     await db_session.commit()
 
     res = await async_client.get(
@@ -79,11 +95,13 @@ async def test_set_page_whatsapp_requires_auth(async_client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_set_page_whatsapp_updates_number(async_client: AsyncClient, db_session: AsyncSession):
-    token, org_id = await _signup(async_client, "pages-wa-org")
+    token, org_id = await _signup(async_client, "pages-wa-org", db_session)
     page = MetaPage(
         organization_id=org_id, external_page_id="page_1", name="Sin WhatsApp", status="ACTIVE",
     )
     db_session.add(page)
+    await db_session.flush()
+    await cablear_org(db_session, org_id)
     await db_session.commit()
 
     res = await async_client.patch(
@@ -97,11 +115,13 @@ async def test_set_page_whatsapp_updates_number(async_client: AsyncClient, db_se
 
 @pytest.mark.asyncio
 async def test_set_page_whatsapp_404_for_other_tenant(async_client: AsyncClient, db_session: AsyncSession):
-    _, org_a_id = await _signup(async_client, "pages-wa-org-a")
-    token_b, _ = await _signup(async_client, "pages-wa-org-b")
+    _, org_a_id = await _signup(async_client, "pages-wa-org-a", db_session)
+    token_b, _ = await _signup(async_client, "pages-wa-org-b", db_session)
 
     page = MetaPage(organization_id=org_a_id, external_page_id="page_a", name="Ajena", status="ACTIVE")
     db_session.add(page)
+    await db_session.flush()
+    await cablear_org(db_session, org_a_id)
     await db_session.commit()
 
     res = await async_client.patch(

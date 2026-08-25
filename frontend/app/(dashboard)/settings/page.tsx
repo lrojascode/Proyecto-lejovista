@@ -82,6 +82,10 @@ export default function Settings() {
 
   // Catálogo de números de WhatsApp de la organización (F1)
   const [numbers, setNumbers] = useState<WhatsAppNumber[]>([]);
+  // Alcance en edición: desde qué cuentas se puede usar cada número. Los MANUAL
+  // quedaron enlazados a TODAS las cuentas al migrar (no había cómo saber de
+  // cuál eran), así que acotarlos es un acto explícito.
+  const [numberAccountEdits, setNumberAccountEdits] = useState<Record<string, string[]>>({});
   const [newNumber, setNewNumber] = useState("");
   const [numberEdits, setNumberEdits] = useState<Record<string, string>>({});
   const [numberSavingId, setNumberSavingId] = useState<string | null>(null);
@@ -554,14 +558,31 @@ export default function Settings() {
     }
   };
 
+  const toggleNumberAccount = (numberId: string, accId: string) => {
+    setNumberAccountEdits((prev) => {
+      const actuales = prev[numberId] || [];
+      return {
+        ...prev,
+        [numberId]: actuales.includes(accId)
+          ? actuales.filter((i) => i !== accId)
+          : [...actuales, accId],
+      };
+    });
+  };
+
   const handleUpdateNumber = async (id: string) => {
     const value = (numberEdits[id] || "").trim();
     if (!value) return;
     setPagesMsg("");
     setNumberSavingId(id);
     try {
-      await api.updateWhatsAppNumber(id, value);
+      await api.updateWhatsAppNumber(id, value, numberAccountEdits[id]);
       setNumberEdits((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setNumberAccountEdits((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
@@ -1788,7 +1809,41 @@ export default function Settings() {
                         {n.verified_name && (
                           <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>{n.verified_name}</span>
                         )}
+                        {/* Desde qué cuentas se puede usar. En una organización
+                            con varios clientes, un número que alcanza a todas es
+                            el WhatsApp de uno en el anuncio de otro. */}
+                        {accounts.length > 1 && !editing && (
+                          <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
+                            {(n.ad_account_ids || []).length === accounts.length
+                              ? "Todas las cuentas"
+                              : accounts
+                                  .filter((a) => (n.ad_account_ids || []).includes(a.id))
+                                  .map((a) => a.name)
+                                  .join(", ") || "Sin cuenta asignada"}
+                          </span>
+                        )}
                       </div>
+
+                      {editing && accounts.length > 1 && (
+                        <div style={{ flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: "10px" }}>
+                          {accounts.map((acc) => (
+                            <label
+                              key={acc.id}
+                              style={{
+                                display: "flex", alignItems: "center", gap: "6px",
+                                fontSize: "12px", color: "var(--color-paper)", cursor: "pointer",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={(numberAccountEdits[n.id] || []).includes(acc.id)}
+                                onChange={() => toggleNumberAccount(n.id, acc.id)}
+                              />
+                              {acc.name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
 
                       {!isMeta && (
                         <div style={{ display: "flex", gap: "0.4rem" }}>
@@ -1805,11 +1860,18 @@ export default function Settings() {
                               <button
                                 type="button"
                                 className="btn-secondary btn-sm"
-                                onClick={() => setNumberEdits((prev) => {
-                                  const next = { ...prev };
-                                  delete next[n.id];
-                                  return next;
-                                })}
+                                onClick={() => {
+                                  setNumberEdits((prev) => {
+                                    const next = { ...prev };
+                                    delete next[n.id];
+                                    return next;
+                                  });
+                                  setNumberAccountEdits((prev) => {
+                                    const next = { ...prev };
+                                    delete next[n.id];
+                                    return next;
+                                  });
+                                }}
                               >
                                 Cancelar
                               </button>
@@ -1819,7 +1881,12 @@ export default function Settings() {
                               <button
                                 type="button"
                                 className="btn-secondary btn-sm"
-                                onClick={() => setNumberEdits((prev) => ({ ...prev, [n.id]: n.display_number }))}
+                                onClick={() => {
+                                  setNumberEdits((prev) => ({ ...prev, [n.id]: n.display_number }));
+                                  setNumberAccountEdits((prev) => ({
+                                    ...prev, [n.id]: n.ad_account_ids || [],
+                                  }));
+                                }}
                               >
                                 Editar
                               </button>

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
 from app.models.campaign_draft import CampaignDraft
+from conftest import enlazar_paginas_y_numeros
 from app.services.meta_ads.exceptions import TransientMetaError, PermanentMetaError
 from app.workers.creation_tasks import (
     task_upload_image,
@@ -675,6 +676,10 @@ async def test_creative_carries_headline_description_and_instagram(ad_account, d
         organization_id=org.id, external_page_id="page-1", name="Página",
         instagram_actor_id="ig_555", status="ACTIVE",
     ))
+    await db_session.flush()
+    # El ALCANCE de una página es por cuenta, no por organización: se replica
+    # lo que en producción hace el sync (o el seed de la migración).
+    await enlazar_paginas_y_numeros(db_session, org.id)
     await db_session.commit()
 
     mock_call_api = mocker.patch(
