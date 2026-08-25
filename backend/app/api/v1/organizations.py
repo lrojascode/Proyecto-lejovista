@@ -311,7 +311,12 @@ async def check_ad_account_token(
         raise HTTPException(status_code=400, detail="No hay token de acceso disponible.")
 
     from app.services.meta_ads.token_inspection import inspect_token_expiration
-    inspection = await inspect_token_expiration(raw_token)
+
+    # Con la app que emitió el token, no con la global: preguntar por un token
+    # con las credenciales de otra app devuelve error, y eso se interpreta como
+    # "token expirado" — marcaría EXPIRED una cuenta que funciona.
+    cred_app_id, cred_app_secret = cred.app_credentials
+    inspection = await inspect_token_expiration(raw_token, cred_app_id, cred_app_secret)
     if not inspection["is_valid"]:
         cred.status = "EXPIRED"
         acc.status = "EXPIRED"
@@ -733,7 +738,11 @@ async def connect_ad_account(
     # cayó el pipeline el 12-jul (cuentas EXPIRED). Si hay app credentials reales
     # configuradas, se canjea por un long-lived (~60 días) antes de guardar; si el
     # intercambio no aplica o falla, se guarda el token original (best-effort).
-    token_to_store, token_expires_at = await exchange_for_long_lived_token(acc_in.access_token)
+    # Si la cuenta trae su propia app de Meta, el canje va con ESA: canjear un
+    # token con las credenciales de otra app no funciona.
+    token_to_store, token_expires_at = await exchange_for_long_lived_token(
+        acc_in.access_token, acc_in.app_id, acc_in.app_secret
+    )
     if not token_to_store:
         token_to_store, token_expires_at = acc_in.access_token, None
 
@@ -780,6 +789,7 @@ async def connect_ad_account(
     if existing:
         # Si la cuenta ya existe, simplemente actualizamos el token
         existing.set_access_token(token_to_store, expires_at=token_expires_at)
+        existing.meta_credential.set_app_credentials(acc_in.app_id, acc_in.app_secret)
         if acc_in.refresh_token:
             existing.set_refresh_token(acc_in.refresh_token)
         existing.status = "ACTIVE"
@@ -797,6 +807,7 @@ async def connect_ad_account(
             status="ACTIVE"
         )
         ad_acc.set_access_token(token_to_store, expires_at=token_expires_at)
+        ad_acc.meta_credential.set_app_credentials(acc_in.app_id, acc_in.app_secret)
         if acc_in.refresh_token:
             ad_acc.set_refresh_token(acc_in.refresh_token)
         db.add(ad_acc)
@@ -846,7 +857,9 @@ async def reconnect_ad_account(
     """
     acc = await require_granted_ad_account(db, current_user, id)
 
-    token_to_store, token_expires_at = await exchange_for_long_lived_token(payload.access_token)
+    token_to_store, token_expires_at = await exchange_for_long_lived_token(
+        payload.access_token, payload.app_id, payload.app_secret
+    )
     if not token_to_store:
         token_to_store, token_expires_at = payload.access_token, None
 
@@ -881,6 +894,10 @@ async def reconnect_ad_account(
             )
 
     acc.set_access_token(token_to_store, expires_at=token_expires_at)
+    # Solo se toca la app si el payload la trae: reconectar sin `app_id` no
+    # puede borrar en silencio la app propia que ya estaba configurada.
+    if payload.app_id is not None:
+        acc.meta_credential.set_app_credentials(payload.app_id, payload.app_secret)
     acc.status = "ACTIVE"
     acc.last_sync_error_code = None
     acc.last_sync_error_detail = None

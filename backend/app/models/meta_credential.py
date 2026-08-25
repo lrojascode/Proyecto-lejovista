@@ -17,6 +17,17 @@ class MetaCredential(Base):
     organization_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id", ondelete="CASCADE"), index=True)
     access_token_encrypted: Mapped[str] = mapped_column(String)
     token_expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
+    # App de Meta que EMITIÓ este token. `None` = la app global de la agencia
+    # (`settings.META_APP_ID`), que es el caso normal.
+    #
+    # Va acá y no en `Organization` a propósito: lo que hay que saber no es "qué
+    # app usa este cliente" sino "qué app emitió ESTE token". Una organización
+    # puede alojar la cuenta de un cliente conectada con la app de la agencia y
+    # la de otro conectada con la suya, y con un solo valor por organización una
+    # de las dos queda mal. Y "mal" acá significa que `debug_token` falla, la
+    # tarea diaria lee eso como token inválido y marca la cuenta EXPIRED.
+    app_id: Mapped[str] = mapped_column(String, nullable=True)
+    app_secret_encrypted: Mapped[str] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="ACTIVE") # ACTIVE, EXPIRED, REVOKED
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -36,6 +47,41 @@ class MetaCredential(Base):
         # Meta no usa refresh tokens (se renueva el long-lived token). Se acepta el
         # parámetro por compatibilidad de la capa de settings, pero no se persiste.
         return None
+
+    def set_app_credentials(self, app_id: str = None, app_secret: str = None) -> None:
+        """Fija la app que emitió el token. Sin `app_id` vuelve a la app global.
+
+        El secret se cifra con Fernet igual que el access token: es una
+        credencial de la misma categoría y guardarla en claro sería peor que no
+        soportar apps propias.
+        """
+        app_id = (app_id or "").strip()
+        if not app_id:
+            self.app_id = None
+            self.app_secret_encrypted = None
+            return
+        self.app_id = app_id
+        if app_secret:
+            fernet = Fernet(settings.ENCRYPTION_KEY.encode())
+            self.app_secret_encrypted = fernet.encrypt(app_secret.strip().encode()).decode()
+
+    def get_app_secret(self) -> str:
+        if not self.app_secret_encrypted:
+            return ""
+        fernet = Fernet(settings.ENCRYPTION_KEY.encode())
+        return fernet.decrypt(self.app_secret_encrypted.encode()).decode()
+
+    @property
+    def app_credentials(self) -> tuple:
+        """`(app_id, app_secret)` de esta credencial, o `(None, None)`.
+
+        Devolver la tupla y no dos getters sueltos es para que ningún llamador
+        pueda usar el `app_id` propio con el secret global: son un par o no son
+        nada.
+        """
+        if not self.app_id or not self.app_secret_encrypted:
+            return (None, None)
+        return (self.app_id, self.get_app_secret())
 
     def get_access_token(self) -> str:
         if not self.access_token_encrypted:

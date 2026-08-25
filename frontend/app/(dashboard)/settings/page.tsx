@@ -103,6 +103,14 @@ export default function Settings() {
   const [deleteInputName, setDeleteInputName] = useState("");
   const [checkingTokenId, setCheckingTokenId] = useState<string | null>(null);
 
+  // App de Meta propia de la cuenta. Se deja vacío salvo que el token venga de
+  // la app del cliente y no de la de la agencia — un System User que vive en el
+  // Business Manager del cliente solo puede emitir tokens con la app de ese
+  // negocio, y con la app equivocada `debug_token` falla y la revisión diaria
+  // marca la cuenta EXPIRED sobre un token sano.
+  const [appId, setAppId] = useState("");
+  const [appSecret, setAppSecret] = useState("");
+
   // Equipo e Invitaciones (6.1)
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -631,11 +639,14 @@ export default function Settings() {
         name: accName,
         external_account_id: extId,
         access_token: accessToken,
+        ...(appId.trim() ? { app_id: appId.trim(), app_secret: appSecret.trim() } : {}),
       });
       setConnMsg("Cuenta conectada. Sincronización en curso en segundo plano.");
       setAccName("");
       setExtId("");
       setAccessToken("");
+      setAppId("");
+      setAppSecret("");
       fetchData();
     } catch (err: any) {
       setConnMsg(`Error: ${err.message}`);
@@ -2140,6 +2151,52 @@ export default function Settings() {
                 <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
                   Tus tokens de acceso se almacenan cifrados en nuestra base de datos con AES-256.
                 </span>
+              </div>
+
+              {/* App de Meta propia. Opcional y casi siempre vacío: solo hace
+                  falta cuando el token NO lo emitió la app de la agencia — por
+                  ejemplo un Usuario del Sistema que vive en el Business Manager
+                  del cliente, que solo puede emitir tokens con la app de ese
+                  negocio. Con la app equivocada, Meta rechaza la consulta de
+                  caducidad y la revisión diaria da la cuenta por vencida. */}
+              <details>
+                <summary style={{ fontSize: "0.85rem", color: "var(--text-secondary)", cursor: "pointer" }}>
+                  ¿El token viene de una app de Meta propia? (opcional)
+                </summary>
+                <div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                      App ID
+                    </label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={appId}
+                      onChange={(e) => setAppId(e.target.value)}
+                      placeholder="1331495631882896"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                      App Secret
+                    </label>
+                    <input
+                      type="password"
+                      className="form-input"
+                      value={appSecret}
+                      onChange={(e) => setAppSecret(e.target.value)}
+                      placeholder="Se guarda cifrado"
+                    />
+                  </div>
+                </div>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem", display: "block" }}>
+                  Déjalo vacío si generaste el token con la app de la agencia. Si lo
+                  generaste desde un Usuario del Sistema en el Business Manager del
+                  cliente, pon aquí la app de ese negocio: sin esto la cuenta aparecerá
+                  como vencida aunque el token funcione.
+                </span>
+              </details>
+              <div>
               </div>
 
               <button type="submit" className="btn-primary" style={{ alignSelf: "flex-end" }}>

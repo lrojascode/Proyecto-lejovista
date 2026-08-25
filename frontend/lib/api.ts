@@ -284,8 +284,14 @@ export const api = {
   getAdAccounts: (includeArchived: boolean = false) =>
     apiRequest<AdAccount[]>(`/api/v1/organizations/my/ad-accounts${includeArchived ? "?include_archived=true" : ""}`, "GET"),
   connectAdAccount: (data: any) => apiRequest<AdAccount>("/api/v1/organizations/my/ad-accounts", "POST", data),
-  reconnectAdAccount: (id: string, accessToken: string) =>
-    apiRequest<AdAccount>(`/api/v1/organizations/my/ad-accounts/${id}/reconnect`, "POST", { access_token: accessToken }),
+  // `appId`/`appSecret` solo cuando el token NO lo emitió la app de la agencia
+  // (un System User del Business Manager del cliente). Omitirlos deja la app
+  // que ya tenía configurada la cuenta.
+  reconnectAdAccount: (id: string, accessToken: string, appId?: string, appSecret?: string) =>
+    apiRequest<AdAccount>(`/api/v1/organizations/my/ad-accounts/${id}/reconnect`, "POST", {
+      access_token: accessToken,
+      ...(appId ? { app_id: appId, app_secret: appSecret } : {}),
+    }),
   checkAdAccountToken: (id: string) =>
     apiRequest<AdAccount>(`/api/v1/organizations/my/ad-accounts/${id}/check-token`, "POST"),
   archiveAdAccount: (id: string) => apiRequest(`/api/v1/organizations/my/ad-accounts/${id}/archive`, "POST"),

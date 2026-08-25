@@ -64,6 +64,15 @@ class AdAccount(Base):
         self.meta_credential.set_refresh_token(token)
 
     @property
+    def app_id(self):
+        """App de Meta que emitió el token de esta cuenta, o `None` si usa la
+        global de la agencia. Se expone (solo el ID, nunca el secret) para que
+        Configuración pueda mostrar cuál está en uso."""
+        if self.meta_credential:
+            return self.meta_credential.app_id
+        return None
+
+    @property
     def token_expires_at(self):
         if self.meta_credential:
             return self.meta_credential.token_expires_at

@@ -21,16 +21,24 @@ logger = logging.getLogger(__name__)
 WARNING_THRESHOLD_DAYS = 7
 
 
-def _app_credentials_configured() -> bool:
+def _app_credentials_configured(app_id: Optional[str] = None, app_secret: Optional[str] = None) -> bool:
+    """¿Hay un par app_id/secret utilizable? El propio de la credencial si lo
+    tiene, si no el global de la agencia."""
+    app_id = app_id or settings.META_APP_ID
+    app_secret = app_secret or settings.META_APP_SECRET
     return bool(
-        settings.META_APP_ID
-        and settings.META_APP_SECRET
-        and settings.META_APP_ID != "mock_app_id"
-        and settings.META_APP_SECRET != "mock_app_secret"
+        app_id
+        and app_secret
+        and app_id != "mock_app_id"
+        and app_secret != "mock_app_secret"
     )
 
 
-async def inspect_token_expiration(user_token: str) -> Dict[str, Any]:
+async def inspect_token_expiration(
+    user_token: str,
+    app_id: Optional[str] = None,
+    app_secret: Optional[str] = None,
+) -> Dict[str, Any]:
     """Consulta el estado y fecha de expiración de un access token de Meta.
 
     En modo mock o tests:
@@ -41,6 +49,12 @@ async def inspect_token_expiration(user_token: str) -> Dict[str, Any]:
     En modo real:
     - Consulta `GET /debug_token` con App Access Token (`app_id|app_secret`).
     - Si no hay credenciales de app, hace fallback a `GET /me`.
+
+    `app_id`/`app_secret` son los de la app que EMITIÓ el token; sin ellos se usa
+    la app global. Preguntarle a Meta por un token con las credenciales de OTRA
+    app devuelve error, y este error se lee más arriba como "token inválido":
+    `check_expiring_tokens` marca la cuenta EXPIRED y suspende el sync sobre un
+    token perfectamente sano. Por eso el par viaja hasta acá.
     """
     if not user_token:
         return {"is_valid": False, "expires_at": None, "scopes": [], "error": "Token vacío"}
@@ -76,9 +90,11 @@ async def inspect_token_expiration(user_token: str) -> Dict[str, Any]:
         }
 
     # Modo Producción Real
-    if _app_credentials_configured():
+    if _app_credentials_configured(app_id, app_secret):
         url = f"https://graph.facebook.com/{settings.META_API_VERSION}/debug_token"
-        app_access_token = f"{settings.META_APP_ID}|{settings.META_APP_SECRET}"
+        app_access_token = (
+            f"{app_id or settings.META_APP_ID}|{app_secret or settings.META_APP_SECRET}"
+        )
         params = {
             "input_token": user_token,
             "access_token": app_access_token,
@@ -158,7 +174,11 @@ async def check_expiring_tokens(db: AsyncSession) -> List[Dict[str, Any]]:
         if not raw_token:
             continue
 
-        inspection = await inspect_token_expiration(raw_token)
+        # La app que emitió ESTE token, no la global: preguntarle a Meta con las
+        # credenciales de otra app devuelve error, y ese error se lee abajo como
+        # "token inválido" → cuenta EXPIRED y sync suspendido sobre un token sano.
+        cred_app_id, cred_app_secret = cred.app_credentials
+        inspection = await inspect_token_expiration(raw_token, cred_app_id, cred_app_secret)
         is_valid = inspection["is_valid"]
         expires_at = inspection["expires_at"]
 

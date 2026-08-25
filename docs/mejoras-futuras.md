@@ -4,7 +4,19 @@ Ideas y capacidades pendientes, documentadas para no perderlas. No son bloqueant
 
 ## App de Meta por cliente (multi-app)
 
-**Estado:** documentado, no implementado. Solo hace falta si un cliente exige usar
+**Estado:** ✅ implementado el 2026-08-25 (commit de `meta_credential.app_id`).
+Se guarda **por credencial** (`meta_credentials.app_id` + `app_secret_encrypted`,
+cifrado con Fernet) y no por organización, que es lo que este documento proponía:
+lo que hace falta saber no es "qué app usa este cliente" sino "qué app emitió
+ESTE token". Una organización puede alojar la cuenta de un cliente conectada con
+la app de la agencia y la de otro con la suya, y con un solo valor por
+organización una de las dos queda mal — y "mal" significa que `debug_token`
+falla, la revisión diaria lo lee como token inválido y marca la cuenta EXPIRED.
+`NULL` = la app global de la agencia, que sigue siendo el caso normal.
+
+Lo que sigue es el análisis original, que se conserva porque explica el porqué.
+
+**Estado original:** documentado, no implementado. Solo hace falta si un cliente exige usar
 **su propia app de Meta** (su App ID/Secret), en vez de la app de la agencia.
 
 **Contexto — cómo funciona hoy:**

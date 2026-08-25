@@ -25,33 +25,42 @@ logger = logging.getLogger(__name__)
 _FALLBACK_TTL_DAYS = 60
 
 
-def _app_credentials_configured() -> bool:
+def _app_credentials_configured(app_id: Optional[str] = None, app_secret: Optional[str] = None) -> bool:
+    app_id = app_id or settings.META_APP_ID
+    app_secret = app_secret or settings.META_APP_SECRET
     return bool(
-        settings.META_APP_ID
-        and settings.META_APP_SECRET
-        and settings.META_APP_ID != "mock_app_id"
-        and settings.META_APP_SECRET != "mock_app_secret"
+        app_id
+        and app_secret
+        and app_id != "mock_app_id"
+        and app_secret != "mock_app_secret"
     )
 
 
 async def exchange_for_long_lived_token(
     short_lived_token: str,
+    app_id: Optional[str] = None,
+    app_secret: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[datetime.datetime]]:
     """Canjea `short_lived_token` por un long-lived token.
+
+    `app_id`/`app_secret` son los de la app que EMITIÓ el token. Sin ellos se usa
+    la app global de la agencia, que es el caso normal. Canjear con una app
+    distinta de la que emitió el token no funciona: Meta responde error y el
+    llamador se queda con el token original — que es lo correcto, pero silencioso.
 
     Devuelve `(token, expires_at)`. `(None, None)` si el intercambio no aplica
     (mock / app credentials sin configurar) o falla — el llamador decide qué
     hacer con el token original; conectar una cuenta nunca debe bloquearse por
     esto.
     """
-    if settings.MOCK_SERVICES or not _app_credentials_configured():
+    if settings.MOCK_SERVICES or not _app_credentials_configured(app_id, app_secret):
         return None, None
 
     url = f"https://graph.facebook.com/{settings.META_API_VERSION}/oauth/access_token"
     params = {
         "grant_type": "fb_exchange_token",
-        "client_id": settings.META_APP_ID,
-        "client_secret": settings.META_APP_SECRET,
+        "client_id": app_id or settings.META_APP_ID,
+        "client_secret": app_secret or settings.META_APP_SECRET,
         "fb_exchange_token": short_lived_token,
     }
     try:

@@ -1716,6 +1716,16 @@ export interface components {
         };
         /** AdAccountCreate */
         AdAccountCreate: {
+            /**
+             * App Id
+             * @description App ID de Meta que emitió el token. Vacío = la app de la agencia.
+             */
+            app_id?: string | null;
+            /**
+             * App Secret
+             * @description App Secret de esa app. Se guarda cifrado y nunca se devuelve.
+             */
+            app_secret?: string | null;
             /** Platform */
             platform: string;
             /** External Account Id */
@@ -1737,6 +1747,16 @@ export interface components {
         };
         /** AdAccountReconnect */
         AdAccountReconnect: {
+            /**
+             * App Id
+             * @description App ID de Meta que emitió el token. Vacío = la app de la agencia.
+             */
+            app_id?: string | null;
+            /**
+             * App Secret
+             * @description App Secret de esa app. Se guarda cifrado y nunca se devuelve.
+             */
+            app_secret?: string | null;
             /**
              * Access Token
              * @description Nuevo Access Token de Meta Graph API
@@ -1773,6 +1793,8 @@ export interface components {
             token_expires_in_days?: number | null;
             /** Token Warning */
             token_warning?: boolean | null;
+            /** App Id */
+            app_id?: string | null;
             /**
              * Created At
              * Format: date-time

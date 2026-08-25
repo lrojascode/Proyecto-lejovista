@@ -87,14 +87,28 @@ class LLMKeyTestResponse(BaseModel):
     provider: str
 
 # --- AD ACCOUNT SCHEMAS ---
-class AdAccountCreate(BaseModel):
+# App de Meta PROPIA de la cuenta. Se deja vacío salvo que el token venga de la
+# app del cliente y no de la de la agencia — el caso de un System User que vive
+# en el Business Manager del cliente y solo puede emitir tokens con la app de
+# ese negocio. Sin esto, `debug_token` falla y la revisión diaria marca la
+# cuenta EXPIRED sobre un token sano.
+class _AppPropiaMixin(BaseModel):
+    app_id: Optional[str] = Field(
+        None, description="App ID de Meta que emitió el token. Vacío = la app de la agencia."
+    )
+    app_secret: Optional[str] = Field(
+        None, description="App Secret de esa app. Se guarda cifrado y nunca se devuelve."
+    )
+
+
+class AdAccountCreate(_AppPropiaMixin):
     platform: str # META, GOOGLE
     external_account_id: str
     name: str
     access_token: str
     refresh_token: Optional[str] = None
 
-class AdAccountReconnect(BaseModel):
+class AdAccountReconnect(_AppPropiaMixin):
     access_token: str = Field(..., min_length=10, description="Nuevo Access Token de Meta Graph API")
 
 class AdAccountResponse(BaseModel):
@@ -112,6 +126,8 @@ class AdAccountResponse(BaseModel):
     token_expires_at: Optional[datetime] = None
     token_expires_in_days: Optional[int] = None
     token_warning: Optional[bool] = None
+    # Solo el ID: el secret se guarda cifrado y no sale nunca de la base.
+    app_id: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
