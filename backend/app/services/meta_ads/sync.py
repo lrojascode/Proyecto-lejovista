@@ -35,10 +35,22 @@ class MetaAdsSyncService:
         self._structure_cache: Dict[str, Any] = {}
 
     async def _structure_once(self, key: str, factory):
-        """Ejecuta `factory()` la primera vez y reusa el resultado después."""
-        if key not in self._structure_cache:
-            self._structure_cache[key] = await factory()
-        return self._structure_cache[key]
+        """Ejecuta `factory()` la primera vez y reusa el resultado después.
+
+        Solo se cachea una respuesta SIN error. `call_api` no levanta
+        excepciones: ante un rate limit o un 5xx devuelve `{"error": ...}`, y
+        cachear ese dict condenaba la corrida entera — el backfill recorre un
+        mes por vez con la misma instancia, así que un tropiezo puntual en
+        `/campaigns` hacía que TODOS los meses siguientes murieran con el mismo
+        error de hace una hora. Un error se reintenta en el próximo mes; lo que
+        no se puede es fosilizarlo.
+        """
+        if key in self._structure_cache:
+            return self._structure_cache[key]
+        res = await factory()
+        if not self._has_error(res):
+            self._structure_cache[key] = res
+        return res
 
     async def run_sync(self, ad_account: AdAccount, sync_type: str = "INCREMENTAL") -> SyncJob:
         """
@@ -80,7 +92,20 @@ class MetaAdsSyncService:
             else:
                 records_synced = await self._sync_real_data(ad_account, sync_type, limiter)
 
-            job.status = "COMPLETED"
+            # Un backfill que dejó meses sin bajar NO es COMPLETED. Marcarlo así
+            # (lo que se hacía siempre) es lo que hacía que "3 de 29" se viera
+            # idéntico a un historial completo: sin estado, sin error_message y
+            # sin nada que explicara por qué se detuvo.
+            avance = job.payload_json or {}
+            meses_fallidos = avance.get("months_failed") or 0
+            if sync_type == SYNC_TYPE_BACKFILL and meses_fallidos:
+                job.status = "PARTIAL"
+                job.error_message = (
+                    f"{meses_fallidos} de {avance.get('months_total')} meses no se pudieron bajar. "
+                    f"Último error — {avance.get('last_error')}"
+                )
+            else:
+                job.status = "COMPLETED"
             job.records_synced = records_synced
             job.completed_at = datetime.datetime.utcnow()
 
@@ -801,6 +826,26 @@ class MetaAdsSyncService:
 
         records = 0
         done = 0
+        failed = 0
+        last_error: Optional[str] = None
+
+        def _avance(ultimo_mes: str) -> Dict[str, Any]:
+            """Lo que ve `estado_historial.py` y el banner del frontend.
+
+            Incluye `months_failed` y `last_error` porque sin eso un backfill
+            que se queda en "3 de 29" es indistinguible de uno lento: el motivo
+            real solo existía en el log del worker, y el job se marcaba
+            COMPLETED igual.
+            """
+            return {
+                "months_total": total,
+                "months_done": done,
+                "months_failed": failed,
+                "last_month": ultimo_mes,
+                "last_error": last_error,
+                "estimated_seconds": status.estimated_seconds,
+            }
+
         for gap in status.gaps:
             first, last = month_range(gap.year_month)
             period = {
@@ -817,14 +862,7 @@ class MetaAdsSyncService:
                 # mes siguiente falle.
                 await self.db.commit()
                 done += 1
-            except Exception:
-                # Se sigue con los demás meses: un mes que falla no puede
-                # abortar los tres años. La reconciliación lo va a volver a
-                # detectar en la próxima corrida.
-                logger.exception(
-                    "Fallo bajando el mes %s de la cuenta %s; se continúa con los demás.",
-                    gap.year_month, acc_id,
-                )
+            except Exception as e:
                 await self.db.rollback()
                 # Rehidratar lo que el rollback expiró, ANTES de volver a tocar
                 # sus atributos. Sin esto el except no salvaba nada: el mes
@@ -833,13 +871,39 @@ class MetaAdsSyncService:
                 # de saltear el mes malo.
                 await self.db.refresh(job)
                 await self.db.refresh(ad_account)
+                failed += 1
+                last_error = f"{gap.year_month}: {e}"
 
-            job.payload_json = {
-                "months_total": total,
-                "months_done": done,
-                "last_month": gap.year_month,
-                "estimated_seconds": status.estimated_seconds,
-            }
+                classified = classify_meta_error(e)
+                if isinstance(classified, TransientMetaError):
+                    # Un fallo transitorio (rate limit, 5xx, red) NO es del mes:
+                    # es de la CUENTA. Seguir con los 26 meses restantes los
+                    # quema todos contra la misma pared y deja el backfill en
+                    # "3 de 29" sin haber reintentado nada.
+                    #
+                    # Al propagar, `run_sync` lo clasifica y Celery reintenta con
+                    # backoff (`autoretry_for=(TransientMetaError,)`, ya
+                    # configurado en la tarea). El reintento recalcula los huecos:
+                    # los meses ya bajados no se vuelven a pedir.
+                    logger.warning(
+                        "Fallo transitorio bajando el mes %s de la cuenta %s "
+                        "(%d de %d meses hechos); se corta para reintentar con backoff: %s",
+                        gap.year_month, acc_id, done, total, e,
+                    )
+                    job.payload_json = _avance(gap.year_month)
+                    self.db.add(job)
+                    await self.db.commit()
+                    raise classified from e
+
+                # Fallo permanente de ESE mes (datos raros, un rango que Meta
+                # rechaza): se saltea y se sigue. La reconciliación lo va a
+                # volver a detectar en la próxima corrida.
+                logger.exception(
+                    "Fallo permanente bajando el mes %s de la cuenta %s; se continúa con los demás.",
+                    gap.year_month, acc_id,
+                )
+
+            job.payload_json = _avance(gap.year_month)
             self.db.add(job)
             await self.db.commit()
 

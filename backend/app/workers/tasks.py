@@ -36,6 +36,14 @@ ANALYSIS_DEBOUNCE_TTL = 360         # el lock vive un poco más que el countdown
 # bloqueada indefinidamente.
 SYNC_LOCK_TTL = 900  # 15 min
 
+# El BACKFILL no dura lo que un sync: son decenas de meses, uno por vez, con las
+# pausas del backoff de Meta en el medio. Con los 15 minutos del lock normal el
+# candado caducaba a mitad de la corrida y el INCREMENTAL de las 06:00 entraba en
+# paralelo sobre la misma cuenta — dos procesos haciendo el mismo
+# "¿existe? no → insertar" sobre snapshots, que es exactamente la carrera que el
+# lock existe para evitar.
+BACKFILL_LOCK_TTL = 6 * 3600  # 6 h
+
 # El FULL inicial termina antes de encolar el backfill, pero el lock se libera
 # en el finally exterior. Un countdown corto evita que ambos trabajos compitan
 # por esos últimos instantes y separa el volumen histórico del sync interactivo.
@@ -89,7 +97,7 @@ def _release_analysis_lock(org_id: str) -> None:
     except Exception:
         pass
 
-def _acquire_sync_lock(ad_account_id: str) -> bool:
+def _acquire_sync_lock(ad_account_id: str, ttl: int = SYNC_LOCK_TTL) -> bool:
     """Lock por CUENTA para que no corran dos syncs a la vez sobre la misma.
 
     El worker `sync` tiene concurrency 2, así que dos syncs de la misma cuenta
@@ -109,7 +117,7 @@ def _acquire_sync_lock(ad_account_id: str) -> bool:
         client = redis_sync.Redis.from_url(settings.REDIS_URL)
         try:
             return bool(client.set(
-                f"sync_running:{ad_account_id}", "1", nx=True, ex=SYNC_LOCK_TTL
+                f"sync_running:{ad_account_id}", "1", nx=True, ex=ttl
             ))
         finally:
             try:
@@ -443,7 +451,7 @@ def backfill_ad_account_history(
     Solo lee Meta. Usa el mismo lock por cuenta que FULL/INCREMENTAL y consulta
     por organización para que un id de otra tenant no pueda cruzar datos.
     """
-    if not _acquire_sync_lock(ad_account_id):
+    if not _acquire_sync_lock(ad_account_id, ttl=BACKFILL_LOCK_TTL):
         raise self.retry(countdown=60, max_retries=10)
 
     async def _impl():
@@ -470,7 +478,10 @@ def backfill_ad_account_history(
 
             logger.info("Iniciando backfill histórico para %s.", ad_account_id)
             job = await MetaAdsSyncService(db).run_sync(acc, SYNC_TYPE_BACKFILL)
-            if job.status == "COMPLETED":
+            # PARTIAL cuenta igual que COMPLETED acá: bajó meses de verdad, así
+            # que el reporte cacheado ya no refleja la realidad aunque falten
+            # otros meses.
+            if job.status in ("COMPLETED", "PARTIAL"):
                 try:
                     from app.services.report_cache import invalidate as invalidate_report_cache
                     await invalidate_report_cache(acc.id)

@@ -404,19 +404,24 @@ async def get_history_status_endpoint(
 
     status = await get_history_status(db, current_user.organization_id, ad_account_id)
 
-    # Avance real si hay un backfill corriendo. `SyncJob.payload_json` lleva
+    # Avance real del último backfill. `SyncJob.payload_json` lleva
     # meses_hechos/meses_totales — progreso de verdad, no una barra falsa.
-    running = (await db.execute(
+    #
+    # Se trae el último job SIN filtrar por RUNNING y se decide después. Antes
+    # solo se miraba el que estuviera corriendo, así que un backfill que se
+    # detuvo a mitad desaparecía de la respuesta: el frontend seguía diciendo
+    # "faltan N meses" sin poder decir que el último intento se cortó ni por qué.
+    ultimo = (await db.execute(
         select(SyncJob)
         .where(
             SyncJob.organization_id == current_user.organization_id,
             SyncJob.ad_account_id == ad_account_id,
             SyncJob.sync_type == "BACKFILL",
-            SyncJob.status == "RUNNING",
         )
         .order_by(desc(SyncJob.started_at))
         .limit(1)
     )).scalar_one_or_none()
+    running = ultimo if (ultimo is not None and ultimo.status == "RUNNING") else None
 
     return {
         "show_estimate": not status.is_complete or running is not None,
@@ -428,6 +433,16 @@ async def get_history_status_endpoint(
         "first_month": status.first_month,
         "last_month": status.last_month,
         "in_progress": (running.payload_json or {}) if running else None,
+        # Qué pasó en el último intento, corriendo o no. Es lo que permite
+        # mostrar "se detuvo en 3 de 29 porque Meta limitó las peticiones" en
+        # vez de una barra congelada sin explicación.
+        "last_attempt": {
+            "status": ultimo.status,
+            "started_at": ultimo.started_at.isoformat() if ultimo.started_at else None,
+            "completed_at": ultimo.completed_at.isoformat() if ultimo.completed_at else None,
+            "error_message": ultimo.error_message,
+            "progress": ultimo.payload_json or {},
+        } if ultimo is not None else None,
     }
 
 @router.get("/sync-status")

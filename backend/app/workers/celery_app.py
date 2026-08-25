@@ -56,6 +56,16 @@ celery_app.conf.update(
     task_routes=_TASK_ROUTES,
     task_default_queue="celery",
 
+    # Con broker Redis y `acks_late=True` (sync_ad_account y
+    # backfill_ad_account_history lo usan), el ack recién ocurre al terminar la
+    # tarea. Redis considera una tarea "perdida" y la RE-ENTREGA a otro worker
+    # cuando pasa `visibility_timeout`, que por defecto es 1 hora. Un backfill de
+    # 29 meses dura más que eso: a la hora aparecía un segundo backfill de la
+    # misma cuenta, compitiendo por la misma cuota de Meta y pisándose en los
+    # upserts. Se sube por encima de lo que puede durar la tarea más larga (el
+    # mismo horizonte que BACKFILL_LOCK_TTL).
+    broker_transport_options={"visibility_timeout": 6 * 3600},
+
     # Programación de Tareas Periódicas (Celery Beat).
     # timezone=America/Lima (arriba) → crontab evalúa en hora local, sin derivar
     # con reinicios del contenedor. El fan-out se escalona con jitter en las tareas.

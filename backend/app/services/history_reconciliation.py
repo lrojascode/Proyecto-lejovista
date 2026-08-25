@@ -10,8 +10,9 @@ El criterio nuevo es **reconciliación mensual**:
     faltante_pct(mes) = (gasto que Meta reporta − gasto que tenemos) / gasto de Meta
 
 `AdAccountSpendMonthly` guarda lo que Meta dice que se gastó cada mes (bajado
-con `date_preset=maximum`, una fila por mes). Los snapshots diarios son lo que
-tenemos. La diferencia es, literalmente, cuánto histórico falta medido en plata.
+con `date_preset=maximum`, una fila por mes). Los snapshots diarios —los
+calientes **y los archivados**— son lo que tenemos. La diferencia es,
+literalmente, cuánto histórico falta medido en plata.
 
 Eso resuelve tres cosas de una:
 
@@ -37,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.models.api_call_log import APICallLog
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.models.snapshot_archive import CampaignSnapshotArchive
 
 logger = logging.getLogger("lejovista.history")
 
@@ -165,6 +167,46 @@ async def _seconds_per_request(db: AsyncSession, ad_account_id: str) -> float:
     return max(0.2, median)
 
 
+async def _local_spend_by_month(
+    db: AsyncSession, organization_id: str, ad_account_id: str
+) -> dict:
+    """Gasto diario que YA tenemos, por mes, sumando lo caliente y el archivo.
+
+    El archivo no es opcional. `snapshot_archiver` mueve a
+    `campaign_snapshots_archive` todo lo anterior a `SNAPSHOT_RETENTION_DAYS`
+    (400 días) y lo BORRA de la tabla caliente. Mirando solo la caliente, todo
+    mes de más de 400 días aparece como hueco para siempre: el backfill lo baja
+    cada día y el archivador lo vuelve a mover cada domingo. En una cuenta con
+    dos años y medio de historia eso son ~15 meses en bucle infinito, quemando
+    la cuota de Meta que después le falta a los meses que sí faltan de verdad.
+
+    `data_coverage.get_account_coverage` ya unía las dos fuentes; esto no era
+    una decisión distinta, era la misma pregunta contestada a medias.
+
+    Se agrupa en SQL: traer 400 días de filas para sumarlas en Python sería el
+    mismo resultado y mucha más memoria. Las tablas `_archive` no tienen FK por
+    diseño —sobreviven al borrado de un tenant— así que ahí el filtro por
+    organización es la ÚNICA garantía de aislamiento.
+    """
+    totals: dict = {}
+    for model in (CampaignSnapshot, CampaignSnapshotArchive):
+        rows = (await db.execute(
+            select(
+                func.substr(func.cast(model.date, String), 1, 7).label("ym"),
+                func.sum(model.spend),
+            )
+            .where(
+                model.organization_id == organization_id,
+                model.ad_account_id == ad_account_id,
+            )
+            .group_by("ym")
+        )).all()
+        for ym, total in rows:
+            if ym:
+                totals[ym] = totals.get(ym, 0.0) + float(total or 0.0)
+    return totals
+
+
 async def get_history_status(
     db: AsyncSession, organization_id: str, ad_account_id: str
 ) -> HistoryStatus:
@@ -187,20 +229,7 @@ async def get_history_status(
         # completo": es "todavía no sé", y decir que está completo sería mentir.
         return HistoryStatus(seconds_per_request=await _seconds_per_request(db, ad_account_id))
 
-    # Gasto local por mes. Se agrupa en SQL: traer 400 días de filas para sumarlas
-    # en Python sería el mismo resultado y mucha más memoria.
-    local_rows = (await db.execute(
-        select(
-            func.substr(func.cast(CampaignSnapshot.date, String), 1, 7).label("ym"),
-            func.sum(CampaignSnapshot.spend),
-        )
-        .where(
-            CampaignSnapshot.organization_id == organization_id,
-            CampaignSnapshot.ad_account_id == ad_account_id,
-        )
-        .group_by("ym")
-    )).all()
-    local_by_month = {ym: float(total or 0.0) for ym, total in local_rows if ym}
+    local_by_month = await _local_spend_by_month(db, organization_id, ad_account_id)
 
     current_ym = datetime.date.today().strftime("%Y-%m")
     status = HistoryStatus(

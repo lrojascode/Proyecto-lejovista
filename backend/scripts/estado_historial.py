@@ -61,6 +61,13 @@ async def _informe(db, acc: AdAccount, org_slug: str = "?", duplicada: bool = Fa
         if p.get("months_total"):
             print(f"  meses:   {p.get('months_done', 0)} de {p['months_total']}"
                   f"  ·  último cerrado: {p.get('last_month', '—')}")
+        # Cuántos meses se intentaron y NO entraron, con el motivo. Sin esto,
+        # "3 de 29" no distingue un backfill lento de uno que choca contra el
+        # mismo error 26 veces seguidas.
+        if p.get("months_failed"):
+            print(f"  fallaron: {p['months_failed']} meses")
+        if p.get("last_error"):
+            print(f"  motivo:  {str(p['last_error'])[:300]}")
         print(f"  filas:   {job.records_synced or 0}")
         if job.error_message:
             print(f"  ERROR:   {job.error_message[:300]}")
@@ -99,6 +106,10 @@ async def _informe(db, acc: AdAccount, org_slug: str = "?", duplicada: bool = Fa
     elif recientes > 0:
         restante = estado.estimated_seconds
         print(f">>> AVANZANDO. Estimado para lo que falta: {_duracion(restante)}.")
+    elif job and job.status in ("PARTIAL", "FAILED"):
+        print(f">>> EL ÚLTIMO BACKFILL TERMINÓ {job.status} y falta historial.")
+        print("    El motivo está arriba. Si es rate limit de Meta, la tarea se")
+        print("    reintenta sola con backoff y vuelve a encolarse desde Beat (04:00).")
     elif job and job.status == "RUNNING":
         print(">>> SIN FILAS NUEVAS y el job figura RUNNING.")
         print("    Puede estar esperando por rate limit de Meta (es normal hasta")

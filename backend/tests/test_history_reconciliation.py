@@ -202,3 +202,70 @@ async def test_sin_llamadas_registradas_usa_el_default(db_session: AsyncSession)
 
     status = await get_history_status(db_session, org.id, acc.id)
     assert status.seconds_per_request == DEFAULT_SECONDS_PER_REQUEST
+
+
+async def _archived_spend(db, org, acc, ym, spend):
+    """Un mes cuyos snapshots ya se movieron al archivo (D-3) y NO están en la
+    tabla caliente. Es el estado real de todo mes de más de
+    SNAPSHOT_RETENTION_DAYS."""
+    from app.models.snapshot_archive import CampaignSnapshotArchive
+
+    first, _ = month_range(ym)
+    db.add(CampaignSnapshotArchive(
+        original_id="orig-1", ad_account_id=acc.id, organization_id=org.id,
+        campaign_id="c1", campaign_name="C", status="ACTIVE", date=first, spend=spend,
+        # El archivador copia `created_at` de la fila caliente; la tabla de
+        # archivo no tiene default propio.
+        created_at=datetime.datetime.utcnow(),
+    ))
+
+
+@pytest.mark.asyncio
+async def test_un_mes_archivado_no_se_reporta_como_hueco(db_session: AsyncSession):
+    """El archivador BORRA de la tabla caliente lo anterior a 400 días.
+
+    Mirando solo `campaign_snapshots`, todo mes viejo quedaba como hueco para
+    siempre: el backfill lo bajaba cada día y el archivador lo movía cada
+    domingo. En una cuenta de 29 meses eran ~15 meses en bucle infinito.
+    """
+    org, acc = await _org_and_account(db_session, "rec-archivo")
+    ym = _prev_month(2)
+    await _meta_month(db_session, org, acc, ym, 1000.0)
+    await _archived_spend(db_session, org, acc, ym, 1000.0)
+    await db_session.commit()
+
+    status = await get_history_status(db_session, org.id, acc.id)
+    assert status.gaps == []
+    assert status.is_complete
+    assert status.months_covered == 1
+
+
+@pytest.mark.asyncio
+async def test_caliente_y_archivo_se_suman(db_session: AsyncSession):
+    """Un mes puede estar partido entre las dos tablas (el archivador corre a
+    mitad de mes). Ninguna de las dos sola alcanza el umbral; la suma sí."""
+    org, acc = await _org_and_account(db_session, "rec-archivo-mixto")
+    ym = _prev_month(2)
+    await _meta_month(db_session, org, acc, ym, 1000.0)
+    await _local_spend(db_session, org, acc, ym, 400.0)
+    await _archived_spend(db_session, org, acc, ym, 600.0)
+    await db_session.commit()
+
+    status = await get_history_status(db_session, org.id, acc.id)
+    assert status.gaps == []
+    assert status.is_complete
+
+
+@pytest.mark.asyncio
+async def test_el_archivo_de_otra_organizacion_no_tapa_un_hueco(db_session: AsyncSession):
+    """Las tablas `_archive` no tienen FK por diseño: el filtro por organización
+    es la ÚNICA garantía de aislamiento ahí."""
+    org, acc = await _org_and_account(db_session, "rec-archivo-aislado")
+    otra, otra_acc = await _org_and_account(db_session, "rec-archivo-ajena")
+    ym = _prev_month(2)
+    await _meta_month(db_session, org, acc, ym, 1000.0)
+    await _archived_spend(db_session, otra, otra_acc, ym, 1000.0)
+    await db_session.commit()
+
+    status = await get_history_status(db_session, org.id, acc.id)
+    assert [g.year_month for g in status.gaps] == [ym]
