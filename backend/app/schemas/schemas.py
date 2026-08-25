@@ -116,6 +116,13 @@ class AdAccountResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class MemberAdAccountsUpdate(BaseModel):
+    # Reemplaza el conjunto completo, no suma: la pantalla manda el estado final
+    # de los checkboxes. Una lista vacía es válida (deja al miembro sin acceso),
+    # salvo que sea el propio ADMIN que la está mandando.
+    ad_account_ids: List[str] = []
+
+
 class AdAccountDefaultPageUpdate(BaseModel):
     # None limpia la página predeterminada (vuelve al comportamiento anterior:
     # el executor solo resuelve si hay exactamente 1 página con WhatsApp).

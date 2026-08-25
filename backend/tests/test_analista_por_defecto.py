@@ -25,6 +25,7 @@ from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.user import User
+from conftest import conceder_todas_las_cuentas
 from app.services.campaign_chat import engine
 from app.services.campaign_chat.questions import OUT_OF_SCOPE_TEXT
 
@@ -61,6 +62,10 @@ async def sesion(db_session: AsyncSession):
     db_session.add_all([user, acc])
     await db_session.flush()
     db_session.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    # El acceso a una cuenta es una concesión explícita por usuario, no algo
+    # que dé la membresía: se replica acá lo que en producción hace el flujo de
+    # alta (conectar, invitación o el seed de la migración).
+    await conceder_todas_las_cuentas(db_session, user.id, org.id)
     await db_session.flush()
     await db_session.refresh(user, ["organizations"])
 

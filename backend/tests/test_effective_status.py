@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.organization import Organization
+from conftest import conceder_a_los_miembros
 
 
 async def _signup(async_client: AsyncClient, slug: str):
@@ -38,6 +39,10 @@ async def _seed(db: AsyncSession, org_id: str, campaigns):
             campaign_name=name, status=status, effective_status=effective,
             date=today, spend=10.0, conversions=1,
         ))
+    # El acceso a una cuenta es una concesión explícita por usuario: la cuenta
+    # se crea acá a mano, así que hay que replicar lo que en producción hace el
+    # flujo de alta (o el seed de la migración).
+    await conceder_a_los_miembros(db, org_id)
     await db.commit()
     return acc
 

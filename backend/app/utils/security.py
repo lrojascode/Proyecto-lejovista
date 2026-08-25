@@ -336,54 +336,149 @@ def require_module(module: str):
     return _dependency
 
 
+async def granted_ad_account_ids(
+    db: AsyncSession, current_user: User, include_archived: bool = False
+) -> list:
+    """Las cuentas de la organización activa que ESTE usuario tiene concedidas.
+
+    La organización sola no alcanza como unidad de aislamiento: una organización
+    puede alojar las cuentas de varios clientes, y ser miembro era todo o nada
+    —así es como el usuario de un cliente terminaba viendo las cuentas de los
+    demás—. `user_ad_accounts` es la concesión explícita, y **fail-closed**: sin
+    filas, ninguna cuenta.
+
+    Se hace JOIN contra `ad_accounts` filtrando por organización, no un `SELECT
+    ad_account_id FROM user_ad_accounts` a secas: una concesión vieja a una
+    cuenta que ya no está en esta organización no puede sobrevivir como acceso.
+    Los dos filtros valen, y el de organización sigue siendo el de afuera.
+
+    Fuente ÚNICA de la respuesta a "qué cuentas ve este usuario": si cada
+    endpoint arma su propio criterio, alcanza con que uno quede desalineado para
+    reabrir el leak.
+    """
+    from sqlalchemy import select
+    from app.models.ad_account import AdAccount
+    from app.models.user_ad_account import UserAdAccount
+
+    org_id = current_user.organization_id
+    if not org_id:
+        return []
+
+    q = (
+        select(AdAccount.id)
+        .join(UserAdAccount, UserAdAccount.ad_account_id == AdAccount.id)
+        .where(
+            UserAdAccount.user_id == current_user.id,
+            AdAccount.organization_id == org_id,
+        )
+    )
+    if not include_archived:
+        q = q.where(AdAccount.status != "ARCHIVED")
+    return list((await db.execute(q)).scalars().all())
+
+
+async def require_granted_ad_account(
+    db: AsyncSession, current_user: User, ad_account_id: str, include_archived: bool = True
+):
+    """Devuelve la cuenta si el usuario la tiene concedida; si no, 404.
+
+    404 y no 403 para no distinguir "no existe" de "no es tuya": es el mismo
+    criterio que ya usaban estos endpoints al comparar la organización.
+    """
+    from sqlalchemy import select
+    from app.models.ad_account import AdAccount
+    from app.models.user_ad_account import UserAdAccount
+
+    org_id = current_user.organization_id
+    acc = (await db.execute(
+        select(AdAccount)
+        .join(UserAdAccount, UserAdAccount.ad_account_id == AdAccount.id)
+        .where(
+            AdAccount.id == ad_account_id,
+            AdAccount.organization_id == org_id,
+            UserAdAccount.user_id == current_user.id,
+        )
+    )).scalar_one_or_none()
+    if acc is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AdAccount no encontrada para esta organización.",
+        )
+    if not include_archived and acc.status == "ARCHIVED":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AdAccount no encontrada para esta organización.",
+        )
+    return acc
+
+
 async def get_active_ad_account_id(
     request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Optional[str]:
-    """Resuelve la cuenta de anuncios activa de la request (aislamiento entre
-    varias cuentas de una misma organización).
+    """Resuelve la cuenta de anuncios activa de la request.
 
-    - Header `X-Ad-Account-Id` presente: debe pertenecer a la organización del
-      usuario (403 si no, sin distinguir "no existe" de "es de otra org" para no
-      filtrar qué cuentas existen).
-    - Sin header y la org tiene 0 cuentas: None (los endpoints ya manejan "sin
+    Es el cuello por el que pasa todo el producto para saber sobre qué cuenta
+    está trabajando, así que es acá donde se cierra el aislamiento por usuario:
+    la cuenta no solo tiene que pertenecer a la organización, tiene que estar
+    CONCEDIDA a quien pregunta (ver `granted_ad_account_ids`).
+
+    - Header `X-Ad-Account-Id` presente: debe estar concedida (403 si no, sin
+      distinguir "no existe" de "no es tuya" para no filtrar qué cuentas existen).
+    - Sin header y 0 cuentas concedidas: None (los endpoints ya manejan "sin
       cuentas").
-    - Sin header y la org tiene exactamente 1 cuenta: se auto-selecciona (preserva
-      el comportamiento actual para orgs con una sola cuenta conectada).
-    - Sin header y la org tiene 2+ cuentas: 400 explícito — elegir "la primera" en
+    - Sin header y exactamente 1 concedida: se auto-selecciona.
+    - Sin header y 2+ concedidas: 400 explícito — elegir "la primera" en
       silencio es el bug que este mecanismo reemplaza.
     """
     from sqlalchemy import select
     from app.models.ad_account import AdAccount
 
-    org_id = current_user.organization_id
     header_value = request.headers.get("X-Ad-Account-Id")
 
+    # Las cuentas archivadas (soft-delete) no cuentan para la auto-selección ni
+    # para el aviso de "elige una cuenta" — quedan fuera del uso normal.
+    ids = await granted_ad_account_ids(db, current_user)
+
     if header_value:
-        q = select(AdAccount).where(
-            AdAccount.id == header_value,
-            AdAccount.organization_id == org_id,
-            AdAccount.status != "ARCHIVED",
-        )
-        res = await db.execute(q)
-        if not res.scalar_one_or_none():
+        if header_value not in ids:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="La cuenta de anuncios seleccionada no pertenece a esta organización.",
             )
         return header_value
 
-    # Las cuentas archivadas (soft-delete) no cuentan para la auto-selección ni
-    # para el aviso de "elige una cuenta" — quedan fuera del uso normal.
-    q = select(AdAccount.id).where(
-        AdAccount.organization_id == org_id,
-        AdAccount.status != "ARCHIVED",
-    )
-    res = await db.execute(q)
-    ids = res.scalars().all()
-
     if not ids:
+        # Dos situaciones que hasta ahora se veían iguales y ya no lo son:
+        #
+        #  - La organización no tiene NINGUNA cuenta → None, como siempre. Los
+        #    endpoints que caen a "toda la organización" no devuelven nada
+        #    igual, porque no hay cuentas de las que colgar datos.
+        #
+        #  - La organización SÍ tiene cuentas pero ninguna es de este usuario →
+        #    403. Devolver None acá sería el leak: una docena de endpoints
+        #    interpretan "sin cuenta activa" como "toda la organización", así
+        #    que un usuario sin concesiones vería los datos de las cuentas
+        #    ajenas. Y decirlo en voz alta es mejor que un panel vacío sin
+        #    explicación: lo que hay que hacer es pedir acceso.
+        hay_cuentas_en_la_org = (await db.execute(
+            select(AdAccount.id).where(
+                AdAccount.organization_id == current_user.organization_id,
+                AdAccount.status != "ARCHIVED",
+            ).limit(1)
+        )).scalar_one_or_none()
+        if hay_cuentas_en_la_org:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "NO_AD_ACCOUNTS_GRANTED",
+                    "message": (
+                        "No tienes ninguna cuenta publicitaria asignada. "
+                        "Pide a un administrador de tu organización que te dé acceso."
+                    ),
+                },
+            )
         return None
     if len(ids) == 1:
         return ids[0]

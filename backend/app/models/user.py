@@ -1,4 +1,5 @@
 from datetime import datetime
+import logging
 import uuid
 from sqlalchemy import String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -38,5 +39,17 @@ class User(Base):
         if active:
             return active
         if self.organizations:
+            if len(self.organizations) > 1:
+                # El fallback se conserva —hay código que depende de él— pero
+                # deja de ser silencioso. Con dos organizaciones y sin nada que
+                # fije el tenant, `organizations[0]` no tiene orden garantizado:
+                # la organización activa puede cambiar entre sesiones, y lo que
+                # se escriba (una API key, una cuenta conectada) aterriza en la
+                # que toque. Ya pasó, y no dejó rastro en ningún log.
+                logging.getLogger("lejovista.security").warning(
+                    "Usuario %s pertenece a %d organizaciones y la sesión no fijó "
+                    "ninguna: se usa organizations[0], que no tiene orden garantizado.",
+                    self.email, len(self.organizations),
+                )
             return self.organizations[0].organization_id
         return None

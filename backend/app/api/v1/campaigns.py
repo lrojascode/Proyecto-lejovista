@@ -8,7 +8,10 @@ from app.models.ad_account import AdAccount
 from app.models.api_call_log import APICallLog
 from app.models.sync_job import SyncJob
 from app.schemas.schemas import CampaignSnapshotResponse
-from app.utils.security import get_current_user, get_active_ad_account_id, require_module, require_role
+from app.utils.security import (
+    get_current_user, get_active_ad_account_id, require_module, require_role,
+    granted_ad_account_ids, require_granted_ad_account,
+)
 from app.services.history_reconciliation import get_history_status
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
@@ -350,9 +353,13 @@ async def trigger_manual_sync(
     """
     Dispara manualmente el worker de sincronización incremental para todas las cuentas del tenant.
     """
+    # Solo las cuentas concedidas a este usuario: un miembro que ve una sola
+    # cuenta no puede disparar el sync de todo el tenant.
+    concedidas = await granted_ad_account_ids(db, current_user)
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
-        AdAccount.status == "ACTIVE"
+        AdAccount.status == "ACTIVE",
+        AdAccount.id.in_(concedidas or [""]),
     )
     res = await db.execute(q)
     accounts = res.scalars().all()
@@ -458,19 +465,19 @@ async def get_sync_status(
     from app.services.meta_ads.sync_progress import SyncProgressTracker
 
     if not ad_account_id:
+        concedidas = await granted_ad_account_ids(db, current_user)
         acc = (await db.execute(
             select(AdAccount).where(
                 AdAccount.organization_id == current_user.organization_id,
                 AdAccount.status == "ACTIVE",
+                AdAccount.id.in_(concedidas or [""]),
             ).limit(1)
         )).scalar_one_or_none()
         if not acc:
             return {"status": "IDLE", "message": "No hay cuentas activas"}
         ad_account_id = acc.id
     else:
-        acc = await db.get(AdAccount, ad_account_id)
-        if not acc or acc.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=404, detail="Cuenta de anuncios no encontrada.")
+        acc = await require_granted_ad_account(db, current_user, ad_account_id)
 
     status_data = SyncProgressTracker.get_sync_status(ad_account_id)
     if status_data:
@@ -505,15 +512,9 @@ async def get_campaign_suggestion(
     viendo la imagen real. Se valida que pertenezca a la organización: es una
     ruta que llega del cliente y termina leyendo del disco.
     """
-    q_acc = select(AdAccount).where(
-        AdAccount.id == ad_account_id,
-        AdAccount.organization_id == current_user.organization_id,
-        AdAccount.status != "ARCHIVED",
+    ad_account = await require_granted_ad_account(
+        db, current_user, ad_account_id, include_archived=False
     )
-    res_acc = await db.execute(q_acc)
-    ad_account = res_acc.scalar_one_or_none()
-    if not ad_account:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
     return await build_campaign_proposal(db, current_user, ad_account, product_name, image_path)
 
@@ -672,14 +673,9 @@ async def preflight_campaign(
     cuenta del cliente. Valida los MISMOS payloads que construye la Saga, no
     una copia — ver app/services/campaign_preflight.py.
     """
-    q_acc = select(AdAccount).where(
-        AdAccount.id == request.ad_account_id,
-        AdAccount.organization_id == current_user.organization_id,
-        AdAccount.status != "ARCHIVED",
+    ad_account = await require_granted_ad_account(
+        db, current_user, request.ad_account_id, include_archived=False
     )
-    ad_account = (await db.execute(q_acc)).scalar_one_or_none()
-    if not ad_account:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
     org = await db.get(Organization, current_user.organization_id)
     rules = get_campaign_rules_for_org(org)
@@ -726,14 +722,9 @@ async def preview_campaign_risk(
     """Ajuste 1: calcula el nivel de riesgo con los valores ACTUALES del
     formulario (presupuesto/copy editados por el usuario) para mostrarlo ANTES
     de confirmar la creación. No escribe nada."""
-    q_acc = select(AdAccount).where(
-        AdAccount.id == request.ad_account_id,
-        AdAccount.organization_id == current_user.organization_id,
-        AdAccount.status != "ARCHIVED",
+    ad_account = await require_granted_ad_account(
+        db, current_user, request.ad_account_id, include_archived=False
     )
-    ad_account = (await db.execute(q_acc)).scalar_one_or_none()
-    if not ad_account:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
     # Sugerencia determinista (sin LLM) solo para tener `suggested_budget` /
     # `has_history` con qué comparar el presupuesto que puso el usuario.
@@ -758,15 +749,9 @@ async def create_campaign(
     La lógica real vive en `start_campaign_creation` (CH-1): es el único camino
     de escritura, compartido con el chat de creación de campañas.
     """
-    q_acc = select(AdAccount).where(
-        AdAccount.id == request.ad_account_id,
-        AdAccount.organization_id == current_user.organization_id,
-        AdAccount.status != "ARCHIVED",
+    ad_account = await require_granted_ad_account(
+        db, current_user, request.ad_account_id, include_archived=False
     )
-    res_acc = await db.execute(q_acc)
-    ad_account = res_acc.scalar_one_or_none()
-    if not ad_account:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
 
     try:
         return await start_campaign_creation(db, current_user, ad_account, request)

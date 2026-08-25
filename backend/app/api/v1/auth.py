@@ -1,4 +1,6 @@
+import datetime
 import ipaddress
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,8 @@ from app.utils.security import (
 )
 from app.utils.throttle import enforce_rate_limit
 from app.config import settings
+
+logger = logging.getLogger("lejovista.auth")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -51,6 +55,56 @@ def _is_trusted_proxy_peer(peer_ip: str) -> bool:
     except ValueError:
         return False
     return addr.is_private or addr.is_loopback
+
+
+async def resolve_active_org(
+    request: Request, db: AsyncSession, user: User
+) -> "str | None":
+    """Con qué organización queda ATADA la sesión que se está emitiendo.
+
+    Antes esto era `user.organizations[0].organization_id`: sin `ORDER BY` y sin
+    mirar el subdominio, aunque el header viniera. Con un usuario que pertenece
+    a dos organizaciones, cuál quedaba en el token variaba entre sesiones — así
+    es como una API key terminó guardada en la organización equivocada y el
+    analista contestó con plantillas durante días sin que nada se viera roto.
+
+    Orden de decisión:
+      1. `X-Tenant-Slug` (el subdominio): manda, y tiene que ser del usuario.
+         Fallar acá es mejor que emitir un token de otra organización y que
+         cada request posterior devuelva 403 sin explicar por qué.
+      2. Una sola organización: esa.
+      3. Varias y nada que lo fije: la membresía más ANTIGUA. No es una
+         elección de negocio, es que sea siempre la misma.
+    """
+    memberships = list(user.organizations or [])
+    if not memberships:
+        return None
+
+    tenant_slug = request.headers.get("X-Tenant-Slug")
+    if tenant_slug:
+        org = (await db.execute(
+            select(Organization).where(Organization.slug == tenant_slug)
+        )).scalar_one_or_none()
+        propias = {ou.organization_id for ou in memberships}
+        if not org or org.id not in propias:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Acceso denegado: No tienes permisos para acceder a esta organización.",
+            )
+        return org.id
+
+    if len(memberships) > 1:
+        logger.warning(
+            "El usuario %s pertenece a %d organizaciones y nada fijó cuál: se usa la "
+            "membresía más antigua. Si los datos aparecen en la organización "
+            "equivocada, es por acá.",
+            user.email, len(memberships),
+        )
+
+    memberships.sort(
+        key=lambda ou: (ou.created_at or datetime.datetime.min, ou.organization_id)
+    )
+    return memberships[0].organization_id
 
 
 def enrich_user(user: User):
@@ -171,7 +225,7 @@ async def login(
             detail="Correo o contraseña incorrectos."
         )
 
-    active_org = user.organizations[0].organization_id if user.organizations else None
+    active_org = await resolve_active_org(request, db, user)
     access_token = create_access_token(subject=user.id, org=active_org)
     refresh_token = create_refresh_token(subject=user.id, org=active_org)
 
@@ -212,7 +266,14 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     if not user:
         raise HTTPException(status_code=401, detail="Usuario no encontrado.")
 
-    org = data.get("org") or (user.organizations[0].organization_id if user.organizations else None)
+    # El claim del refresh manda, PERO se revalida: entre que se emitió y ahora,
+    # al usuario lo pueden haber sacado de esa organización, y renovar la sesión
+    # contra una organización de la que ya no es miembro sería seguir dándole
+    # acceso por inercia. Si ya no vale, se resuelve de cero.
+    propias = {ou.organization_id for ou in (user.organizations or [])}
+    org = data.get("org") if data.get("org") in propias else None
+    if org is None:
+        org = await resolve_active_org(request, db, user)
 
     # Rotación: revocar el refresh usado y emitir uno nuevo.
     await revoke_jti(data.get("jti"), settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)

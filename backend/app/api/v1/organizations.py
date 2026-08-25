@@ -18,6 +18,7 @@ from app.models.api_call_log import APICallLog
 from app.models.ai_token_usage import AITokenUsage
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 from app.models.campaign_learning_log import CampaignLearningLog
+from app.models.user_ad_account import UserAdAccount
 from dataclasses import asdict
 from app.schemas.schemas import (
     OrganizationResponse, OrganizationUpdate, LLMKeyTestRequest, LLMKeyTestResponse,
@@ -27,12 +28,15 @@ from app.schemas.schemas import (
     CampaignRulesConfigUpdate, AIThresholdsConfigUpdate,
 )
 from app.schemas.invitation_schemas import InvitationCreateRequest
+from app.schemas.schemas import MemberAdAccountsUpdate
 from app.schemas.response_schemas import (
     AiModelsResponse, BusinessPoliciesResponse, MessageResponse, InvitationResponse,
     CampaignRulesConfigResponse, AIThresholdsConfigResponse,
 )
 from app.utils.urls import invitation_url
-from app.utils.security import get_current_user, require_role
+from app.utils.security import (
+    get_current_user, require_role, granted_ad_account_ids, require_granted_ad_account,
+)
 from app.utils.throttle import enforce_cooldown
 from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
 from app.workers.tasks import sync_ad_account, refresh_org_pages
@@ -227,7 +231,18 @@ async def list_my_ad_accounts(
     ofrecen para elegir. La pantalla de Configuración pide
     `include_archived=true` para poder mostrarlas y ofrecer "Restaurar".
     """
-    conditions = [AdAccount.organization_id == current_user.organization_id]
+    conditions = [
+        AdAccount.organization_id == current_user.organization_id,
+        # Aislamiento por usuario: la organización sola no alcanza cuando aloja
+        # las cuentas de varios clientes. Este listado es el que alimenta
+        # Configuración y el selector global — el síntoma por el que al usuario
+        # de un cliente le aparecían las cuentas de los demás.
+        AdAccount.id.in_(
+            select(UserAdAccount.ad_account_id).where(
+                UserAdAccount.user_id == current_user.id
+            )
+        ),
+    ]
     if not include_archived:
         conditions.append(AdAccount.status != "ARCHIVED")
     q = select(AdAccount).where(*conditions)
@@ -247,9 +262,7 @@ async def archive_ad_account(
     `status=ARCHIVED`. Conserva todo el historial (snapshots, insights,
     acciones) y se puede revertir con `restore_ad_account`.
     """
-    acc = await db.get(AdAccount, ad_account_id)
-    if not acc or acc.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+    acc = await require_granted_ad_account(db, current_user, ad_account_id)
 
     acc.status = "ARCHIVED"
     db.add(acc)
@@ -264,9 +277,7 @@ async def restore_ad_account(
     db: AsyncSession = Depends(get_db)
 ):
     """Revierte el archivado de archive_ad_account."""
-    acc = await db.get(AdAccount, ad_account_id)
-    if not acc or acc.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+    acc = await require_granted_ad_account(db, current_user, ad_account_id)
     if acc.status != "ARCHIVED":
         raise HTTPException(status_code=400, detail="La cuenta no está archivada.")
 
@@ -283,9 +294,7 @@ async def check_ad_account_token(
     db: AsyncSession = Depends(get_db)
 ):
     """Inspecciona el estado y expiración del token de Meta para esta cuenta."""
-    acc = await db.get(AdAccount, ad_account_id)
-    if not acc or acc.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Cuenta publicitaria no encontrada.")
+    acc = await require_granted_ad_account(db, current_user, ad_account_id)
 
     cred = acc.meta_credential
     if not cred:
@@ -326,9 +335,7 @@ async def delete_ad_account(
     Eliminación definitiva de una cuenta publicitaria archivada.
     Exige status == 'ARCHIVED' (no se borra una cuenta activa).
     """
-    acc = await db.get(AdAccount, ad_account_id)
-    if not acc or acc.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+    acc = await require_granted_ad_account(db, current_user, ad_account_id)
     if acc.status != "ARCHIVED":
         raise HTTPException(status_code=400, detail="Solo se pueden eliminar definitivamente cuentas previamente archivadas.")
 
@@ -357,9 +364,7 @@ async def set_ad_account_default_page(
     y AIExecutor: con 2+ páginas en la org, las acciones CREATE_CAMPAIGN caían
     siempre en NEEDS_INPUT porque no había forma de designar cuál promocionar.
     """
-    acc = await db.get(AdAccount, ad_account_id)
-    if not acc or acc.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="AdAccount no encontrada para esta organización.")
+    acc = await require_granted_ad_account(db, current_user, ad_account_id)
 
     if payload.page_id is None:
         acc.default_page_id = None
@@ -402,9 +407,13 @@ async def refresh_my_pages(
     acceso a una página nueva en el Business Manager y se quiere ver en el
     dropdown de inmediato (no a las 06:00 del día siguiente).
     """
+    # Solo cuenta lo que este usuario tiene concedido: quien no ve ninguna
+    # cuenta tampoco puede disparar el refresh de la organización entera.
+    concedidas = await granted_ad_account_ids(db, current_user)
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
         AdAccount.status == "ACTIVE",
+        AdAccount.id.in_(concedidas or [""]),
     )
     res = await db.execute(q)
     accounts = res.scalars().all()
@@ -656,6 +665,25 @@ async def connect_ad_account(
             ad_acc.set_refresh_token(acc_in.refresh_token)
         db.add(ad_acc)
 
+    await db.flush()
+
+    # La cuenta recién conectada se le concede a quien la conectó. Sin esto
+    # desaparecería de su propia pantalla: el modelo de concesiones es
+    # fail-closed, así que una cuenta sin filas en `user_ad_accounts` no la ve
+    # nadie. Los demás miembros se agregan desde "Equipo y Miembros".
+    ya_concedida = (await db.execute(
+        select(UserAdAccount.id).where(
+            UserAdAccount.user_id == current_user.id,
+            UserAdAccount.ad_account_id == ad_acc.id,
+        )
+    )).scalar_one_or_none()
+    if not ya_concedida:
+        db.add(UserAdAccount(
+            user_id=current_user.id,
+            ad_account_id=ad_acc.id,
+            organization_id=ad_acc.organization_id,
+        ))
+
     await db.commit()
 
     # 3. Disparar Sincronización Inicial FULL en background
@@ -674,9 +702,7 @@ async def reconnect_ad_account(
     """
     4.4: Reconexión simplificada de una cuenta EXPIRED con un nuevo token.
     """
-    acc = await db.get(AdAccount, id)
-    if not acc or acc.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Cuenta de anuncios no encontrada.")
+    acc = await require_granted_ad_account(db, current_user, id)
 
     token_to_store, token_expires_at = await exchange_for_long_lived_token(payload.access_token)
     if not token_to_store:
@@ -750,6 +776,120 @@ async def list_org_members(
     return members
 
 
+@router.get("/my/members/{user_id}/ad-accounts")
+async def get_member_ad_accounts(
+    user_id: str,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Qué cuentas publicitarias de esta organización ve un miembro.
+
+    Devuelve el catálogo completo de la organización más los ids concedidos, en
+    una sola llamada: la pantalla necesita las dos cosas para dibujar los
+    checkboxes, y pedirlas por separado abre la puerta a mostrarlas
+    desincronizadas.
+    """
+    await _require_member(db, user_id, current_user.organization_id)
+
+    cuentas = (await db.execute(
+        select(AdAccount)
+        .where(AdAccount.organization_id == current_user.organization_id)
+        .order_by(AdAccount.name)
+    )).scalars().all()
+    concedidas = set((await db.execute(
+        select(UserAdAccount.ad_account_id).where(
+            UserAdAccount.user_id == user_id,
+            UserAdAccount.organization_id == current_user.organization_id,
+        )
+    )).scalars().all())
+
+    return {
+        "user_id": user_id,
+        "granted_ids": sorted(concedidas),
+        "available": [
+            {
+                "id": a.id,
+                "name": a.name,
+                "external_account_id": a.external_account_id,
+                "status": a.status,
+            }
+            for a in cuentas
+        ],
+    }
+
+
+@router.put("/my/members/{user_id}/ad-accounts")
+async def set_member_ad_accounts(
+    user_id: str,
+    payload: MemberAdAccountsUpdate,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fija exactamente a qué cuentas accede un miembro (reemplaza, no suma).
+
+    Un ADMIN no puede quitarse a sí mismo la última cuenta: quedaría sin acceso
+    y sin forma de devolvérselo desde la propia pantalla que acaba de usar.
+    """
+    await _require_member(db, user_id, current_user.organization_id)
+
+    de_la_org = set((await db.execute(
+        select(AdAccount.id).where(
+            AdAccount.organization_id == current_user.organization_id
+        )
+    )).scalars().all())
+    pedidas = set(payload.ad_account_ids or [])
+    ajenas = pedidas - de_la_org
+    if ajenas:
+        raise HTTPException(
+            status_code=404,
+            detail="Alguna de las cuentas indicadas no pertenece a esta organización.",
+        )
+    if user_id == current_user.id and not pedidas and de_la_org:
+        raise HTTPException(
+            status_code=400,
+            detail="No puedes dejarte a ti mismo sin ninguna cuenta: perderías el acceso a esta pantalla.",
+        )
+
+    actuales = {
+        row.ad_account_id: row
+        for row in (await db.execute(
+            select(UserAdAccount).where(
+                UserAdAccount.user_id == user_id,
+                UserAdAccount.organization_id == current_user.organization_id,
+            )
+        )).scalars().all()
+    }
+
+    for acc_id, row in actuales.items():
+        if acc_id not in pedidas:
+            await db.delete(row)
+    for acc_id in pedidas - set(actuales):
+        db.add(UserAdAccount(
+            user_id=user_id,
+            ad_account_id=acc_id,
+            organization_id=current_user.organization_id,
+        ))
+
+    await db.commit()
+    return {"user_id": user_id, "granted_ids": sorted(pedidas)}
+
+
+async def _require_member(db: AsyncSession, user_id: str, org_id: str) -> None:
+    """404 si `user_id` no es miembro de la organización activa. Se comprueba
+    siempre: sin esto, un ADMIN podría leer o escribir las concesiones de un
+    usuario de otro tenant pasando su id."""
+    es_miembro = (await db.execute(
+        select(OrganizationUser.id).where(
+            OrganizationUser.user_id == user_id,
+            OrganizationUser.organization_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not es_miembro:
+        raise HTTPException(
+            status_code=404, detail="Ese usuario no es miembro de tu organización."
+        )
+
+
 @router.get("/my/invitations", response_model=List[InvitationResponse])
 async def list_org_invitations(
     current_user: User = Depends(require_role("ADMIN")),
@@ -805,7 +945,23 @@ async def create_org_invitation(
             status_code=400, detail="Este usuario ya es miembro de tu organización."
         )
 
-    # 2. Generar token y fecha de expiración (7 días)
+    # 2. Las cuentas que se le van a conceder al aceptar. Se validan ACÁ contra
+    # la organización: un id de otra organización en el cuerpo de la request no
+    # puede convertirse en un acceso al aceptar la invitación.
+    cuentas_concedidas = None
+    if payload.ad_account_ids is not None:
+        de_la_org = set((await db.execute(
+            select(AdAccount.id).where(AdAccount.organization_id == org.id)
+        )).scalars().all())
+        ajenas = [i for i in payload.ad_account_ids if i not in de_la_org]
+        if ajenas:
+            raise HTTPException(
+                status_code=400,
+                detail="Alguna de las cuentas indicadas no pertenece a tu organización.",
+            )
+        cuentas_concedidas = list(dict.fromkeys(payload.ad_account_ids))
+
+    # 3. Generar token y fecha de expiración (7 días)
     token = secrets.token_urlsafe(32)
     expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=7)
 
@@ -816,6 +972,7 @@ async def create_org_invitation(
         token=token,
         expires_at=expires_at,
         invited_by_user_id=current_user.id,
+        ad_account_ids=cuentas_concedidas,
     )
     db.add(inv)
     await db.commit()
@@ -823,7 +980,7 @@ async def create_org_invitation(
 
     invite_url = invitation_url(token)
 
-    # 3. Enviar email de invitación
+    # 4. Enviar email de invitación
     subject = f"Has sido invitado a unirte a {org.name} en LejoVista"
     html_content = f"""
     <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">

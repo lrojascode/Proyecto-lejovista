@@ -10,6 +10,7 @@ from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.user import User
 from app.models.organization_user import OrganizationUser
+from conftest import conceder_todas_las_cuentas
 from sqlalchemy import select
 
 
@@ -35,6 +36,10 @@ async def _auth_headers(async_client: AsyncClient, db: AsyncSession, org, acc, e
     token = signup_res.json()["access_token"]
     user = (await db.execute(select(User).where(User.email == email))).scalar_one()
     db.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    # El acceso a una cuenta es una concesión explícita por usuario, no algo
+    # que dé la membresía: se replica acá lo que en producción hace el flujo de
+    # alta (conectar, invitación o el seed de la migración).
+    await conceder_todas_las_cuentas(db, user.id, org.id)
     await db.commit()
     return {"Authorization": f"Bearer {token}", "X-Tenant-Slug": org.slug, "X-Ad-Account-Id": acc.id}
 
@@ -84,6 +89,10 @@ async def test_pdf_endpoint_requires_active_ad_account(async_client: AsyncClient
     token = signup_res.json()["access_token"]
     user = (await db_session.execute(select(User).where(User.email == "pdf-noacc@example.com"))).scalar_one()
     db_session.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    # El acceso a una cuenta es una concesión explícita por usuario, no algo
+    # que dé la membresía: se replica acá lo que en producción hace el flujo de
+    # alta (conectar, invitación o el seed de la migración).
+    await conceder_todas_las_cuentas(db_session, user.id, org.id)
     await db_session.commit()
 
     headers = {"Authorization": f"Bearer {token}", "X-Tenant-Slug": org.slug}

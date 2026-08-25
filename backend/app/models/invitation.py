@@ -1,6 +1,6 @@
 from datetime import datetime
 import uuid
-from sqlalchemy import String, DateTime, ForeignKey
+from sqlalchemy import String, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
@@ -20,6 +20,11 @@ class Invitation(Base):
     invited_by_user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    # Cuentas publicitarias que se le conceden al aceptar (ver UserAdAccount).
+    # El modelo de concesiones es fail-closed: sin esto, un invitado nuevo entra
+    # y no ve ninguna cuenta hasta que un ADMIN se acuerde de dárselas. La
+    # decisión de a qué accede se toma donde se invita.
+    ad_account_ids: Mapped[list] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones

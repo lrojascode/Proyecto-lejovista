@@ -15,6 +15,7 @@ from app.models.ad_account import AdAccount
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.ai_insight import AIInsight
 from app.models.ai_action import AIAction
+from conftest import conceder_todas_las_cuentas
 
 
 class _FakeRedis:
@@ -885,6 +886,10 @@ async def test_api_call_history_scoped_to_tenant(async_client: AsyncClient, db_s
     )).scalar_one()
     from app.models.organization_user import OrganizationUser
     db_session.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    # El acceso a una cuenta es una concesión explícita por usuario, no algo
+    # que dé la membresía: se replica acá lo que en producción hace el flujo de
+    # alta (conectar, invitación o el seed de la migración).
+    await conceder_todas_las_cuentas(db_session, user.id, org.id)
     await db_session.commit()
 
     headers = {"Authorization": f"Bearer {token}", "X-Tenant-Slug": "hist-org"}
@@ -1155,6 +1160,10 @@ async def _auth_headers_for_org(async_client: AsyncClient, db: AsyncSession, org
 
     user = (await db.execute(sa_select(User).where(User.email == email))).scalar_one()
     db.add(OrganizationUser(user_id=user.id, organization_id=org.id, role="ADMIN"))
+    # El acceso a una cuenta es una concesión explícita por usuario, no algo
+    # que dé la membresía: se replica acá lo que en producción hace el flujo de
+    # alta (conectar, invitación o el seed de la migración).
+    await conceder_todas_las_cuentas(db, user.id, org.id)
     await db.commit()
 
     return {"Authorization": f"Bearer {token}", "X-Tenant-Slug": org.slug}

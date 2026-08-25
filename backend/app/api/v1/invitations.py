@@ -9,6 +9,8 @@ from app.models.invitation import Invitation
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.user import User
+from app.models.ad_account import AdAccount
+from app.models.user_ad_account import UserAdAccount
 from app.schemas.invitation_schemas import InvitationAcceptRequest
 from app.schemas.schemas import TokenResponse
 from app.schemas.response_schemas import InvitationDetailsResponse
@@ -111,6 +113,36 @@ async def accept_invitation(
             role=inv.role,
         )
         db.add(org_user)
+
+    await db.flush()
+
+    # Conceder las cuentas publicitarias que fijó quien invitó. El modelo de
+    # concesiones es fail-closed (ver UserAdAccount): sin esto el invitado entra
+    # y no ve ninguna cuenta. `ad_account_ids = None` significa "todas las de la
+    # organización" —el caso del equipo propio—; una lista acota, que es el caso
+    # de un cliente que solo debe ver la suya.
+    if inv.ad_account_ids is None:
+        conceder = (await db.execute(
+            select(AdAccount.id).where(AdAccount.organization_id == org.id)
+        )).scalars().all()
+    else:
+        # Se revalida contra la organización: entre invitar y aceptar pueden
+        # haber pasado días y una cuenta puede haberse borrado o movido.
+        conceder = (await db.execute(
+            select(AdAccount.id).where(
+                AdAccount.organization_id == org.id,
+                AdAccount.id.in_(inv.ad_account_ids or [""]),
+            )
+        )).scalars().all()
+
+    ya_tiene = set((await db.execute(
+        select(UserAdAccount.ad_account_id).where(UserAdAccount.user_id == user.id)
+    )).scalars().all())
+    for acc_id in conceder:
+        if acc_id not in ya_tiene:
+            db.add(UserAdAccount(
+                user_id=user.id, ad_account_id=acc_id, organization_id=org.id,
+            ))
 
     inv.accepted_at = datetime.datetime.utcnow()
     db.add(inv)

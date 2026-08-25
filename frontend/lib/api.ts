@@ -4,7 +4,7 @@ import type {
   CampaignSnapshot, CampaignDetail, AIInsight, CampaignDraft, AIAction, LearningLog, SyncLearningSnapshot, Suggestion,
   BriefData, SpendHistory, KpisSummary, AiUsage, ApiCallHistoryEntry,
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
-  OrgMember, Invitation, InvitationDetails, TenantBrand, MyModules, HistoryStatus,
+  OrgMember, MemberAdAccounts, Invitation, InvitationDetails, TenantBrand, MyModules, HistoryStatus,
   AdminOrganization,
   CampaignRulesConfig, AIThresholdsConfig,
 } from "./types";
@@ -305,8 +305,20 @@ export const api = {
   // --- INVITACIONES Y EQUIPO ---
   getOrgMembers: () => apiRequest<OrgMember[]>("/api/v1/organizations/my/members", "GET"),
   getOrgInvitations: () => apiRequest<Invitation[]>("/api/v1/organizations/my/invitations", "GET"),
-  createOrgInvitation: (data: { email: string; role: "ADMIN" | "OPERATOR" | "VIEWER" }) =>
-    apiRequest<Invitation>("/api/v1/organizations/my/invitations", "POST", data),
+  createOrgInvitation: (data: {
+    email: string;
+    role: "ADMIN" | "OPERATOR" | "VIEWER";
+    // `undefined` = todas las cuentas de la organización al aceptar; una lista
+    // acota (el caso de un cliente que solo debe ver la suya).
+    ad_account_ids?: string[];
+  }) => apiRequest<Invitation>("/api/v1/organizations/my/invitations", "POST", data),
+  getMemberAdAccounts: (userId: string) =>
+    apiRequest<MemberAdAccounts>(`/api/v1/organizations/my/members/${userId}/ad-accounts`, "GET"),
+  setMemberAdAccounts: (userId: string, adAccountIds: string[]) =>
+    apiRequest<{ user_id: string; granted_ids: string[] }>(
+      `/api/v1/organizations/my/members/${userId}/ad-accounts`, "PUT",
+      { ad_account_ids: adAccountIds },
+    ),
   deleteOrgInvitation: (id: string) =>
     apiRequest<{ message: string }>(`/api/v1/organizations/my/invitations/${id}`, "DELETE"),
   getInvitationDetails: (token: string) =>

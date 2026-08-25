@@ -108,6 +108,13 @@ export default function Settings() {
   const [inviteMsg, setInviteMsg] = useState("");
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
+  // Acceso por cuenta (aislamiento dentro de la organización). Ser miembro no
+  // alcanza: cada usuario ve solo las cuentas que tiene concedidas.
+  const [inviteAccountIds, setInviteAccountIds] = useState<string[]>([]);
+  const [memberAccounts, setMemberAccounts] = useState<Record<string, string[]>>({});
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
+
   const fetchData = async () => {
     try {
       const orgData = await api.getOrg();
@@ -139,6 +146,17 @@ export default function Settings() {
         setMembers(membersData);
         const invsData = await api.getOrgInvitations();
         setInvitations(invsData);
+
+        // Qué cuentas ve cada miembro. En paralelo: son N peticiones chicas y
+        // encadenarlas hace que la pantalla tarde N veces más en dibujarse.
+        const concesiones = await Promise.all(
+          membersData.map((m) =>
+            api.getMemberAdAccounts(m.id)
+              .then((r) => [m.id, r.granted_ids] as const)
+              .catch(() => [m.id, []] as const)
+          )
+        );
+        setMemberAccounts(Object.fromEntries(concesiones));
       } catch (err) {
         console.error("Error loading team data:", err);
       }
@@ -186,14 +204,53 @@ export default function Settings() {
     if (!inviteEmail.trim()) return;
     setInviteLoading(true);
     try {
-      const created = await api.createOrgInvitation({ email: inviteEmail.trim(), role: inviteRole });
+      const created = await api.createOrgInvitation({
+        email: inviteEmail.trim(),
+        role: inviteRole,
+        // Sin selección explícita, entra con todas las cuentas de la
+        // organización (el caso del equipo propio). Con selección, solo esas.
+        ad_account_ids: inviteAccountIds.length ? inviteAccountIds : undefined,
+      });
       setInvitations((prev) => [created, ...prev]);
       setInviteEmail("");
+      setInviteAccountIds([]);
       setInviteMsg("Invitación enviada exitosamente por correo.");
     } catch (err: any) {
       setInviteMsg(`Error: ${err.message || "No se pudo enviar la invitación."}`);
     } finally {
       setInviteLoading(false);
+    }
+  };
+
+  const toggleMemberAccount = (userId: string, accId: string) => {
+    setMemberAccounts((prev) => {
+      const actuales = prev[userId] || [];
+      return {
+        ...prev,
+        [userId]: actuales.includes(accId)
+          ? actuales.filter((i) => i !== accId)
+          : [...actuales, accId],
+      };
+    });
+  };
+
+  const handleSaveMemberAccounts = async (userId: string) => {
+    setSavingMemberId(userId);
+    try {
+      await api.setMemberAdAccounts(userId, memberAccounts[userId] || []);
+      setEditingMemberId(null);
+    } catch (err: any) {
+      alert(err.message || "No se pudieron guardar las cuentas del miembro.");
+      // Se recarga desde el servidor: dejar en pantalla una selección que no se
+      // guardó haría creer que el acceso cambió cuando no cambió.
+      try {
+        const actual = await api.getMemberAdAccounts(userId);
+        setMemberAccounts((prev) => ({ ...prev, [userId]: actual.granted_ids }));
+      } catch {
+        /* si tampoco se puede leer, queda lo que había */
+      }
+    } finally {
+      setSavingMemberId(null);
     }
   };
 
@@ -883,6 +940,38 @@ export default function Settings() {
               </select>
             </div>
 
+            {accounts.length > 0 && (
+              <div>
+                <div style={{ fontSize: "12px", color: "var(--color-fog)", marginBottom: "6px" }}>
+                  Cuentas a las que accede. Sin marcar ninguna, entra con todas.
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
+                  {accounts.map((acc) => (
+                    <label
+                      key={acc.id}
+                      style={{
+                        display: "flex", alignItems: "center", gap: "6px",
+                        fontSize: "12px", color: "var(--color-paper)", cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={inviteAccountIds.includes(acc.id)}
+                        onChange={() =>
+                          setInviteAccountIds((prev) =>
+                            prev.includes(acc.id)
+                              ? prev.filter((i) => i !== acc.id)
+                              : [...prev, acc.id]
+                          )
+                        }
+                      />
+                      {acc.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <button
               type="submit"
               className="btn-secondary"
@@ -913,37 +1002,113 @@ export default function Settings() {
               Miembros del equipo ({members.length})
             </h4>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {members.map((m) => (
+              {members.map((m) => {
+                const concedidas = memberAccounts[m.id] || [];
+                const editando = editingMemberId === m.id;
+                return (
                 <div
                   key={m.id}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
                     padding: "8px 12px",
                     background: "rgba(255, 255, 255, 0.02)",
                     border: "1px solid var(--border-subtle)",
                     borderRadius: "6px",
                   }}
                 >
-                  <div>
-                    <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--color-paper)" }}>{m.full_name}</div>
-                    <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>{m.email}</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--color-paper)" }}>{m.full_name}</div>
+                      <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>{m.email}</div>
+                    </div>
+                    <span
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: "4px",
+                        background: m.role === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : m.role === "OPERATOR" ? "rgba(16, 185, 129, 0.15)" : "rgba(107, 114, 128, 0.2)",
+                        color: m.role === "ADMIN" ? "#60a5fa" : m.role === "OPERATOR" ? "#34d399" : "#9ca3af",
+                      }}
+                    >
+                      {m.role}
+                    </span>
                   </div>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      padding: "2px 8px",
-                      borderRadius: "4px",
-                      background: m.role === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : m.role === "OPERATOR" ? "rgba(16, 185, 129, 0.15)" : "rgba(107, 114, 128, 0.2)",
-                      color: m.role === "ADMIN" ? "#60a5fa" : m.role === "OPERATOR" ? "#34d399" : "#9ca3af",
-                    }}
-                  >
-                    {m.role}
-                  </span>
+
+                  {/* Qué cuentas ve. El rol dice qué puede hacer; esto dice
+                      sobre qué. Son dos ejes distintos y hasta ahora solo
+                      existía el primero. */}
+                  <div style={{ marginTop: "8px", borderTop: "1px solid var(--border-subtle)", paddingTop: "8px" }}>
+                    {!editando ? (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+                        <div style={{ fontSize: "12px", color: concedidas.length ? "var(--color-fog)" : "var(--danger)" }}>
+                          {concedidas.length
+                            ? `Cuentas: ${accounts
+                                .concat(archivedAccounts)
+                                .filter((a) => concedidas.includes(a.id))
+                                .map((a) => a.name)
+                                .join(", ")}`
+                            : "Sin ninguna cuenta asignada: no ve datos."}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          style={{ fontSize: "11px", padding: "3px 10px" }}
+                          onClick={() => setEditingMemberId(m.id)}
+                        >
+                          Cambiar
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
+                          {accounts.concat(archivedAccounts).map((acc) => (
+                            <label
+                              key={acc.id}
+                              style={{
+                                display: "flex", alignItems: "center", gap: "6px",
+                                fontSize: "12px", color: "var(--color-paper)", cursor: "pointer",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={concedidas.includes(acc.id)}
+                                onChange={() => toggleMemberAccount(m.id, acc.id)}
+                              />
+                              {acc.name}
+                            </label>
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: "11px", padding: "3px 10px" }}
+                            disabled={savingMemberId === m.id}
+                            onClick={() => handleSaveMemberAccounts(m.id)}
+                          >
+                            {savingMemberId === m.id ? "Guardando..." : "Guardar"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ fontSize: "11px", padding: "3px 10px" }}
+                            onClick={() => {
+                              setEditingMemberId(null);
+                              // Descartar lo tocado y volver a lo guardado.
+                              api.getMemberAdAccounts(m.id)
+                                .then((r) => setMemberAccounts((prev) => ({ ...prev, [m.id]: r.granted_ids })))
+                                .catch(() => {});
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

@@ -95,6 +95,20 @@ export type BusinessPolicies = Schemas["BusinessPoliciesResponse"];
 export type AiModelsResponse = Schemas["AiModelsResponse"];
 
 // --- INVITACIONES Y EQUIPO ---
+// Qué cuentas publicitarias ve un miembro. El acceso es una concesión explícita
+// por usuario: ser miembro de la organización no alcanza cuando la organización
+// aloja las cuentas de varios clientes.
+export type MemberAdAccounts = {
+  user_id: string;
+  granted_ids: string[];
+  available: {
+    id: string;
+    name: string;
+    external_account_id: string;
+    status: string;
+  }[];
+};
+
 export type OrgMember = {
   id: string;
   email: string;

@@ -8,6 +8,7 @@ from app.models.ad_account import AdAccount
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.user import User
+from conftest import conceder_todas_las_cuentas
 
 
 def _coverage(dias: int):
@@ -39,6 +40,10 @@ async def _auth_headers_for_role(async_client: AsyncClient, db: AsyncSession, or
     token = signup_res.json()["access_token"]
     user = (await db.execute(select(User).where(User.email == email))).scalar_one()
     db.add(OrganizationUser(user_id=user.id, organization_id=org.id, role=role))
+    # El acceso a una cuenta es una concesión explícita por usuario, no algo
+    # que dé la membresía: se replica acá lo que en producción hace el flujo de
+    # alta (conectar, invitación o el seed de la migración).
+    await conceder_todas_las_cuentas(db, user.id, org.id)
     await db.commit()
     return {"Authorization": f"Bearer {token}", "X-Tenant-Slug": org.slug}
 

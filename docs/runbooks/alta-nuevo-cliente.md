@@ -185,5 +185,24 @@ aclara** en vez de dar por ceros lo que todavía no tiene.
 1. En **Configuración** → **Equipo y Miembros**:
    - Ingresar correo electrónico del colaborador.
    - Seleccionar rol: `Operador` (gestión y creación de campañas) o `Consultor (Viewer)` (solo lectura y chat analista).
+   - **Marcar a qué cuentas publicitarias accede.** Sin marcar ninguna entra con
+     todas las de la organización. Marcar acota.
    - Presionar **Invitar Usuario**.
 2. El colaborador recibirá un correo con el link de un solo uso para establecer su contraseña e ingresar al espacio.
+
+### El rol dice qué puede hacer; las cuentas dicen sobre qué
+
+Son dos ejes distintos, y hasta 2026-08 solo existía el primero: cualquier
+miembro veía **todas** las cuentas publicitarias de la organización. En una
+organización que aloja las cuentas de varios clientes eso es un leak entre
+clientes.
+
+El acceso es una **concesión explícita por usuario**, y es fail-closed: un
+usuario sin ninguna cuenta concedida no ve datos, y la app se lo dice en vez de
+mostrarle un panel vacío. Se cambia en cualquier momento desde **Equipo y
+Miembros** → **Cambiar**, en la fila del miembro.
+
+> Al migrar, cada miembro conservó las cuentas que ya veía. Si una organización
+> aloja cuentas de más de un cliente, hay que **quitar** las ajenas a mano — no
+> se quitaron solas a propósito, para no dejar a nadie sin acceso en el
+> despliegue.
