@@ -47,7 +47,28 @@ export type HistoryStatus = {
   message: string;
   first_month: string | null;
   last_month: string | null;
-  in_progress: { months_total?: number; months_done?: number; last_month?: string } | null;
+  in_progress: {
+    months_total?: number;
+    months_done?: number;
+    months_failed?: number;
+    last_month?: string;
+    last_error?: string | null;
+    // El mes que se está bajando AHORA. El contador de meses solo se mueve al
+    // CERRAR uno, y con Meta limitando eso puede tardar minutos: sin esto la
+    // pantalla se ve congelada y "lento" es indistinguible de "muerto".
+    month_in_progress?: string | null;
+    month_started_at?: string | null;
+  } | null;
+  /** El último intento, esté corriendo o no. Es lo que permite decir "se
+   *  detuvo en el mes 3 porque Meta limitó las peticiones" en vez de dejar una
+   *  barra congelada sin explicación. */
+  last_attempt?: {
+    status: string;
+    started_at: string | null;
+    completed_at: string | null;
+    error_message: string | null;
+    progress: Record<string, unknown>;
+  } | null;
 };
 
 /** Organizacion vista desde el panel de plataforma.

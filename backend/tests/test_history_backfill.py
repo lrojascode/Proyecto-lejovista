@@ -308,3 +308,62 @@ async def test_structure_once_no_cachea_respuestas_con_error(db_session: AsyncSe
     assert segunda == {"data": [{"id": "c1"}]}
     # Y ahora sí queda cacheada: no se vuelve a pedir.
     assert await svc._structure_once("campaigns", _factory) == {"data": [{"id": "c1"}]}
+
+
+# --- Que la pantalla no parezca colgada mientras Meta limita ---
+
+@pytest.mark.asyncio
+async def test_el_mes_en_curso_se_publica_antes_de_pedirlo(
+    db_session: AsyncSession, mocker
+):
+    """El contador de meses solo se movía al CERRAR un mes. Con Meta metiendo
+    15 s de castigo entre llamadas, un mes tarda minutos y la pantalla se ve
+    congelada: "lento" y "muerto" se veían igual."""
+    from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
+
+    acc, job = await _cuenta_con_meses(db_session, "mes-en-curso", 3)
+    visto = {}
+
+    async def _mirar_el_payload(self, ad_account, sync_type, limiter, insights_period=None):
+        # A mitad del primer mes el job ya tiene que decir cuál está bajando.
+        if "primero" not in visto:
+            visto["primero"] = dict(job.payload_json or {})
+        return 5
+
+    mocker.patch.object(MetaAdsSyncService, "_sync_real_data", _mirar_el_payload)
+
+    svc = MetaAdsSyncService(db_session)
+    await svc._sync_backfill_by_months(acc, MetaAPIRateLimiter(), job)
+
+    assert visto["primero"]["month_in_progress"], "no se publicó el mes antes de pedirlo"
+    assert visto["primero"]["months_done"] == 0
+    assert visto["primero"]["months_total"] == 3
+    # Al terminar no hay ninguno en curso.
+    assert (job.payload_json or {}).get("month_in_progress") is None
+
+
+@pytest.mark.asyncio
+async def test_el_backfill_no_relee_la_cuenta_en_cada_mes(db_session: AsyncSession):
+    """El estado de la cuenta (gasto, tope, si está suspendida) es del PRESENTE:
+    igual para los 22 meses que se recorren. Pedirlo por mes era una llamada de
+    cada cuatro gastada en releer lo mismo, y con Meta limitando a 15 s por
+    llamada eso es un cuarto del tiempo total."""
+    acc = await _account(db_session, "sin-relectura")
+    limiter = _RecordingLimiter()
+    llamadas_simples = []
+
+    async def _registrar(endpoint, params, method="GET", access_token=""):
+        llamadas_simples.append(endpoint)
+        return {"amount_spent": "0", "spend_cap": "0", "account_status": 1}
+
+    limiter.call_api = _registrar
+
+    await MetaAdsSyncService(db_session)._sync_real_data(
+        acc, SYNC_TYPE_BACKFILL, limiter
+    )
+    assert acc.external_account_id not in llamadas_simples
+
+    # Y en un sync normal se sigue pidiendo: ahí sí es el dato que se busca.
+    llamadas_simples.clear()
+    await MetaAdsSyncService(db_session)._sync_real_data(acc, "INCREMENTAL", limiter)
+    assert acc.external_account_id in llamadas_simples

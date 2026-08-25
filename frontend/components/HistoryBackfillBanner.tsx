@@ -49,6 +49,19 @@ export function HistoryBackfillBanner() {
   const corriendo = status.in_progress != null && total > 0;
   const pct = corriendo && total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
+  // El mes que se está bajando ahora. Es lo único que se mueve mientras Meta
+  // limita las peticiones: el contador de meses solo avanza al cerrar uno, y un
+  // mes puede tardar varios minutos.
+  const enCurso = status.in_progress?.month_in_progress ?? null;
+  const fallidos = status.in_progress?.months_failed ?? 0;
+
+  // Se detuvo: el último intento terminó y todavía falta historial. Decirlo es
+  // mejor que dejar la barra clavada sin explicación.
+  const detenido =
+    !corriendo &&
+    status.last_attempt != null &&
+    ["PARTIAL", "FAILED"].includes(status.last_attempt.status);
+
   return (
     <div
       className="glass-card"
@@ -57,7 +70,8 @@ export function HistoryBackfillBanner() {
     >
       <div style={{ fontSize: "14px", color: "var(--color-mist)" }}>
         {corriendo
-          ? `Trayendo el historial de tu cuenta: ${done} de ${total} ${total === 1 ? "mes" : "meses"}.`
+          ? `Trayendo el historial de tu cuenta: ${done} de ${total} ${total === 1 ? "mes" : "meses"}` +
+            (enCurso ? ` (bajando ${enCurso})...` : ".")
           : status.message}
       </div>
       {corriendo ? (
@@ -68,6 +82,18 @@ export function HistoryBackfillBanner() {
       {corriendo && done >= total ? (
         <div className="mono" style={{ fontSize: "12px", color: "var(--color-fog)" }}>
           Está tardando más de lo estimado; sigue trabajando.
+        </div>
+      ) : null}
+      {corriendo && fallidos > 0 ? (
+        <div className="mono" style={{ fontSize: "12px", color: "var(--color-fog)" }}>
+          {fallidos} {fallidos === 1 ? "mes no se pudo bajar" : "meses no se pudieron bajar"};
+          se vuelven a intentar en la próxima corrida.
+        </div>
+      ) : null}
+      {detenido ? (
+        <div className="mono" style={{ fontSize: "12px", color: "var(--color-fog)" }}>
+          El último intento se detuvo. Se reintenta solo; si el problema
+          persiste, revisa la conexión de la cuenta en Configuración.
         </div>
       ) : null}
     </div>

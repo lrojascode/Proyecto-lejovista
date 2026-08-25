@@ -13,12 +13,14 @@ en los últimos minutos, y dice el ritmo real medido — no el estimado.
 """
 import asyncio
 import datetime
+import json
 import sys
 
 from sqlalchemy import func, select
 
 from app.database import async_session
 from app.models.ad_account import AdAccount
+from app.models.api_call_log import APICallLog
 from app.models.campaign_snapshot import CampaignSnapshot
 from app.models.organization import Organization
 from app.models.sync_job import SyncJob
@@ -89,6 +91,8 @@ async def _informe(db, acc: AdAccount, org_slug: str = "?", duplicada: bool = Fa
     if ultima:
         print(f"  última fila hace {_duracion((ahora - ultima).total_seconds())}")
 
+    await _ultimas_llamadas(db, acc)
+
     estado = await get_history_status(db, acc.organization_id, acc.id)
     print(f"\ncobertura: {estado.months_covered} de {estado.months_total} meses"
           f"  ({estado.first_month or '—'} → {estado.last_month or '—'})")
@@ -119,6 +123,56 @@ async def _informe(db, acc: AdAccount, org_slug: str = "?", duplicada: bool = Fa
         print(">>> DETENIDO. El job no está corriendo y falta historial.")
         print("    Se vuelve a encolar solo desde Beat, o a mano con la tarea")
         print("    schedule_pending_history_backfills.")
+
+
+LLAMADAS_A_MOSTRAR = 15
+
+
+async def _ultimas_llamadas(db, acc: AdAccount) -> None:
+    """En qué está gastando las llamadas ahora mismo.
+
+    "Se quedó pegado" y "está paginando el mismo mes hace diez minutos" se ven
+    idénticos desde el contador de meses, que solo avanza al CERRAR un mes.
+    `APICallLog.params` ya guarda `level`, `time_range` y el cursor `after` de
+    cada página, así que acá se lee lo que realmente está pidiendo.
+
+    Si `after` se repite, la paginación no avanza: son 50 páginas idénticas
+    contra el tope de `call_api_paginated`, que además trunca en silencio.
+    """
+    filas = (await db.execute(
+        select(APICallLog.timestamp, APICallLog.endpoint, APICallLog.params)
+        .where(APICallLog.ad_account_id == acc.id)
+        .order_by(APICallLog.timestamp.desc())
+        .limit(LLAMADAS_A_MOSTRAR)
+    )).all()
+    if not filas:
+        return
+
+    print(f"\núltimas {len(filas)} llamadas (de la más reciente hacia atrás):")
+    cursores = []
+    anterior = None
+    for ts, endpoint, params in filas:
+        params = params or {}
+        rango = params.get("time_range") or params.get("date_preset") or "—"
+        if isinstance(rango, str) and rango.startswith("{"):
+            try:
+                r = json.loads(rango)
+                rango = f"{r.get('since')}→{r.get('until')}"
+            except ValueError:
+                pass
+        after = params.get("after")
+        cursores.append(after)
+        hueco = f"+{int((anterior - ts).total_seconds())}s" if anterior else ""
+        anterior = ts
+        corto = endpoint.split("/")[-1]
+        print(f"  {ts:%H:%M:%S} {hueco:>6}  {corto:<10} nivel={params.get('level', '—'):<9}"
+              f" {rango}  after={(after or '—')[:14]}")
+
+    con_cursor = [c for c in cursores if c]
+    if len(con_cursor) >= 3 and len(set(con_cursor)) == 1:
+        print("\n  ⚠ el cursor NO avanza: está pidiendo la misma página una y otra vez.")
+    elif len(con_cursor) >= 3:
+        print(f"\n  paginando: {len(con_cursor)} de las últimas {len(filas)} llamadas son páginas 2+.")
 
 
 async def main() -> None:

@@ -430,13 +430,20 @@ async def get_history_status_endpoint(
     )).scalar_one_or_none()
     running = ultimo if (ultimo is not None and ultimo.status == "RUNNING") else None
 
+    # Estimado MEDIDO: segundos por mes realmente cerrados en esta corrida, por
+    # los meses que faltan. El modelo (6 requests por mes × ritmo promedio) no
+    # sabe que Meta puede meter 15 s de castigo entre llamada y llamada, así que
+    # decía "2 minutos" de algo que tardaba media hora — y eso es lo que hace
+    # que la pantalla parezca colgada.
+    medido = _segundos_estimados_medidos(ultimo, status.months_missing)
+
     return {
         "show_estimate": not status.is_complete or running is not None,
         "is_complete": status.is_complete,
         "months_total": status.months_total,
         "months_missing": status.months_missing,
-        "estimated_seconds": status.estimated_seconds,
-        "message": status.estimate_text(),
+        "estimated_seconds": medido if medido is not None else status.estimated_seconds,
+        "message": status.estimate_text(seconds_override=medido),
         "first_month": status.first_month,
         "last_month": status.last_month,
         "in_progress": (running.payload_json or {}) if running else None,
@@ -451,6 +458,24 @@ async def get_history_status_endpoint(
             "progress": ultimo.payload_json or {},
         } if ultimo is not None else None,
     }
+
+def _segundos_estimados_medidos(job, months_missing: int):
+    """Cuánto falta, medido en la corrida real. `None` si todavía no hay con qué.
+
+    Hace falta al menos UN mes cerrado: con cero no hay ritmo que medir, y
+    dividir por cero para no admitir que no se sabe es peor que no estimar.
+    """
+    if job is None or not months_missing or not job.started_at:
+        return None
+    avance = job.payload_json or {}
+    hechos = avance.get("months_done") or 0
+    if hechos < 1:
+        return None
+    transcurrido = (datetime.datetime.utcnow() - job.started_at).total_seconds()
+    if transcurrido <= 0:
+        return None
+    return int(round(transcurrido / hechos * months_missing))
+
 
 @router.get("/sync-status")
 async def get_sync_status(

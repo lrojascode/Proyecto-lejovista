@@ -109,13 +109,21 @@ class HistoryStatus:
     def estimated_seconds(self) -> int:
         return int(round(self.estimated_requests * self.seconds_per_request))
 
-    def estimate_text(self) -> str:
+    def estimate_text(self, seconds_override: Optional[int] = None) -> str:
         """Frase para el frontend. Redondea hacia arriba y en unidades gruesas:
         un estimado que se pasa por poco molesta menos que uno falsamente
-        preciso."""
+        preciso.
+
+        `seconds_override` es el tiempo MEDIDO en la corrida real (segundos por
+        mes ya cerrado × meses que faltan). Le gana siempre al modelo, porque el
+        modelo —6 requests por mes por el ritmo promedio de la cuenta— no sabe
+        nada de que Meta puede meter 15 s de castigo entre llamada y llamada.
+        Decir "2 minutos" de algo que va a tardar media hora no es un estimado
+        optimista: es lo que hace que la pantalla parezca colgada.
+        """
         if self.is_complete:
             return "Tu historial ya está completo."
-        secs = self.estimated_seconds
+        secs = seconds_override if seconds_override is not None else self.estimated_seconds
         if secs < 90:
             duracion = "menos de un minuto"
         elif secs < 3600:

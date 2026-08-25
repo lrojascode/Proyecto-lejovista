@@ -630,31 +630,39 @@ class MetaAdsSyncService:
         if not token:
             raise ValueError("Token de acceso de la cuenta no válido o expirado.")
 
-        # Obtener información de la cuenta
-        acc_info = await limiter.call_api(
-            ad_account.external_account_id, 
-            {"fields": "amount_spent,spend_cap,account_status"}, 
-            access_token=token
-        )
-        
-        if "ERROR" in acc_info or "error" in acc_info:
-            self._maybe_mark_expired(ad_account, acc_info)
-            raise Exception(f"Error al verificar cuenta de anuncios: {acc_info}")
-            
-        # Actualizar ad_account
-        ad_account.spend_cap = float(acc_info.get("spend_cap", 0)) / 100.0  # Meta retorna centavos
-        ad_account.amount_spent = float(acc_info.get("amount_spent", 0)) / 100.0
-        
-        status_code = acc_info.get("account_status", 1)
-        ad_account.status = "ACTIVE" if status_code == 1 else "SUSPENDED"
-        self.db.add(ad_account)
-        # Commit inmediato: si algo más adelante en este sync falla (campañas,
-        # insights, adsets...), la excepción se propaga y el commit final de
-        # `run_sync` nunca ocurre — sin este commit parcial, spend_cap/amount_spent/
-        # status quedaban leídos de Meta pero descartados en silencio, y la cuenta
-        # se quedaba con datos viejos hasta el próximo sync que lograra completar
-        # TODO el pipeline sin errores.
-        await self.db.commit()
+        # Estado de la cuenta (gasto acumulado, tope, si está suspendida). En
+        # BACKFILL NO se pide: son datos del PRESENTE, iguales para los 22 meses
+        # que se recorren, y el sync diario ya los trae. Pedirlos una vez por mes
+        # era una llamada de cada cuatro gastada en releer lo mismo — y con Meta
+        # limitando a 15 s por llamada, eso es un cuarto del tiempo total.
+        #
+        # Mismo criterio que `_structure_once` para /campaigns, /adsets y /ads:
+        # lo que no depende del mes no se pide por mes.
+        if sync_type != SYNC_TYPE_BACKFILL:
+            acc_info = await limiter.call_api(
+                ad_account.external_account_id,
+                {"fields": "amount_spent,spend_cap,account_status"},
+                access_token=token
+            )
+
+            if "ERROR" in acc_info or "error" in acc_info:
+                self._maybe_mark_expired(ad_account, acc_info)
+                raise Exception(f"Error al verificar cuenta de anuncios: {acc_info}")
+
+            # Actualizar ad_account
+            ad_account.spend_cap = float(acc_info.get("spend_cap", 0)) / 100.0  # Meta retorna centavos
+            ad_account.amount_spent = float(acc_info.get("amount_spent", 0)) / 100.0
+
+            status_code = acc_info.get("account_status", 1)
+            ad_account.status = "ACTIVE" if status_code == 1 else "SUSPENDED"
+            self.db.add(ad_account)
+            # Commit inmediato: si algo más adelante en este sync falla (campañas,
+            # insights, adsets...), la excepción se propaga y el commit final de
+            # `run_sync` nunca ocurre — sin este commit parcial, spend_cap/amount_spent/
+            # status quedaban leídos de Meta pero descartados en silencio, y la cuenta
+            # se quedaba con datos viejos hasta el próximo sync que lograra completar
+            # TODO el pipeline sin errores.
+            await self.db.commit()
 
         # 1. Campañas + insights de campaña (P-1): dos lecturas independientes —
         # los insights no necesitan `campaigns_map` para pedirse, solo para
@@ -888,10 +896,37 @@ class MetaAdsSyncService:
                 "last_month": ultimo_mes,
                 "last_error": last_error,
                 "estimated_seconds": status.estimated_seconds,
+                # El mes que se está bajando AHORA, y desde cuándo. Sin esto el
+                # contador solo se mueve al CERRAR un mes: si Meta está limitando
+                # y un mes tarda diez minutos, la pantalla se ve congelada y
+                # "lento" es indistinguible de "muerto".
+                "month_in_progress": en_curso,
+                "month_started_at": (
+                    inicio_del_mes.isoformat() if inicio_del_mes else None
+                ),
             }
+
+        en_curso: Optional[str] = None
+        inicio_del_mes: Optional[datetime.datetime] = None
 
         for gap in status.gaps:
             first, last = month_range(gap.year_month)
+
+            # Se publica ANTES de pedirle nada a Meta: es el único momento en que
+            # la pantalla puede decir en qué mes está mientras el mes dura.
+            en_curso = gap.year_month
+            inicio_del_mes = datetime.datetime.utcnow()
+            job.payload_json = _avance(gap.year_month)
+            self.db.add(job)
+            await self.db.commit()
+            SyncProgressTracker.report_progress(
+                organization_id=org_id,
+                ad_account_id=acc_id,
+                step=done,
+                total_steps=total,
+                step_name="backfill",
+                message=f"Trayendo historial: mes {done + 1} de {total} ({gap.year_month})...",
+            )
             period = {
                 "time_range": json.dumps(
                     {"since": first.isoformat(), "until": last.isoformat()},
@@ -947,6 +982,7 @@ class MetaAdsSyncService:
                     gap.year_month, acc_id,
                 )
 
+            en_curso, inicio_del_mes = None, None
             job.payload_json = _avance(gap.year_month)
             self.db.add(job)
             await self.db.commit()
