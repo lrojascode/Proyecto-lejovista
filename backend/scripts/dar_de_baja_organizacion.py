@@ -19,7 +19,15 @@ Este script la retira. Dos decisiones a propósito:
     python scripts/dar_de_baja_organizacion.py default --aplicar
 """
 import asyncio
+
 import sys
+from pathlib import Path
+
+# `python scripts/x.py` pone `scripts/` en sys.path, NO el directorio actual, así
+# que `app` no se encuentra aunque estés parado en la raíz del backend. Mismo
+# patrón que `refresh_meta_policies.py`. Sin esto el script solo corría desde
+# pytest (que sí arma el path) — o sea, justo nunca cuando hacía falta.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sqlalchemy import func, select
 

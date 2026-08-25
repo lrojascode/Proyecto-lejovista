@@ -3,6 +3,12 @@ import argparse
 import uuid
 import sys
 import os
+from pathlib import Path
+
+# `python scripts/x.py` pone `scripts/` en sys.path, NO el directorio actual, así
+# que `app` no se encuentra aunque estés parado en la raíz del backend. Mismo
+# patrón que `refresh_meta_policies.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.database import async_session
 from app.models.organization import Organization
