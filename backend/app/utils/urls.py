@@ -29,3 +29,15 @@ def invitation_url(token: str) -> str:
     viaja la contraseña que el cliente acaba de elegir.
     """
     return f"{base_url()}/invitations/{token}"
+
+
+def password_reset_url(token: str) -> str:
+    """Enlace para elegir contraseña nueva.
+
+    Mismo criterio que `invitation_url`: va sobre el dominio BASE y no sobre el
+    subdominio del cliente. `reset_password` resuelve todo por el token —no
+    necesita saber la organización— y apuntar al subdominio obligaría a tener
+    DNS y certificado del cliente resueltos justo cuando la persona está afuera
+    y no puede pedir ayuda por la app.
+    """
+    return f"{base_url()}/reset-password/{token}"

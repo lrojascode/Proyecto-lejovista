@@ -1,17 +1,24 @@
 import datetime
+import hashlib
 import ipaddress
 import logging
+import secrets
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
-from app.schemas.schemas import UserCreate, TokenResponse, UserLogin, UserResponse, TenantBrandResponse
+from app.models.password_reset import PasswordResetToken, RESET_TTL_MINUTES
+from app.schemas.schemas import (
+    UserCreate, TokenResponse, UserLogin, UserResponse, TenantBrandResponse,
+    PasswordChangeRequest, PasswordForgotRequest, PasswordResetRequest,
+    ProfileUpdateRequest,
+)
 from app.schemas.response_schemas import MessageResponse
 from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
@@ -19,6 +26,8 @@ from app.utils.security import (
     set_refresh_cookie, clear_refresh_cookie, REFRESH_COOKIE_NAME, RevocationCheckUnavailable,
 )
 from app.utils.throttle import enforce_rate_limit
+from app.utils.urls import password_reset_url
+from app.services.email_service import send_email
 from app.config import settings
 
 logger = logging.getLogger("lejovista.auth")
@@ -301,6 +310,185 @@ async def logout(request: Request, response: Response):
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     return enrich_user(current_user)
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_me(
+    payload: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Nombre y email propios. No había forma de corregir ninguno de los dos:
+    un typo al aceptar la invitación quedaba para siempre."""
+    if payload.full_name is not None:
+        current_user.full_name = payload.full_name.strip()
+
+    if payload.email is not None and payload.email.lower() != current_user.email.lower():
+        nuevo = payload.email.lower()
+        ocupado = (await db.execute(
+            select(User.id).where(User.email == nuevo, User.id != current_user.id)
+        )).scalar_one_or_none()
+        if ocupado:
+            raise HTTPException(status_code=400, detail="Ese correo ya está registrado.")
+        current_user.email = nuevo
+
+    db.add(current_user)
+    await db.commit()
+    return enrich_user(current_user)
+
+
+@router.post("/change-password", response_model=MessageResponse)
+async def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cambio de contraseña con la sesión abierta.
+
+    Exige la actual: si no, una sesión robada (o una pestaña abierta en una
+    computadora ajena) alcanza para cambiar la clave y dejar afuera al dueño.
+    """
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        # Rate limit por usuario: este endpoint es un oráculo de contraseñas
+        # para quien ya tiene la sesión.
+        await enforce_rate_limit("change_password", current_user.id, max_attempts=5, window_seconds=300)
+        raise HTTPException(status_code=400, detail="La contraseña actual no es correcta.")
+
+    if payload.new_password == payload.current_password:
+        raise HTTPException(status_code=400, detail="La contraseña nueva tiene que ser distinta de la actual.")
+
+    current_user.hashed_password = get_password_hash(payload.new_password)
+    db.add(current_user)
+    await db.commit()
+
+    # La sesión actual sigue viva —quien cambió la clave es quien está acá— pero
+    # el refresh se rota: si el token viejo estaba comprometido, cambiar la
+    # contraseña tiene que cortarlo, que es justo para lo que se cambia.
+    viejo = request.cookies.get(REFRESH_COOKIE_NAME)
+    if viejo:
+        data = decode_token(viejo)
+        if data and data.get("jti"):
+            await revoke_jti(data["jti"], settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+    nuevo_refresh = create_refresh_token(
+        subject=current_user.id, org=current_user.organization_id
+    )
+    set_refresh_cookie(response, request, nuevo_refresh)
+
+    return {"message": "Contraseña actualizada."}
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    payload: PasswordForgotRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Envía un enlace de un solo uso para elegir contraseña nueva.
+
+    **Responde lo mismo exista o no el email.** Distinguir los dos casos
+    convierte este endpoint en un verificador de qué correos tienen cuenta, que
+    es justo lo que busca quien prepara un ataque dirigido.
+    """
+    await enforce_rate_limit("forgot_password", get_client_ip(request), max_attempts=5, window_seconds=900)
+
+    respuesta = {
+        "message": (
+            "Si ese correo tiene una cuenta, te llega un enlace para elegir una "
+            "contraseña nueva. Revisá también el spam."
+        )
+    }
+
+    user = (await db.execute(
+        select(User).where(User.email == payload.email.lower())
+    )).scalar_one_or_none()
+    if not user:
+        return respuesta
+
+    # Los pedidos anteriores se invalidan: si alguien pide dos, el primero deja
+    # de servir. Un enlace viejo dando vueltas en una casilla es una llave viva.
+    await db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+        .values(used_at=datetime.datetime.utcnow())
+    )
+
+    token_plano = secrets.token_urlsafe(32)
+    db.add(PasswordResetToken(
+        user_id=user.id,
+        token_hash=_hash_reset_token(token_plano),
+        expires_at=datetime.datetime.utcnow() + datetime.timedelta(minutes=RESET_TTL_MINUTES),
+    ))
+    await db.commit()
+
+    enlace = password_reset_url(token_plano)
+    enviado = await send_email(
+        to_email=user.email,
+        subject="Recuperá tu contraseña",
+        html_content=f"""
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <h2>¡Hola!</h2>
+        <p>Pediste elegir una contraseña nueva. El enlace vale por {RESET_TTL_MINUTES} minutos y una sola vez:</p>
+        <p style="margin: 24px 0;">
+            <a href="{enlace}" style="background-color: #02b8cc; color: #0b0c0e; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                Elegir contraseña nueva
+            </a>
+        </p>
+        <p style="color: #666; font-size: 13px;">Si no fuiste vos, ignorá este correo: tu contraseña no cambia sola.</p>
+    </div>
+    """,
+        text_content=f"Elegí una contraseña nueva ({RESET_TTL_MINUTES} min): {enlace}",
+    )
+    if not enviado:
+        # No se le dice al usuario —seguiría siendo un oráculo— pero tiene que
+        # quedar en el log: sin proveedor de correo, este flujo no lleva a nada.
+        logger.error(
+            "Recuperación de contraseña para %s: el correo NO se pudo enviar. "
+            "Sin BREVO_API_KEY el enlace no llega a nadie.", user.email,
+        )
+    return respuesta
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    payload: PasswordResetRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Consume el enlace y fija la contraseña nueva."""
+    await enforce_rate_limit("reset_password", get_client_ip(request), max_attempts=10, window_seconds=900)
+
+    fila = (await db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.token_hash == _hash_reset_token(payload.token)
+        )
+    )).scalar_one_or_none()
+    if fila is None or not fila.is_usable:
+        raise HTTPException(
+            status_code=400,
+            detail="Ese enlace ya no sirve (se usó o venció). Pedí uno nuevo.",
+        )
+
+    user = await db.get(User, fila.user_id)
+    if user is None:
+        raise HTTPException(status_code=400, detail="Ese enlace ya no sirve. Pedí uno nuevo.")
+
+    user.hashed_password = get_password_hash(payload.new_password)
+    fila.used_at = datetime.datetime.utcnow()
+    db.add_all([user, fila])
+    await db.commit()
+
+    return {"message": "Listo. Ya podés entrar con tu contraseña nueva."}
+
+
+def _hash_reset_token(token: str) -> str:
+    """SHA-256 del token. Lo que se guarda no puede servir para entrar: la tabla
+    es un objetivo tan bueno como `users`."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @router.get("/tenant-brand", response_model=TenantBrandResponse)

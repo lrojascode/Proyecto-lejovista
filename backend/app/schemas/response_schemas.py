@@ -617,6 +617,11 @@ class InvitationResponse(BaseModel):
     expires_at: str
     accepted_at: Optional[str] = None
     created_at: str
+    # `False` = la invitación existe pero el correo NO salió (sin proveedor
+    # configurado, o el proveedor falló). La pantalla lo dice y ofrece copiar el
+    # enlace: sin este dato, el admin cree que el invitado ya lo recibió.
+    # `None` al listar invitaciones viejas, donde el dato no se guardó.
+    email_sent: Optional[bool] = None
 
 
 class InvitationDetailsResponse(BaseModel):

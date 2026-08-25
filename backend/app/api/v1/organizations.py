@@ -4,7 +4,7 @@ import os
 import secrets
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
@@ -30,7 +30,7 @@ from app.schemas.schemas import (
     CampaignRulesConfigUpdate, AIThresholdsConfigUpdate,
 )
 from app.schemas.invitation_schemas import InvitationCreateRequest
-from app.schemas.schemas import MemberAdAccountsUpdate
+from app.schemas.schemas import MemberAdAccountsUpdate, MemberRoleUpdate
 from app.schemas.response_schemas import (
     AiModelsResponse, BusinessPoliciesResponse, MessageResponse, InvitationResponse,
     CampaignRulesConfigResponse, AIThresholdsConfigResponse,
@@ -935,6 +935,99 @@ async def list_org_members(
     return members
 
 
+@router.patch("/my/members/{user_id}", response_model=MessageResponse)
+async def update_member_role(
+    user_id: str,
+    payload: MemberRoleUpdate,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cambia el rol de un miembro. El rol se fijaba al invitar y quedaba
+    congelado: ascender a alguien de VIEWER a OPERATOR no era posible."""
+    membresia = await _membresia_de(db, user_id, current_user.organization_id)
+
+    if membresia.role == "ADMIN" and payload.role != "ADMIN":
+        await _exigir_otro_admin(db, current_user.organization_id, user_id)
+
+    membresia.role = payload.role
+    db.add(membresia)
+    await db.commit()
+    return {"message": f"Rol actualizado a {payload.role}."}
+
+
+@router.delete("/my/members/{user_id}", response_model=MessageResponse)
+async def remove_member(
+    user_id: str,
+    current_user: User = Depends(require_role("ADMIN")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Saca a un miembro de la organización.
+
+    No se podía: alguien que se iba de la empresa conservaba el acceso para
+    siempre —y desde que el acceso a cuentas es una concesión explícita, también
+    conservaba las cuentas—.
+
+    Se borra la membresía y sus concesiones, NO el usuario: puede ser miembro de
+    otra organización, y borrarlo se llevaría por delante ese acceso también.
+    """
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="No puedes quitarte a ti mismo. Pide a otro administrador que lo haga.",
+        )
+
+    membresia = await _membresia_de(db, user_id, current_user.organization_id)
+    if membresia.role == "ADMIN":
+        await _exigir_otro_admin(db, current_user.organization_id, user_id)
+
+    for concesion in (await db.execute(
+        select(UserAdAccount).where(
+            UserAdAccount.user_id == user_id,
+            UserAdAccount.organization_id == current_user.organization_id,
+        )
+    )).scalars().all():
+        await db.delete(concesion)
+
+    await db.delete(membresia)
+    await db.commit()
+    return {"message": "Miembro quitado de la organización."}
+
+
+async def _membresia_de(db: AsyncSession, user_id: str, org_id: str) -> OrganizationUser:
+    fila = (await db.execute(
+        select(OrganizationUser).where(
+            OrganizationUser.user_id == user_id,
+            OrganizationUser.organization_id == org_id,
+        )
+    )).scalar_one_or_none()
+    if not fila:
+        raise HTTPException(
+            status_code=404, detail="Ese usuario no es miembro de tu organización."
+        )
+    return fila
+
+
+async def _exigir_otro_admin(db: AsyncSession, org_id: str, excepto_user_id: str) -> None:
+    """Que la organización no se quede sin ningún ADMIN.
+
+    Sin esto, el último administrador puede degradarse o quitarse y dejar la
+    organización sin nadie que pueda invitar, conectar cuentas ni repartir
+    accesos — y sin forma de arreglarlo desde la app.
+    """
+    otros = (await db.execute(
+        select(func.count()).select_from(OrganizationUser).where(
+            OrganizationUser.organization_id == org_id,
+            OrganizationUser.role == "ADMIN",
+            OrganizationUser.user_id != excepto_user_id,
+        )
+    )).scalar_one()
+    if not otros:
+        raise HTTPException(
+            status_code=400,
+            detail="Es el único administrador. Nombra a otro antes de quitarle el rol.",
+        )
+
+
 @router.get("/my/members/{user_id}/ad-accounts")
 async def get_member_ad_accounts(
     user_id: str,
@@ -1154,7 +1247,10 @@ async def create_org_invitation(
         <p style="color: #666; font-size: 13px;">Este enlace es válido por 7 días.</p>
     </div>
     """
-    await send_email(
+    # Si no salió, hay que DECIRLO: la invitación existe igual y el enlace se
+    # copia a mano, pero un admin que cree que el mail se envió se queda
+    # esperando y el invitado nunca entra.
+    enviado = await send_email(
         to_email=payload.email,
         subject=subject,
         html_content=html_content,
@@ -1171,6 +1267,7 @@ async def create_org_invitation(
         expires_at=inv.expires_at.isoformat(),
         accepted_at=None,
         created_at=inv.created_at.isoformat(),
+        email_sent=enviado,
     )
 
 

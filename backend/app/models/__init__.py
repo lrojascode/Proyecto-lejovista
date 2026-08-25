@@ -9,6 +9,7 @@ from app.models.sync_job import SyncJob
 from app.models.api_call_log import APICallLog
 from app.models.organization_user import OrganizationUser
 from app.models.user_ad_account import UserAdAccount
+from app.models.password_reset import PasswordResetToken
 from app.models.meta_credential import MetaCredential
 from app.models.meta_page import MetaPage
 from app.models.meta_page_ad_account import MetaPageAdAccount
@@ -40,6 +41,7 @@ __all__ = [
     "APICallLog",
     "OrganizationUser",
     "UserAdAccount",
+    "PasswordResetToken",
     "MetaCredential",
     "MetaPage",
     "MetaPageAdAccount",

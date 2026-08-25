@@ -1,6 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from datetime import datetime, date
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Literal, Optional
 
 # --- AUTH SCHEMAS ---
 class UserLogin(BaseModel):
@@ -13,6 +13,27 @@ class UserCreate(BaseModel):
     full_name: str
     organization_slug: str  # Funda una organización nueva (S-1: no une a una existente)
     organization_name: str
+
+class PasswordChangeRequest(BaseModel):
+    """Cambio con sesión activa. Exige la actual: una sesión robada no debe
+    poder cambiar la contraseña y dejar al dueño afuera."""
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
+class PasswordForgotRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
+
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = Field(None, min_length=2, max_length=120)
+    email: Optional[EmailStr] = None
+
 
 class UserResponse(BaseModel):
     id: str
@@ -131,6 +152,10 @@ class AdAccountResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class MemberRoleUpdate(BaseModel):
+    role: Literal["ADMIN", "OPERATOR", "VIEWER"]
+
 
 class MemberAdAccountsUpdate(BaseModel):
     # Reemplaza el conjunto completo, no suma: la pantalla manda el estado final

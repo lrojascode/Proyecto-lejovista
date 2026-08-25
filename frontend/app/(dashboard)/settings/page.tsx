@@ -111,6 +111,20 @@ export default function Settings() {
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
 
+  // Mi cuenta: nombre, correo y contraseña propios. No existía ninguna de las
+  // tres — un typo al aceptar la invitación quedaba para siempre, y quien
+  // perdía la clave solo salía editando el hash en la base.
+  const [perfilNombre, setPerfilNombre] = useState("");
+  const [perfilEmail, setPerfilEmail] = useState("");
+  const [perfilMsg, setPerfilMsg] = useState("");
+  const [perfilSaving, setPerfilSaving] = useState(false);
+  const [passActual, setPassActual] = useState("");
+  const [passNueva, setPassNueva] = useState("");
+  const [passConfirma, setPassConfirma] = useState("");
+  const [passMsg, setPassMsg] = useState("");
+  const [passSaving, setPassSaving] = useState(false);
+  const [memberSavingId, setMemberSavingId] = useState<string | null>(null);
+
   // Equipo e Invitaciones (6.1)
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -154,6 +168,10 @@ export default function Settings() {
       setIndustries(policiesData.available_industries || []);
 
       try {
+        const yo = await api.getMe();
+        setPerfilNombre(yo.full_name || "");
+        setPerfilEmail(yo.email || "");
+
         const membersData = await api.getOrgMembers();
         setMembers(membersData);
         const invsData = await api.getOrgInvitations();
@@ -226,11 +244,81 @@ export default function Settings() {
       setInvitations((prev) => [created, ...prev]);
       setInviteEmail("");
       setInviteAccountIds([]);
-      setInviteMsg("Invitación enviada exitosamente por correo.");
+      // Decir "enviada" cuando el correo no salió deja al admin esperando y al
+      // invitado sin enterarse. El enlace se copia de la lista de abajo.
+      setInviteMsg(
+        created.email_sent === false
+          ? "Invitación creada, pero el correo NO se pudo enviar. Copiá el enlace de abajo y pasáselo."
+          : "Invitación enviada exitosamente por correo."
+      );
     } catch (err: any) {
       setInviteMsg(`Error: ${err.message || "No se pudo enviar la invitación."}`);
     } finally {
       setInviteLoading(false);
+    }
+  };
+
+  const handleGuardarPerfil = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPerfilSaving(true);
+    setPerfilMsg("");
+    try {
+      await api.updateProfile({ full_name: perfilNombre.trim(), email: perfilEmail.trim() });
+      setPerfilMsg("Datos actualizados.");
+    } catch (err: any) {
+      setPerfilMsg(`Error: ${err.message}`);
+    } finally {
+      setPerfilSaving(false);
+    }
+  };
+
+  const handleCambiarPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPassMsg("");
+    if (passNueva.length < 8) {
+      setPassMsg("Error: la contraseña nueva tiene que tener al menos 8 caracteres.");
+      return;
+    }
+    if (passNueva !== passConfirma) {
+      setPassMsg("Error: las dos contraseñas no coinciden.");
+      return;
+    }
+    setPassSaving(true);
+    try {
+      await api.changePassword(passActual, passNueva);
+      setPassMsg("Contraseña actualizada.");
+      setPassActual("");
+      setPassNueva("");
+      setPassConfirma("");
+    } catch (err: any) {
+      setPassMsg(`Error: ${err.message}`);
+    } finally {
+      setPassSaving(false);
+    }
+  };
+
+  const handleCambiarRol = async (userId: string, role: "ADMIN" | "OPERATOR" | "VIEWER") => {
+    setMemberSavingId(userId);
+    try {
+      await api.updateMemberRole(userId, role);
+      setMembers((prev) => prev.map((m) => (m.id === userId ? { ...m, role } : m)));
+    } catch (err: any) {
+      alert(err.message || "No se pudo cambiar el rol.");
+    } finally {
+      setMemberSavingId(null);
+    }
+  };
+
+  const handleQuitarMiembro = async (userId: string, nombre: string) => {
+    if (!confirm(`¿Quitar a ${nombre} de la organización? Pierde el acceso a todas las cuentas.`)) return;
+    setMemberSavingId(userId);
+    try {
+      await api.removeMember(userId);
+      setMembers((prev) => prev.filter((m) => m.id !== userId));
+    } catch (err: any) {
+      alert(err.message || "No se pudo quitar al miembro.");
+    } finally {
+      setMemberSavingId(null);
     }
   };
 
@@ -942,6 +1030,96 @@ export default function Settings() {
           </form>
         </div>
 
+        {/* Mi cuenta. Todo lo demás en esta pantalla es de la organización o de
+            Meta; no había una sola cosa del usuario, así que no se podía
+            corregir un nombre mal escrito ni cambiar la contraseña. */}
+        <div className="glass-card">
+          <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem" }}>Mi cuenta</h3>
+          <p style={{ color: "var(--color-fog)", fontSize: "13px", marginBottom: "1.25rem" }}>
+            Tus datos personales y tu contraseña. No afectan a los demás miembros.
+          </p>
+
+          <form onSubmit={handleGuardarPerfil} style={{ display: "flex", flexDirection: "column", gap: "0.85rem", marginBottom: "1.5rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                  Nombre
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={perfilNombre}
+                  onChange={(e) => setPerfilNombre(e.target.value)}
+                />
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                  Correo
+                </label>
+                <input
+                  type="email"
+                  className="form-input"
+                  value={perfilEmail}
+                  onChange={(e) => setPerfilEmail(e.target.value)}
+                />
+              </div>
+            </div>
+            <button type="submit" className="btn-secondary" style={{ alignSelf: "flex-start" }} disabled={perfilSaving}>
+              {perfilSaving ? "Guardando..." : "Guardar datos"}
+            </button>
+            {perfilMsg && (
+              <div style={{ fontSize: "0.85rem", color: perfilMsg.startsWith("Error") ? "var(--danger)" : "var(--success)" }}>
+                {perfilMsg}
+              </div>
+            )}
+          </form>
+
+          <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: "1.25rem" }}>
+            <h4 style={{ fontSize: "14px", fontWeight: 590, marginBottom: "0.75rem", color: "var(--color-paper)" }}>
+              Cambiar contraseña
+            </h4>
+            <form onSubmit={handleCambiarPassword} style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              <input
+                type="password"
+                className="form-input"
+                required
+                value={passActual}
+                onChange={(e) => setPassActual(e.target.value)}
+                placeholder="Contraseña actual"
+                aria-label="Contraseña actual"
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+                <input
+                  type="password"
+                  className="form-input"
+                  required
+                  value={passNueva}
+                  onChange={(e) => setPassNueva(e.target.value)}
+                  placeholder="Nueva (mínimo 8)"
+                  aria-label="Contraseña nueva"
+                />
+                <input
+                  type="password"
+                  className="form-input"
+                  required
+                  value={passConfirma}
+                  onChange={(e) => setPassConfirma(e.target.value)}
+                  placeholder="Repetila"
+                  aria-label="Repetir contraseña nueva"
+                />
+              </div>
+              <button type="submit" className="btn-secondary" style={{ alignSelf: "flex-start" }} disabled={passSaving}>
+                {passSaving ? "Guardando..." : "Cambiar contraseña"}
+              </button>
+              {passMsg && (
+                <div style={{ fontSize: "0.85rem", color: passMsg.startsWith("Error") ? "var(--danger)" : "var(--success)" }}>
+                  {passMsg}
+                </div>
+              )}
+            </form>
+          </div>
+        </div>
+
         {/* Team and Invitations (6.1) */}
         <div className="glass-card">
           <h3 style={{ fontSize: "16px", fontWeight: 510, marginBottom: "0.5rem" }}>Equipo y Miembros</h3>
@@ -1052,18 +1230,32 @@ export default function Settings() {
                       <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--color-paper)" }}>{m.full_name}</div>
                       <div style={{ fontSize: "12px", color: "var(--color-fog)" }}>{m.email}</div>
                     </div>
-                    <span
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "2px 8px",
-                        borderRadius: "4px",
-                        background: m.role === "ADMIN" ? "rgba(59, 130, 246, 0.15)" : m.role === "OPERATOR" ? "rgba(16, 185, 129, 0.15)" : "rgba(107, 114, 128, 0.2)",
-                        color: m.role === "ADMIN" ? "#60a5fa" : m.role === "OPERATOR" ? "#34d399" : "#9ca3af",
-                      }}
-                    >
-                      {m.role}
-                    </span>
+                    {/* El rol se fijaba al invitar y quedaba congelado, y no
+                        había forma de sacar a nadie: quien se iba de la empresa
+                        conservaba el acceso —y las cuentas— para siempre. */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                      <select
+                        className="form-input"
+                        style={{ background: "var(--color-obsidian)", fontSize: "11px", padding: "3px 6px" }}
+                        value={m.role}
+                        disabled={memberSavingId === m.id}
+                        aria-label={`Rol de ${m.full_name}`}
+                        onChange={(e) => handleCambiarRol(m.id, e.target.value as "ADMIN" | "OPERATOR" | "VIEWER")}
+                      >
+                        <option value="ADMIN">ADMIN</option>
+                        <option value="OPERATOR">OPERATOR</option>
+                        <option value="VIEWER">VIEWER</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-sm"
+                        style={{ fontSize: "11px", padding: "3px 8px" }}
+                        disabled={memberSavingId === m.id}
+                        onClick={() => handleQuitarMiembro(m.id, m.full_name)}
+                      >
+                        Quitar
+                      </button>
+                    </div>
                   </div>
 
                   {/* Qué cuentas ve. El rol dice qué puede hacer; esto dice

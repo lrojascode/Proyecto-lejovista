@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Literal, Optional
 
 
@@ -13,4 +13,7 @@ class InvitationCreateRequest(BaseModel):
 
 class InvitationAcceptRequest(BaseModel):
     full_name: str
-    password: str
+    # Mismo mínimo que el signup. El formulario ya exigía 8 y confirmación, pero
+    # el schema no: una llamada directa a la API aceptaba una contraseña de un
+    # carácter, y eso funda una cuenta real.
+    password: str = Field(min_length=8)

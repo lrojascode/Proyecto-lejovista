@@ -309,7 +309,26 @@ export const api = {
     apiRequest<AIThresholdsConfig>("/api/v1/organizations/my/ai-thresholds", "PUT", { overrides }),
 
   // --- INVITACIONES Y EQUIPO ---
+  // --- MI CUENTA ---
+  updateProfile: (data: { full_name?: string; email?: string }) =>
+    apiRequest<User>("/api/v1/auth/me", "PATCH", data),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiRequest<{ message: string }>("/api/v1/auth/change-password", "POST", {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  forgotPassword: (email: string) =>
+    apiRequest<{ message: string }>("/api/v1/auth/forgot-password", "POST", { email }),
+  resetPassword: (token: string, newPassword: string) =>
+    apiRequest<{ message: string }>("/api/v1/auth/reset-password", "POST", {
+      token, new_password: newPassword,
+    }),
+
   getOrgMembers: () => apiRequest<OrgMember[]>("/api/v1/organizations/my/members", "GET"),
+  updateMemberRole: (userId: string, role: "ADMIN" | "OPERATOR" | "VIEWER") =>
+    apiRequest<{ message: string }>(`/api/v1/organizations/my/members/${userId}`, "PATCH", { role }),
+  removeMember: (userId: string) =>
+    apiRequest<{ message: string }>(`/api/v1/organizations/my/members/${userId}`, "DELETE"),
   getOrgInvitations: () => apiRequest<Invitation[]>("/api/v1/organizations/my/invitations", "GET"),
   createOrgInvitation: (data: {
     email: string;

@@ -190,6 +190,22 @@ aclara** en vez de dar por ceros lo que todavía no tiene.
    - Presionar **Invitar Usuario**.
 2. El colaborador recibirá un correo con el link de un solo uso para establecer su contraseña e ingresar al espacio.
 
+### Cambiar el rol o dar de baja a alguien
+
+Desde **Equipo y Miembros**: el rol es un desplegable en la fila del miembro, y
+**Quitar** lo saca de la organización (se lleva también sus concesiones de
+cuentas). Dos protecciones: nadie puede quitarse a sí mismo, y no se puede dejar
+la organización sin ningún ADMIN.
+
+### Si el cliente pierde la contraseña
+
+Ya no hace falta tocar la base: **¿Olvidaste tu contraseña?** en el login manda
+un enlace de un solo uso que vence a los 30 minutos. Y con la sesión abierta se
+cambia desde **Configuración → Mi cuenta**.
+
+> Las dos cosas dependen del correo: sin `BREVO_API_KEY` el backend no envía
+> nada. Ver §Correo abajo.
+
 ### El rol dice qué puede hacer; las cuentas dicen sobre qué
 
 Son dos ejes distintos, y hasta 2026-08 solo existía el primero: cualquier
@@ -220,3 +236,21 @@ muestra solo los de la cuenta activa.
   migración los dejó alcanzables desde **todas** las cuentas de su organización.
   Se acotan en **Configuración → Páginas y WhatsApp** → *Editar* en el número,
   marcando las cuentas que corresponden.
+
+---
+
+## Correo transaccional (requisito, no opcional)
+
+`BREVO_API_KEY` alimenta tres cosas: las invitaciones, los avisos de token de
+Meta vencido y la recuperación de contraseña. Sin ella el backend **no envía
+nada**.
+
+Hasta 2026-08-25 fallaba en silencio por partida doble: `send_email` devolvía
+`True` sin API key —igual que en modo mock— y la variable ni siquiera figuraba en
+el `x-app-env` del compose de Coolify, así que aunque se cargara en el panel no
+llegaba al contenedor. Las dos cosas están arregladas: la variable se pasa, y si
+no está configurada el envío devuelve `False`, lo loguea como WARNING y la
+pantalla de invitaciones lo dice en vez de afirmar que salió.
+
+Para activarlo: cargar `BREVO_API_KEY` (y opcionalmente `EMAIL_FROM` /
+`EMAIL_FROM_NAME`) en las Environment Variables del recurso de Coolify.

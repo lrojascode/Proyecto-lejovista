@@ -15,6 +15,12 @@ logger = logging.getLogger("lejovista.email")
 BREVO_SMTP_URL = "https://api.brevo.com/v3/smtp/email"
 
 
+def email_configurado() -> bool:
+    """¿Hay proveedor de correo? Sirve para avisar ANTES de prometer un envío
+    (p. ej. el flujo de recuperar contraseña, que sin esto no lleva a nada)."""
+    return bool(settings.MOCK_SERVICES or settings.BREVO_API_KEY)
+
+
 async def send_email(
     to_email: str,
     subject: str,
@@ -22,9 +28,16 @@ async def send_email(
     to_name: Optional[str] = None,
     text_content: Optional[str] = None,
 ) -> bool:
-    """Envía un correo transaccional. Devuelve True si se envió o se mockeó,
-    False si ocurrió un error en el proveedor."""
-    if settings.MOCK_SERVICES or not settings.BREVO_API_KEY:
+    """Envía un correo transaccional. Devuelve True si se envió (o se mockeó),
+    False si falló o si NO HAY con qué enviarlo.
+
+    Sin `BREVO_API_KEY` devolvía `True`, igual que en modo mock. Los dos casos no
+    son lo mismo: en mock no hay nada que enviar, y sin API key en producción hay
+    un correo que alguien está esperando y nunca va a llegar. Devolver `True`
+    hacía que el panel dijera "invitación enviada" y que los avisos de token
+    vencido se dieran por entregados — todo en silencio.
+    """
+    if settings.MOCK_SERVICES:
         logger.info(
             "[MOCK] Envío de email a %s (%s) — Asunto: '%s'",
             to_email,
@@ -32,6 +45,14 @@ async def send_email(
             subject,
         )
         return True
+
+    if not settings.BREVO_API_KEY:
+        logger.warning(
+            "No se envió el email a %s ('%s'): BREVO_API_KEY no está configurada. "
+            "Las invitaciones y los avisos de token no están saliendo.",
+            to_email, subject,
+        )
+        return False
 
     payload = {
         "sender": {

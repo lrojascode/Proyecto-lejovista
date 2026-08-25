@@ -27,6 +27,12 @@ x-app-env: &app-env
   SECRET_KEY: ${SECRET_KEY}
   ENCRYPTION_KEY: ${ENCRYPTION_KEY}
   SENTRY_DSN: ${SENTRY_DSN:-}
+  # Correo transaccional (invitaciones, avisos de token vencido, recuperación
+  # de contraseña). Sin esto el backend no envía NADA: no fallaba, devolvía
+  # éxito y el correo no salía nunca.
+  BREVO_API_KEY: ${BREVO_API_KEY:-}
+  EMAIL_FROM: ${EMAIL_FROM:-notificaciones@lejovista.com}
+  EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-Agente DX IA}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   META_APP_ID: ${META_APP_ID}
   META_APP_SECRET: ${META_APP_SECRET}

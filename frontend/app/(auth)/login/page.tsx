@@ -174,6 +174,19 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
             />
+            {/* Sin esto, quien pierde la clave queda afuera: no había flujo de
+                recuperación y la única salida era editarle el hash en la base. */}
+            {isLogin && (
+              <a
+                href="/forgot-password"
+                style={{
+                  display: "inline-block", marginTop: "0.5rem", fontSize: "0.8rem",
+                  color: "var(--color-signal-teal)", textDecoration: "underline",
+                }}
+              >
+                ¿Olvidaste tu contraseña?
+              </a>
+            )}
           </div>
 
           <button type="submit" className="btn-primary" style={{ marginTop: "0.5rem" }} disabled={loading}>

@@ -148,6 +148,10 @@ export type Invitation = {
   expires_at: string;
   accepted_at?: string | null;
   created_at: string;
+  /** `false` = la invitación existe pero el correo NO salió (sin proveedor
+   *  configurado, o el proveedor falló). Sin este dato la pantalla decía
+   *  "enviada" igual y el invitado nunca se enteraba. */
+  email_sent?: boolean | null;
 };
 
 export type InvitationDetails = {
