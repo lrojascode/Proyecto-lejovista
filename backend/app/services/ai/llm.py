@@ -430,6 +430,23 @@ def _proveedor_por_forma(key: str) -> str:
 
 
 def _param_rechazado(texto: str) -> Optional[str]:
+    """Qué parámetro rechazó el modelo, según su propia respuesta de error.
+
+    Se mira PRIMERO el campo `error.param` del JSON, que es dato estructurado, y
+    recién después se cae al regex sobre el mensaje. El regex solo reconoce la
+    forma "Unsupported parameter: 'X'", y hay 400s que nombran el parámetro con
+    otras palabras — el que dejó al analista sin consultar la base durante días
+    decía "Function tools with reasoning_effort are not supported for ...", que
+    no matchea nada, y traía `"param": "reasoning_effort"` servido.
+    """
+    try:
+        cuerpo = json.loads(texto or "")
+        param = ((cuerpo or {}).get("error") or {}).get("param")
+        if isinstance(param, str) and param.strip():
+            return param.strip()
+    except (ValueError, TypeError, AttributeError):
+        pass
+
     m = _PARAM_RECHAZADO_RE.search(texto or "")
     return m.group(1) if m else None
 
@@ -1034,6 +1051,19 @@ class OpenRouterClient:
         if is_gemini_direct and model.startswith("google/"):
             model = model.replace("google/", "")
 
+        # Los modelos de razonamiento de OpenAI aplican un `reasoning_effort` por
+        # DEFAULT, y ese default es incompatible con `tools` en
+        # /v1/chat/completions: la API responde 400 y el analista nunca llega a
+        # consultar la base. Pasó en producción durante días — cada mensaje del
+        # chat devolvía "Function tools with reasoning_effort are not supported",
+        # caía al camino determinista y salía la plantilla, así que parecía que
+        # el modelo no entendía las preguntas.
+        #
+        # Se manda explícito en "none", que es lo que indica el propio error. Va
+        # solo en OpenAI porque el parámetro no existe en los otros proveedores;
+        # igual, si alguno lo rechazara, `_post_chat` lo saca solo y lo recuerda.
+        extra_openai = {"reasoning_effort": "none"} if provider == "openai" else {}
+
         recolectado: List[Dict[str, Any]] = []
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -1043,6 +1073,7 @@ class OpenRouterClient:
                         "temperature": 0.3,
                         "messages": mensajes,
                         "tools": chat_tools.TOOL_SCHEMAS,
+                        **extra_openai,
                     }, provider=provider)
                     if res.status_code != 200:
                         # Se loguea el cuerpo entero del error, no un prefijo: si

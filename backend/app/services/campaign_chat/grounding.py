@@ -54,6 +54,11 @@ OPAQUE_KEYS = frozenset({
 
 _URL_RE = re.compile(r"https?://\S+")
 
+# A partir de cuántos dígitos una corrida se considera un identificador y no una
+# cantidad. Los ids de Meta tienen 15-18; ninguna cifra de negocio de esta
+# cuenta se acerca (el gasto histórico completo tiene 6 dígitos más decimales).
+_MIN_DIGITOS_IDENTIFICADOR = 12
+
 # Regex para extraer tokens numéricos con prefijo de moneda o sufijo de unidad
 _EXTRACT_TOKEN_RE = re.compile(
     r"(?P<prefix>S/\.?|\$|USD|PEN)?\s*(?P<num>\d[\d.,]*)(?:\s*(?P<suffix>%|por ciento|soles|dias|días))?",
@@ -77,6 +82,27 @@ class GroundingEntry:
 class GroundingSet:
     def __init__(self):
         self._entries: List[GroundingEntry] = []
+        # Los identificadores (ids de campaña, de anuncio, de página) NO entran
+        # al set numérico: `OPAQUE_KEYS` los saltea a propósito, para que un id
+        # de 18 dígitos no pueda respaldar por casualidad una cantidad.
+        #
+        # Pero el modelo tiene motivos legítimos para nombrarlos —una tabla de
+        # campañas con su id— y ahí la guarda descartaba la respuesta entera. En
+        # producción se vieron tres descartes seguidos por ids reales de Meta.
+        #
+        # Se guardan aparte y como CADENA: un id se valida por coincidencia
+        # exacta, no por comparación de floats. `float("120207124204200569")`
+        # pierde precisión, así que ni siquiera se compararía bien contra sí
+        # mismo.
+        self._identificadores: Set[str] = set()
+
+    def add_identificador(self, valor: Any) -> None:
+        texto = str(valor).strip()
+        if texto.isdigit() and len(texto) >= _MIN_DIGITOS_IDENTIFICADOR:
+            self._identificadores.add(texto)
+
+    def contains_identificador(self, texto: str) -> bool:
+        return texto.strip() in self._identificadores
 
     def add(self, value: float, unit: GroundingUnit = GroundingUnit.ANY) -> None:
         val_rounded = round(float(value), 4)
@@ -143,6 +169,10 @@ class GroundingSet:
         if isinstance(node, dict):
             for k, v in node.items():
                 if k in OPAQUE_KEYS:
+                    # Fuera del set numérico, pero anotado como identificador:
+                    # el modelo puede nombrarlo si de verdad está en los datos.
+                    if isinstance(v, (str, int)) and not isinstance(v, bool):
+                        gset.add_identificador(v)
                     continue
                 cls._traverse_and_collect(v, gset, path=path + (k.lower(),))
         elif isinstance(node, (list, tuple, set)):
@@ -299,6 +329,28 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
         elif suffix in ("%", "por ciento"):
             req_unit = GroundingUnit.PERCENT
 
+        # Un identificador no es una cantidad: se valida por coincidencia exacta
+        # contra los ids que vinieron en los datos, no convirtiéndolo a float
+        # (que a 18 dígitos ya pierde precisión).
+        #
+        # `req_unit == ANY` es la condición que sostiene lo que `OPAQUE_KEYS`
+        # protege: un id nunca viene con "S/." adelante ni "%" atrás, así que un
+        # token con unidad se sigue validando como cantidad y no puede
+        # respaldarse contra un id por casualidad.
+        solo_digitos = raw_num.replace(".", "").replace(",", "")
+        if (
+            req_unit == GroundingUnit.ANY
+            and solo_digitos.isdigit()
+            and len(solo_digitos) >= _MIN_DIGITOS_IDENTIFICADOR
+        ):
+            if gset.contains_identificador(raw_num) or gset.contains_identificador(solo_digitos):
+                continue
+            logger.warning(
+                "Respuesta del analista descartada: el identificador %r no está en los datos.",
+                raw_num,
+            )
+            return False
+
         candidates = _parse_float_candidates(raw_num)
         if not candidates:
             logger.warning(
@@ -319,6 +371,29 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
     return True
 
 
+def limpiar_enlaces(texto: str) -> str:
+    """Saca los enlaces del texto en vez de descartar la respuesta por tenerlos.
+
+    La guarda rechaza cualquier respuesta con un `http://`, y con razón: un
+    enlace que el modelo se inventa puede llevar a cualquier lado. Pero
+    descartarla ENTERA por eso significa tirar un análisis correcto —con sus
+    cifras ya verificadas— y darle al cliente una plantilla, sin que se entere.
+    Pasó en producción.
+
+    Quitar el enlace conserva lo que vale y elimina lo que preocupa.
+    """
+    limpio = _URL_RE.sub("", texto or "")
+    # Los paréntesis vacíos que quedan al sacar el enlace de un markdown, y los
+    # espacios dobles.
+    limpio = re.sub(r"\(\s*\)|\[\s*\]", "", limpio)
+    return re.sub(r"[ \t]{2,}", " ", limpio).strip()
+
+
 def grounded_or_canonical(facts_data: Any, canonical: str, answer: str) -> str:
-    """Devuelve la respuesta del modelo si cumple la guarda; si no, el texto canónico."""
-    return answer.strip() if numbers_are_grounded(facts_data, answer) else canonical
+    """Devuelve la respuesta del modelo si cumple la guarda; si no, el texto canónico.
+
+    El enlace se quita ANTES de validar: es lo único que se puede corregir sin
+    tocar las cifras, y descartar por él sale más caro que limpiarlo.
+    """
+    limpio = limpiar_enlaces(answer)
+    return limpio if numbers_are_grounded(facts_data, limpio) else canonical

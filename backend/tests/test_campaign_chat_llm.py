@@ -354,3 +354,63 @@ async def test_plan_chat_request_validates_topic_against_catalog(monkeypatch):
     ))
     plan2 = await OpenRouterClient().plan_chat_request(_org(), "algo raro")
     assert plan2.topic is None
+
+
+# --- El analista con consultas: que llegue a llamar a las herramientas ---
+
+class _ClienteQueCaptura:
+    """Captura el payload de cada ronda y responde sin tool calls (corta ahí)."""
+
+    def __init__(self):
+        self.payloads = []
+
+    def __call__(self, *a, **kw):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def post(self, url, json=None, headers=None):
+        self.payloads.append(dict(json or {}))
+        return _FakeResponse(200, json_module.dumps({
+            "choices": [{"message": {"content": "Listo.", "role": "assistant"}}]
+        }))
+
+
+import json as json_module  # noqa: E402  (lo usa el cliente falso de arriba)
+
+
+@pytest.mark.asyncio
+async def test_el_payload_con_herramientas_desactiva_reasoning_effort(monkeypatch):
+    """OpenAI aplica un `reasoning_effort` por DEFAULT en los modelos de
+    razonamiento, y ese default es incompatible con `tools` en
+    /v1/chat/completions: responde 400 y el analista nunca consulta la base.
+
+    Pasó en producción durante días: cada mensaje del chat devolvía
+    "Function tools with reasoning_effort are not supported", caía al camino
+    determinista y salía la plantilla — así que parecía que el modelo no
+    entendía las preguntas.
+    """
+    from app.config import settings
+    from app.services.campaign_chat.tools import ChatTools
+
+    monkeypatch.setattr(settings, "MOCK_SERVICES", False)
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-de-prueba")
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+
+    cliente = _ClienteQueCaptura()
+    monkeypatch.setattr(httpx, "AsyncClient", cliente)
+
+    org = _org()
+    await OpenRouterClient(organization=org).answer_with_tools(
+        org, "cuántas campañas activas hay", ChatTools(None, "org-1", "acc-1"),
+    )
+
+    assert cliente.payloads, "no se llegó a llamar al modelo"
+    payload = cliente.payloads[0]
+    assert payload["tools"], "el analista tiene que ir con herramientas"
+    assert payload.get("reasoning_effort") == "none"

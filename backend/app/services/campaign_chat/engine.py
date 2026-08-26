@@ -26,7 +26,9 @@ from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.ai.llm import ChatPlan, OpenRouterClient
 from app.services.ai.token_tracking import UsageContext
-from app.services.campaign_chat import cards, extraction, facts as facts_module, questions, rephrase
+from app.services.campaign_chat import (
+    cards, extraction, facts as facts_module, grounding, questions, rephrase,
+)
 from app.services.campaign_chat.tools import ChatTools
 from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invalidation_for_changed_slots, next_state
 from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
@@ -781,6 +783,8 @@ async def _analista_con_consultas(
     if not resultado:
         return None
     texto, consultado = resultado
+    # Igual que en el otro camino: el enlace se quita, no descarta la respuesta.
+    texto = grounding.limpiar_enlaces(texto)
     if rephrase.numbers_are_grounded(consultado, texto):
         logger.info(
             "Analista respondió con %d consulta(s) a la base (sesión %s).",

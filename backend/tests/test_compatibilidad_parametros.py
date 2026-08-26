@@ -185,3 +185,60 @@ async def test_no_se_reintenta_para_siempre():
     )
     assert res.status_code == 400
     assert cliente.llamadas == 3
+
+
+# --- El 400 que dejó al analista sin consultar la base durante días ---
+
+_ERROR_TOOLS_REASONING = (
+    '{"error": {"message": "Function tools with reasoning_effort are not '
+    'supported for gpt-5.6-luna in /v1/chat/completions. To use function tools, '
+    'use /v1/responses or set reasoning_effort to \'none\'.", '
+    '"type": "invalid_request_error", "param": "reasoning_effort", "code": null}}'
+)
+
+
+def test_el_parametro_sale_del_campo_param_y_no_solo_del_mensaje():
+    """El regex solo reconoce "Unsupported parameter: 'X'". Este 400 nombra el
+    parámetro con otras palabras —y lo trae servido en `error.param`— así que
+    pasaba de largo: el analista devolvía 400 en cada mensaje del chat, caía al
+    camino determinista, y parecía que el modelo no entendía las preguntas."""
+    assert llm._param_rechazado(_ERROR_TOOLS_REASONING) == "reasoning_effort"
+
+
+def test_el_regex_sigue_valiendo_cuando_no_hay_json():
+    """Los proveedores que no devuelven `param` estructurado siguen cubiertos."""
+    assert llm._param_rechazado(
+        "Unsupported parameter: 'max_tokens' is not supported with this model."
+    ) == "max_tokens"
+    assert llm._param_rechazado("no es json ni menciona parametros") is None
+
+
+@pytest.mark.asyncio
+async def test_un_modelo_que_rechaza_reasoning_effort_no_pierde_las_herramientas():
+    """Si algún proveedor rechaza el parámetro, se saca y se reintenta CON las
+    herramientas puestas: perderlas sería volver al chat de plantillas."""
+    cliente = _ClienteFalso(rechaza={"reasoning_effort"})
+    cliente.cuerpo_error = _ERROR_TOOLS_REASONING
+
+    async def _post(url, headers=None, json=None):
+        cliente.cuerpos.append(dict(json or {}))
+        if "reasoning_effort" in (json or {}):
+            return _Respuesta(400, _ERROR_TOOLS_REASONING)
+        return _Respuesta(200, "{}")
+
+    cliente.post = _post
+
+    res = await llm._post_chat(
+        cliente, "http://x", {},
+        {
+            "model": "gpt-5.6-luna",
+            "messages": [],
+            "tools": [{"type": "function"}],
+            "reasoning_effort": "none",
+        },
+        provider="openai",
+    )
+
+    assert res.status_code == 200
+    assert "reasoning_effort" not in cliente.cuerpos[-1]
+    assert cliente.cuerpos[-1]["tools"], "se perdieron las herramientas al reintentar"
