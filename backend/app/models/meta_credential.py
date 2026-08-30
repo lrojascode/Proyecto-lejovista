@@ -36,11 +36,23 @@ class MetaCredential(Base):
     organization = relationship("Organization", back_populates="meta_credentials")
     ad_accounts = relationship("AdAccount", back_populates="meta_credential")
 
-    def set_access_token(self, token: str, expires_at: datetime = None):
+    def set_access_token(self, token: str, expires_at: datetime = None, never_expires: bool = False):
+        """`never_expires=True` para los tokens que Meta reporta sin caducidad.
+
+        Hay tres casos distintos y antes se colapsaban en dos: sé cuándo vence,
+        NO sé cuándo vence, y no vence nunca. Un System User emite tokens
+        permanentes (`expires_at: 0` en `debug_token`), y estamparles el TTL de
+        long-lived era inventar una fecha que después nadie borraba: a los ~53
+        días arrancaba el aviso de "vence en 7 días" y los mails diarios a los
+        admins sobre un token que no vence nunca.
+        """
         fernet = Fernet(settings.ENCRYPTION_KEY.encode())
         self.access_token_encrypted = fernet.encrypt(token.encode()).decode()
-        # Si no conocemos la expiración real, asumimos el TTL de long-lived token.
-        self.token_expires_at = expires_at or (datetime.utcnow() + timedelta(days=DEFAULT_TOKEN_TTL_DAYS))
+        if never_expires:
+            self.token_expires_at = None
+        else:
+            # Si no conocemos la expiración real, asumimos el TTL de long-lived token.
+            self.token_expires_at = expires_at or (datetime.utcnow() + timedelta(days=DEFAULT_TOKEN_TTL_DAYS))
         self.status = "ACTIVE"
 
     def set_refresh_token(self, token: str):

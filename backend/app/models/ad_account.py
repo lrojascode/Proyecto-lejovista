@@ -51,11 +51,13 @@ class AdAccount(Base):
             return self.meta_credential.get_access_token()
         return None
 
-    def set_access_token(self, token: str, expires_at=None):
+    def set_access_token(self, token: str, expires_at=None, never_expires: bool = False):
         if not self.meta_credential:
             from app.models.meta_credential import MetaCredential
             self.meta_credential = MetaCredential(organization_id=self.organization_id)
-        self.meta_credential.set_access_token(token, expires_at=expires_at)
+        self.meta_credential.set_access_token(
+            token, expires_at=expires_at, never_expires=never_expires
+        )
 
     def set_refresh_token(self, token: str):
         if not self.meta_credential:

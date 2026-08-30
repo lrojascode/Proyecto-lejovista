@@ -97,6 +97,13 @@ export default function Settings() {
   // Reconexión simplificada (4.4)
   const [reconnectingAccount, setReconnectingAccount] = useState<AdAccount | null>(null);
   const [reconnectToken, setReconnectToken] = useState("");
+  // App de Meta propia al reconectar. El backend y api.ts ya la aceptaban; el
+  // modal no la pedía, y era el único flujo por el que se pasa cuando la cuenta
+  // aparece vencida. Sin ella, debug_token queda preguntando con la app de la
+  // agencia por un token que no emitió, y la revisión diaria vuelve a marcar
+  // la cuenta como expirada al día siguiente.
+  const [reconnectAppId, setReconnectAppId] = useState("");
+  const [reconnectAppSecret, setReconnectAppSecret] = useState("");
   const [reconnectMsg, setReconnectMsg] = useState("");
   const [reconnectLoading, setReconnectLoading] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -747,9 +754,15 @@ export default function Settings() {
     setReconnectLoading(true);
     setReconnectMsg("");
     try {
-      await api.reconnectAdAccount(reconnectingAccount.id, reconnectToken);
+      await api.reconnectAdAccount(
+        reconnectingAccount.id,
+        reconnectToken,
+        reconnectAppId.trim() || undefined,
+        reconnectAppSecret.trim() || undefined,
+      );
       setReconnectMsg("Token reconectado exitosamente. Sincronización iniciada.");
       setReconnectToken("");
+      setReconnectAppSecret("");
       setTimeout(() => {
         setReconnectingAccount(null);
         setReconnectMsg("");
@@ -1702,6 +1715,11 @@ export default function Settings() {
                             El token expiró. Reconecta la cuenta abajo con un token nuevo.
                           </p>
                         )}
+                        {acc.app_id && (
+                          <p style={{ fontSize: "12px", color: "var(--color-fog)", marginTop: "0.35rem" }}>
+                            App de Meta propia: <code>{acc.app_id}</code>
+                          </p>
+                        )}
                         {acc.last_sync_error_code && acc.status !== "EXPIRED" && (
                           <div style={{
                             marginTop: "6px",
@@ -1724,6 +1742,16 @@ export default function Settings() {
                           <span className="badge badge-warning">{badgeIcon("badge-warning")} Vence en {acc.token_expires_in_days}d</span>
                         ) : acc.status === "SUSPENDED" ? (
                           <span className="badge badge-warning">{badgeIcon("badge-warning")} Suspendida</span>
+                        ) : !acc.token_expires_at ? (
+                          // Sin fecha de caducidad: es lo que Meta reporta de un token
+                          // de Usuario del Sistema. Antes se le guardaban 60 días
+                          // inventados y esta misma fila terminaba diciendo "Vence en 0d".
+                          <span
+                            className="badge badge-success"
+                            title="Meta no reporta fecha de caducidad para este token."
+                          >
+                            {badgeIcon("badge-success")} Token permanente
+                          </span>
                         ) : (
                           <span className="badge badge-success">{badgeIcon("badge-success")} Activo</span>
                         )}
@@ -1746,6 +1774,8 @@ export default function Settings() {
                               e.stopPropagation();
                               setReconnectingAccount(acc);
                               setReconnectToken("");
+                              setReconnectAppId(acc.app_id || "");
+                              setReconnectAppSecret("");
                               setReconnectMsg("");
                             }}
                           >
@@ -2222,6 +2252,48 @@ export default function Settings() {
                   />
                 </div>
 
+                {/* Misma app propia que en "Conectar Cuenta". Acá importa más:
+                    este es el flujo por el que se pasa cuando la cuenta aparece
+                    vencida, y si el token lo emitió la app del cliente hay que
+                    declararla o el aviso vuelve mañana. */}
+                <details open={!reconnectingAccount.app_id}>
+                  <summary style={{ fontSize: "0.85rem", color: "var(--text-secondary)", cursor: "pointer" }}>
+                    ¿El token viene de una app de Meta propia? (opcional)
+                  </summary>
+                  <div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                        App ID
+                      </label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={reconnectAppId}
+                        onChange={(e) => setReconnectAppId(e.target.value)}
+                        placeholder="1331495631882896"
+                      />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                        App Secret
+                      </label>
+                      <input
+                        type="password"
+                        className="form-input"
+                        value={reconnectAppSecret}
+                        onChange={(e) => setReconnectAppSecret(e.target.value)}
+                        placeholder="Se guarda cifrado"
+                      />
+                    </div>
+                  </div>
+                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem", display: "block" }}>
+                    Si el token lo generaste desde un Usuario del Sistema en el Business
+                    Manager del cliente, pon aquí la app de ese negocio. Van los dos o
+                    ninguno: el App ID solo no sirve. Déjalos vacíos para no tocar lo que
+                    ya está guardado.
+                  </span>
+                </details>
+
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem" }}>
                   <button
                     type="button"
@@ -2229,6 +2301,7 @@ export default function Settings() {
                     onClick={() => {
                       setReconnectingAccount(null);
                       setReconnectToken("");
+                      setReconnectAppSecret("");
                       setReconnectMsg("");
                     }}
                   >

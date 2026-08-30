@@ -190,7 +190,7 @@ async def test_la_revision_diaria_no_marca_expired_una_app_propia(
 
     vistos = []
 
-    async def _espia(user_token, app_id=None, app_secret=None):
+    async def _espia(user_token, app_id=None, app_secret=None, external_account_id=None):
         vistos.append((app_id, app_secret))
         return {"is_valid": True, "expires_at": None, "scopes": [], "error": None}
 

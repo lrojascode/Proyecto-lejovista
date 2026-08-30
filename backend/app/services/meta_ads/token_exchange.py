@@ -20,9 +20,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Duración documentada de un long-lived user token cuando Meta no devuelve
-# `expires_in` (a veces lo omite para tokens que ya eran long-lived).
-_FALLBACK_TTL_DAYS = 60
+# Meta omite `expires_in` (o manda 0) cuando el token que le pasaste ya era
+# long-lived o directamente no caduca —el caso de un System User—. Antes acá se
+# asumían 60 días; ver el comentario en `exchange_for_long_lived_token`.
 
 
 def _app_credentials_configured(app_id: Optional[str] = None, app_secret: Optional[str] = None) -> bool:
@@ -78,11 +78,18 @@ async def exchange_for_long_lived_token(
         logger.warning("Meta rechazó el intercambio a long-lived token: %s", err)
         return None, None
 
+    # Sin `expires_in` NO se inventa una fecha. Meta lo omite justamente cuando el
+    # token no caduca (System User) o ya era long-lived, y estampar 60 días ahí
+    # es fabricar una caducidad falsa que después nadie borra: a los ~53 días
+    # empieza el aviso de "vence en 7 días" sobre un token sano. `None` significa
+    # "no lo sé", y quien sí lo sabe es `debug_token`.
     expires_in = data.get("expires_in")
+    expires_at = None
     if isinstance(expires_in, (int, float)) and expires_in > 0:
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(seconds=int(expires_in))
-    else:
-        expires_at = datetime.datetime.utcnow() + datetime.timedelta(days=_FALLBACK_TTL_DAYS)
 
-    logger.info("Token de Meta canjeado por long-lived (vence %s).", expires_at.date())
+    logger.info(
+        "Token de Meta canjeado por long-lived (vence %s).",
+        expires_at.date() if expires_at else "sin fecha declarada por Meta",
+    )
     return token, expires_at

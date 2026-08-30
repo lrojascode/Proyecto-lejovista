@@ -310,25 +310,28 @@ async def check_ad_account_token(
     if not raw_token:
         raise HTTPException(status_code=400, detail="No hay token de acceso disponible.")
 
-    from app.services.meta_ads.token_inspection import inspect_token_expiration
+    from app.services.meta_ads.token_inspection import (
+        ESTADO_INDETERMINADO,
+        aplicar_inspeccion,
+        inspect_token_expiration,
+    )
 
     # Con la app que emitió el token, no con la global: preguntar por un token
-    # con las credenciales de otra app devuelve error, y eso se interpreta como
-    # "token expirado" — marcaría EXPIRED una cuenta que funciona.
+    # con las credenciales de otra app devuelve error, y eso se interpretaba como
+    # "token expirado" — marcaba EXPIRED una cuenta que funciona.
     cred_app_id, cred_app_secret = cred.app_credentials
-    inspection = await inspect_token_expiration(raw_token, cred_app_id, cred_app_secret)
-    if not inspection["is_valid"]:
-        cred.status = "EXPIRED"
-        acc.status = "EXPIRED"
-        acc.last_sync_error_code = 190
-        acc.last_sync_error_detail = inspection["error"] or "Token expirado o revocado."
-    else:
-        expires_at = inspection["expires_at"]
-        cred.token_expires_at = expires_at
-        if acc.status == "EXPIRED":
-            acc.status = "ACTIVE"
-            acc.last_sync_error_code = None
-            acc.last_sync_error_detail = None
+    inspection = await inspect_token_expiration(
+        raw_token, cred_app_id, cred_app_secret, acc.external_account_id
+    )
+    estado = aplicar_inspeccion(acc, cred, inspection)
+    if estado == ESTADO_INDETERMINADO:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "No se pudo verificar el token contra Meta: "
+                f"{inspection.get('error') or 'sin detalle'}. El estado de la cuenta no se modificó."
+            ),
+        )
 
     db.add(cred)
     db.add(acc)
@@ -723,6 +726,36 @@ async def _get_own_number(
         raise HTTPException(status_code=404, detail="Número no encontrado para esta organización.")
     return row
 
+
+async def _vigencia_segun_meta(
+    token: str,
+    app_id: str | None,
+    app_secret: str | None,
+    external_account_id: str,
+    expires_at_del_canje: datetime.datetime | None,
+) -> tuple[datetime.datetime | None, bool]:
+    """`(expires_at, sin_caducidad)` según lo que Meta reporte del token.
+
+    Antes la vigencia se asumía: sin `expires_in` en el canje, `set_access_token`
+    estampaba 60 días. A un token de System User —que no caduca— eso le inventaba
+    una fecha que nadie borraba, y a los ~53 días arrancaba el aviso de "vence en
+    7 días" y los mails diarios a los admins.
+
+    Si `debug_token` no es concluyente (la app que preguntamos no es la que emitió
+    el token) no se inventa nada: se guarda sin caducidad y la revisión diaria la
+    corrige el día que pueda averiguarla.
+    """
+    from app.services.meta_ads.token_inspection import (
+        ESTADO_VALIDO,
+        inspect_token_expiration,
+    )
+
+    inspection = await inspect_token_expiration(token, app_id, app_secret, external_account_id)
+    if inspection["estado"] != ESTADO_VALIDO:
+        return expires_at_del_canje, False
+    return inspection["expires_at"], inspection["expires_at"] is None
+
+
 @router.post("/my/ad-accounts", response_model=AdAccountResponse)
 async def connect_ad_account(
     acc_in: AdAccountCreate,
@@ -747,7 +780,7 @@ async def connect_ad_account(
         token_to_store, token_expires_at = acc_in.access_token, None
 
     # 4.3: Validar el token contra Graph API antes de guardar si no estamos en mock
-    from app.config import settings
+    token_sin_caducidad = False
     if (
         not settings.MOCK_SERVICES
         and acc_in.platform.upper() == "META"
@@ -758,7 +791,7 @@ async def connect_ad_account(
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
                 test_res = await http_client.get(
-                    f"https://graph.facebook.com/v19.0/{clean_ext_id}",
+                    f"https://graph.facebook.com/{settings.META_API_VERSION}/{clean_ext_id}",
                     params={"fields": "id,name,account_status", "access_token": token_to_store},
                 )
                 data = test_res.json()
@@ -777,6 +810,10 @@ async def connect_ad_account(
                 detail=f"No se pudo verificar el token contra Meta Graph API: {e}"
             )
 
+        token_expires_at, token_sin_caducidad = await _vigencia_segun_meta(
+            token_to_store, acc_in.app_id, acc_in.app_secret, clean_ext_id, token_expires_at
+        )
+
     # 1. Comprobar si ya está conectado el mismo ad account para la misma organización
     q = select(AdAccount).where(
         AdAccount.organization_id == current_user.organization_id,
@@ -788,7 +825,9 @@ async def connect_ad_account(
 
     if existing:
         # Si la cuenta ya existe, simplemente actualizamos el token
-        existing.set_access_token(token_to_store, expires_at=token_expires_at)
+        existing.set_access_token(
+            token_to_store, expires_at=token_expires_at, never_expires=token_sin_caducidad
+        )
         existing.meta_credential.set_app_credentials(acc_in.app_id, acc_in.app_secret)
         if acc_in.refresh_token:
             existing.set_refresh_token(acc_in.refresh_token)
@@ -806,7 +845,9 @@ async def connect_ad_account(
             name=acc_in.name,
             status="ACTIVE"
         )
-        ad_acc.set_access_token(token_to_store, expires_at=token_expires_at)
+        ad_acc.set_access_token(
+            token_to_store, expires_at=token_expires_at, never_expires=token_sin_caducidad
+        )
         ad_acc.meta_credential.set_app_credentials(acc_in.app_id, acc_in.app_secret)
         if acc_in.refresh_token:
             ad_acc.set_refresh_token(acc_in.refresh_token)
@@ -863,7 +904,7 @@ async def reconnect_ad_account(
     if not token_to_store:
         token_to_store, token_expires_at = payload.access_token, None
 
-    from app.config import settings
+    token_sin_caducidad = False
     if (
         not settings.MOCK_SERVICES
         and acc.platform.upper() == "META"
@@ -874,7 +915,7 @@ async def reconnect_ad_account(
         try:
             async with httpx.AsyncClient(timeout=10.0) as http_client:
                 test_res = await http_client.get(
-                    f"https://graph.facebook.com/v19.0/{acc.external_account_id}",
+                    f"https://graph.facebook.com/{settings.META_API_VERSION}/{acc.external_account_id}",
                     params={"fields": "id,name,account_status", "access_token": token_to_store},
                 )
                 data = test_res.json()
@@ -893,7 +934,20 @@ async def reconnect_ad_account(
                 detail=f"No se pudo verificar el token contra Meta Graph API: {e}"
             )
 
-    acc.set_access_token(token_to_store, expires_at=token_expires_at)
+        # La app propia del payload si viene; si no, la que la cuenta ya tenía
+        # guardada. Reconectar sin volver a escribirla no debe hacernos preguntar
+        # con la app de la agencia por un token que no emitió.
+        app_id_efectivo, app_secret_efectivo = payload.app_id, payload.app_secret
+        if not app_id_efectivo and acc.meta_credential:
+            app_id_efectivo, app_secret_efectivo = acc.meta_credential.app_credentials
+        token_expires_at, token_sin_caducidad = await _vigencia_segun_meta(
+            token_to_store, app_id_efectivo, app_secret_efectivo,
+            acc.external_account_id, token_expires_at,
+        )
+
+    acc.set_access_token(
+        token_to_store, expires_at=token_expires_at, never_expires=token_sin_caducidad
+    )
     # Solo se toca la app si el payload la trae: reconectar sin `app_id` no
     # puede borrar en silencio la app propia que ya estaba configurada.
     if payload.app_id is not None:

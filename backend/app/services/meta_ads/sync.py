@@ -20,7 +20,12 @@ from app.models.whatsapp_number_ad_account import WhatsAppNumberAdAccount
 from app.models.sync_job import SyncJob
 from app.models.ad_account_spend_monthly import AdAccountSpendMonthly
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
-from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error, extract_meta_error_diagnostic
+from app.services.meta_ads.exceptions import (
+    MetaApiError,
+    TransientMetaError,
+    classify_meta_error,
+    extract_meta_error_diagnostic,
+)
 from app.services.meta_ads.sync_progress import SyncProgressTracker
 
 logger = logging.getLogger("lejovista.sync")
@@ -157,6 +162,17 @@ class MetaAdsSyncService:
             ad_account.last_sync_error_code = None
             ad_account.last_sync_error_detail = None
             ad_account.last_synced_at = datetime.datetime.utcnow()
+            # Un sync que terminó bien es la prueba de que el token sirve: si la
+            # cuenta venía marcada EXPIRED, se la devuelve a ACTIVE. Antes solo se
+            # limpiaba el código de error y el estado quedaba pegado, así que una
+            # cuenta marcada por error seguía mostrando "Token de Meta Expirado"
+            # hasta que alguien reconectaba a mano — aunque el sync corriera
+            # perfecto todas las mañanas.
+            if ad_account.status == "EXPIRED":
+                ad_account.status = "ACTIVE"
+                if ad_account.meta_credential and ad_account.meta_credential.status == "EXPIRED":
+                    ad_account.meta_credential.status = "ACTIVE"
+                    self.db.add(ad_account.meta_credential)
             self.db.add(ad_account)
 
             # El commit final va DENTRO del try a propósito: buena parte de las
@@ -647,7 +663,7 @@ class MetaAdsSyncService:
 
             if "ERROR" in acc_info or "error" in acc_info:
                 self._maybe_mark_expired(ad_account, acc_info)
-                raise Exception(f"Error al verificar cuenta de anuncios: {acc_info}")
+                raise MetaApiError("Error al verificar cuenta de anuncios", payload=acc_info)
 
             # Actualizar ad_account
             ad_account.spend_cap = float(acc_info.get("spend_cap", 0)) / 100.0  # Meta retorna centavos
@@ -696,7 +712,7 @@ class MetaAdsSyncService:
 
         if "ERROR" in campaigns_res or "error" in campaigns_res:
             self._maybe_mark_expired(ad_account, campaigns_res)
-            raise Exception(f"Error al obtener campañas: {campaigns_res}")
+            raise MetaApiError("Error al obtener campañas", payload=campaigns_res)
 
         campaigns_map = {}
         for c in campaigns_res.get("data", []):
@@ -732,7 +748,7 @@ class MetaAdsSyncService:
 
         if "ERROR" in campaigns_insights or "error" in campaigns_insights:
             self._maybe_mark_expired(ad_account, campaigns_insights)
-            raise Exception(f"Error al obtener insights de campañas: {campaigns_insights}")
+            raise MetaApiError("Error al obtener insights de campañas", payload=campaigns_insights)
 
         records_synced = 0
         snapshots_by_campaign: Dict[str, list] = defaultdict(list)
