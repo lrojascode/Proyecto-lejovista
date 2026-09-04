@@ -23,24 +23,38 @@ from app.models.snapshot_archive import (
 
 logger = logging.getLogger("lejovista.archiver")
 
-# (modelo caliente, modelo de archivo, columnas de negocio a copiar)
+# Columnas que existen por el mecanismo de archivado y no describen el negocio.
+# Todo lo demas se copia.
+_COLUMNAS_DE_ARCHIVO = frozenset({"id", "original_id", "archived_at"})
+
+
+def campos_a_copiar(modelo_caliente, modelo_archivo) -> list:
+    """Las columnas de negocio que se mueven al archivo.
+
+    Se DERIVA de los dos modelos en vez de mantenerse a mano. La lista escrita a
+    mano es como se perdieron `objective`, `results`, `effective_status` y las
+    fechas estructurales: alguien anadio la columna a la tabla caliente y nadie
+    se acordo de esta lista, y el hueco solo se nota meses despues, cuando el
+    aprendizaje deja de encontrar la campana (spec 06).
+
+    `tests/test_spec06_baseline.py` falla si una tabla caliente tiene una columna
+    de negocio que su archivo no tiene.
+    """
+    calientes = [c.name for c in modelo_caliente.__table__.columns]
+    del_archivo = {c.name for c in modelo_archivo.__table__.columns}
+    return [
+        nombre for nombre in calientes
+        if nombre in del_archivo and nombre not in _COLUMNAS_DE_ARCHIVO
+    ]
+
+
 _ARCHIVE_SPECS = [
-    (CampaignSnapshot, CampaignSnapshotArchive, [
-        "ad_account_id", "organization_id", "campaign_id", "campaign_name", "status",
-        "budget", "spend", "impressions", "reach", "clicks", "conversions", "conversations",
-        "cpl", "ctr", "frequency", "placements_breakdown", "demographics_breakdown",
-        "extra_breakdowns", "date", "created_at",
-    ]),
-    (AdsetSnapshot, AdsetSnapshotArchive, [
-        "ad_account_id", "organization_id", "campaign_id", "adset_id", "name",
-        "spend", "reach", "impressions", "clicks", "conversions", "conversations",
-        "cpl", "ctr", "targeting_summary", "date", "created_at",
-    ]),
-    (AdSnapshot, AdSnapshotArchive, [
-        "ad_account_id", "organization_id", "campaign_id", "adset_id", "ad_id",
-        "creative_id", "name", "spend", "reach", "impressions", "clicks",
-        "conversions", "conversations", "cpl", "ctr", "date", "created_at",
-    ]),
+    (modelo, archivo, campos_a_copiar(modelo, archivo))
+    for modelo, archivo in (
+        (CampaignSnapshot, CampaignSnapshotArchive),
+        (AdsetSnapshot, AdsetSnapshotArchive),
+        (AdSnapshot, AdSnapshotArchive),
+    )
 ]
 
 
