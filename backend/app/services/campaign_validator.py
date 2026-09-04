@@ -93,7 +93,38 @@ class CampaignValidator:
         Lanza HTTPException si algo no cumple.
         """
         self._validate_business_rules(request)
+        await self._validate_estado_inicial()
         await self._verify_meta_account_status()
+
+    async def _validate_estado_inicial(self) -> None:
+        """Toda campaña se crea PAUSED. No es configurable (spec 03).
+
+        Las reglas por organización pueden ajustar objetivo, ubicaciones o
+        presupuesto mínimo; el estado inicial no. Una organización cuyos
+        overrides pusieran `default_status` en ACTIVE encendería gasto real sin
+        que nadie lo revise — justo lo que las compuertas humanas existen para
+        impedir. Se rechaza acá, en validación, antes de que la Saga llegue a
+        Meta; los pasos de la Saga lo vuelven a comprobar sobre el payload que
+        sale, porque una invariante que se comprueba en un solo sitio es una
+        invariante hasta que alguien añade un segundo camino.
+        """
+        if self.db is None:
+            return
+
+        from app.models.organization import Organization
+        from app.tenant_rules.campaign_defaults import get_campaign_rules_for_org
+
+        org = await self.db.get(Organization, self.ad_account.organization_id)
+        estado = (get_campaign_rules_for_org(org) or {}).get("default_status", "PAUSED")
+        if str(estado).upper() != "PAUSED":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"La configuración de la organización pide crear la campaña en "
+                    f"estado {estado!r}. Toda campaña se crea PAUSED y la activación "
+                    f"es manual."
+                ),
+            )
 
     def _validate_business_rules(self, request: CampaignCreateRequest):
         # 1. Sin imagen, hash, ni video (playbook §5 Paso 4: soporte de video/UGC).

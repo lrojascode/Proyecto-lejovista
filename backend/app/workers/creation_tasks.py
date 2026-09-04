@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 from datetime import datetime, timedelta
 
 from app.workers.celery_app import celery_app
@@ -16,7 +16,16 @@ from app.services.campaign_targeting import build_targeting
 from app.services.creative_builder import CreativeBuilder
 from app.services.meta_asset_repository import MetaAssetRepository
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
-from app.services.meta_ads.exceptions import TransientMetaError, classify_meta_error
+from app.services.meta_ads.exceptions import (
+    PermanentMetaError, TransientMetaError, classify_meta_error,
+)
+from app.models.campaign_proposal import WRITE_VERIFYING
+from app.services.meta_reconciliation import (
+    ReconciliacionAmbigua, buscar_entidad_de_la_intencion,
+)
+from app.services.proposal_versioning import (
+    confirmar_intencion, marcar_verificando, registrar_intencion,
+)
 
 # En Celery, usamos el argumento previo que devuelve la tarea en el chain.
 # Por lo tanto, cada tarea recibe `context` como primer argumento (excepto la primera, si no se le pasa)
@@ -162,6 +171,105 @@ async def _rollback_campaign(db, draft_id: str) -> None:
         await _merge_draft_result(db, draft_id, rollback_error=str(exc))
 
 
+# --------------------------------------------------------------------------
+# Idempotencia y reconciliación (spec 03)
+# --------------------------------------------------------------------------
+
+async def _escritura_idempotente(
+    db,
+    context: Dict[str, Any],
+    *,
+    operacion: str,
+    acc,
+    correlation_tag: Optional[str],
+    emitir,
+):
+    """Envuelve una escritura real hacia Meta con su registro de intención.
+
+    El orden importa y es todo el mecanismo:
+
+    1. Se registra la INTENCIÓN antes del POST. Si Meta crea el objeto y la
+       respuesta se pierde, queda constancia de qué se intentó, en qué cuenta y
+       bajo qué autorización — sin esto la entidad queda huérfana y sin rastro.
+    2. Si esa intención ya está CONFIRMADA, se devuelve el identificador
+       guardado y **no se escribe**. Eso convierte un reintento de Celery, un
+       doble clic o una reejecución en una recuperación del resultado anterior.
+    3. Si estaba en VERIFYING, primero se reconcilia contra Meta. Repetir el POST
+       a ciegas desde ahí es exactamente lo que crea la campaña duplicada.
+    4. Una respuesta incierta deja la intención en VERIFYING y **no** se
+       reintenta: se levanta un error permanente para que la Saga se detenga y
+       diga por qué, en vez de insistir.
+
+    `emitir()` hace la llamada y devuelve el id de Meta.
+    """
+    approval_id = context.get("approval_id")
+    if not approval_id:
+        # Sagas despachadas antes de la spec 03 (o por caminos que todavía no
+        # pasan por la autorización). Se emite sin registro, que es el
+        # comportamiento anterior — degradar a "sin idempotencia" es peor que
+        # romper una creación en vuelo durante el despliegue.
+        logger.warning(
+            "Saga sin approval_id para %s: se emite sin registro de intención.", operacion,
+        )
+        return await emitir()
+
+    intencion, ya_confirmada = await registrar_intencion(
+        db,
+        approval_id=approval_id,
+        operacion=operacion,
+        organization_id=context["tenant_id"],
+        ad_account_id=acc.id,
+        draft_id=context.get("draft_id"),
+        correlation_tag=correlation_tag,
+    )
+    await db.commit()
+
+    if ya_confirmada:
+        logger.info(
+            "%s ya estaba confirmada (%s); se reutiliza %s sin volver a escribir.",
+            operacion, intencion.idempotency_key, intencion.external_id,
+        )
+        return intencion.external_id
+
+    if intencion.status == WRITE_VERIFYING:
+        try:
+            encontrado = await buscar_entidad_de_la_intencion(db, intencion)
+        except ReconciliacionAmbigua as e:
+            await db.commit()
+            raise PermanentMetaError(str(e)) from e
+        if encontrado:
+            await confirmar_intencion(db, intencion, encontrado)
+            await db.commit()
+            logger.info(
+                "Reconciliación: %s ya existía en Meta como %s; se adopta.",
+                operacion, encontrado,
+            )
+            return encontrado
+        logger.info(
+            "Reconciliación: %s no existe en Meta; el reintento es seguro.", operacion,
+        )
+
+    try:
+        external_id = await emitir()
+    except (TransientMetaError, PermanentMetaError):
+        # Errores clasificados: Meta respondió y se sabe qué pasó. La intención
+        # queda PENDING y el reintento (si lo hay) la reutiliza.
+        raise
+    except Exception as e:
+        # Timeout, corte de red, respuesta ilegible: NO se sabe si la escritura
+        # ocurrió. Este es el caso que la historia 46 nombra.
+        await marcar_verificando(db, intencion, str(e))
+        await db.commit()
+        raise PermanentMetaError(
+            f"Respuesta incierta de Meta al ejecutar {operacion}: la escritura "
+            f"quedó en verificación y no se reintenta a ciegas. Causa: {e}"
+        ) from e
+
+    await confirmar_intencion(db, intencion, external_id)
+    await db.commit()
+    return external_id
+
+
 _RETRY_KWARGS = dict(
     bind=True,
     autoretry_for=(TransientMetaError,),
@@ -276,20 +384,40 @@ def task_create_campaign(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "is_adset_budget_sharing_enabled": "false",
             }
 
+            # La campaña se crea PAUSED siempre. Es una invariante, no una
+            # opción de configuración: una versión que pidiera crearla activa se
+            # rechaza en validación, y acá se vuelve a comprobar porque este es
+            # el punto donde el estado sale hacia Meta.
+            if str(payload.get("status", "")).upper() != "PAUSED":
+                raise PermanentMetaError(
+                    f"La campaña se intentó crear en estado {payload.get('status')!r}. "
+                    f"Toda campaña se crea PAUSED (spec 03)."
+                )
+
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/campaigns"
-            result = await limiter.call_api(
-                endpoint, payload, method="POST", access_token=acc.get_access_token()
-            )
-            _raise_if_meta_error(result)
 
-            campaign_id = (
-                f"mock_camp_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
-                else result.get("id")
+            async def _emitir_campana():
+                result = await limiter.call_api(
+                    endpoint, payload, method="POST", access_token=acc.get_access_token()
+                )
+                _raise_if_meta_error(result)
+                nuevo = (
+                    f"mock_camp_{int(datetime.now().timestamp())}"
+                    if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
+                    else result.get("id")
+                )
+                if not nuevo:
+                    raise Exception(f"Meta no devolvió id de campaña: {result}")
+                return nuevo
+
+            campaign_id = await _escritura_idempotente(
+                db, context, operacion="create_campaign", acc=acc,
+                # La huella con la que se reconoce esta campaña si la respuesta
+                # se pierde: su nombre, que es determinista.
+                correlation_tag=campaign_name,
+                emitir=_emitir_campana,
             )
-            if not campaign_id:
-                raise Exception(f"Meta no devolvió id de campaña: {result}")
 
             context["campaign_id"] = campaign_id
             context["campaign_name"] = campaign_name
@@ -360,18 +488,26 @@ def task_create_adset(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/adsets"
-            result = await limiter.call_api(
-                endpoint, payload, method="POST", access_token=acc.get_access_token()
-            )
-            _raise_if_meta_error(result)
 
-            adset_id = (
-                f"mock_adset_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
-                else result.get("id")
+            async def _emitir_adset():
+                result = await limiter.call_api(
+                    endpoint, payload, method="POST", access_token=acc.get_access_token()
+                )
+                _raise_if_meta_error(result)
+                nuevo = (
+                    f"mock_adset_{int(datetime.now().timestamp())}"
+                    if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
+                    else result.get("id")
+                )
+                if not nuevo:
+                    raise Exception(f"Meta no devolvió id de adset: {result}")
+                return nuevo
+
+            adset_id = await _escritura_idempotente(
+                db, context, operacion="create_adset", acc=acc,
+                correlation_tag=payload["name"],
+                emitir=_emitir_adset,
             )
-            if not adset_id:
-                raise Exception(f"Meta no devolvió id de adset: {result}")
 
             context["adset_id"] = adset_id
             await _merge_draft_result(db, context["draft_id"], adset_id=adset_id)
@@ -420,18 +556,30 @@ def task_create_creative(self, context: Dict[str, Any]) -> Dict[str, Any]:
 
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/adcreatives"
-            result = await limiter.call_api(
-                endpoint, payload, method="POST", access_token=acc.get_access_token()
-            )
-            _raise_if_meta_error(result)
 
-            creative_id = (
-                f"mock_creative_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
-                else result.get("id")
+            async def _emitir_creativo():
+                result = await limiter.call_api(
+                    endpoint, payload, method="POST", access_token=acc.get_access_token()
+                )
+                _raise_if_meta_error(result)
+                nuevo = (
+                    f"mock_creative_{int(datetime.now().timestamp())}"
+                    if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
+                    else result.get("id")
+                )
+                if not nuevo:
+                    raise Exception(f"Meta no devolvió id de creativo: {result}")
+                return nuevo
+
+            # Sin `correlation_tag`: un creativo no se puede buscar por nombre de
+            # la misma forma que una campaña o un adset, así que ante respuesta
+            # incierta la intención se queda en verificación y hace falta una
+            # persona. Decirlo es mejor que fingir una reconciliación que no
+            # puede distinguir un creativo de otro.
+            creative_id = await _escritura_idempotente(
+                db, context, operacion="create_creative", acc=acc,
+                correlation_tag=None, emitir=_emitir_creativo,
             )
-            if not creative_id:
-                raise Exception(f"Meta no devolvió id de creativo: {result}")
 
             context["creative_id"] = creative_id
             await _merge_draft_result(db, context["draft_id"], creative_id=creative_id)
@@ -462,20 +610,33 @@ def task_create_ad(self, context: Dict[str, Any]) -> Dict[str, Any]:
                 "status": rules["default_status"],
             }
 
+            if str(payload.get("status", "")).upper() != "PAUSED":
+                raise PermanentMetaError(
+                    f"El anuncio se intentó crear en estado {payload.get('status')!r}. "
+                    f"Todo se crea PAUSED (spec 03)."
+                )
+
             limiter = MetaAPIRateLimiter(ad_account_id=acc.id, external_account_id=acc.external_account_id)
             endpoint = f"{acc.external_account_id}/ads"
-            result = await limiter.call_api(
-                endpoint, payload, method="POST", access_token=acc.get_access_token()
-            )
-            _raise_if_meta_error(result)
 
-            ad_id = (
-                f"mock_ad_{int(datetime.now().timestamp())}"
-                if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
-                else result.get("id")
+            async def _emitir_anuncio():
+                result = await limiter.call_api(
+                    endpoint, payload, method="POST", access_token=acc.get_access_token()
+                )
+                _raise_if_meta_error(result)
+                nuevo = (
+                    f"mock_ad_{int(datetime.now().timestamp())}"
+                    if settings.simulate_meta_writes_for(acc.id, acc.external_account_id)
+                    else result.get("id")
+                )
+                if not nuevo:
+                    raise Exception(f"Meta no devolvió id de anuncio: {result}")
+                return nuevo
+
+            ad_id = await _escritura_idempotente(
+                db, context, operacion="create_ad", acc=acc,
+                correlation_tag=ad_name, emitir=_emitir_anuncio,
             )
-            if not ad_id:
-                raise Exception(f"Meta no devolvió id de anuncio: {result}")
 
             context["ad_id"] = ad_id
             context["status"] = "COMPLETED"
