@@ -1,6 +1,7 @@
 """Tests de la Fase 2 del plan de creación de campañas: anti-bloqueo (tope de
 campañas por sesión) y nivel de riesgo expuesto en POST /campaigns/."""
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,6 +74,27 @@ async def test_create_campaign_returns_medium_risk_level(async_client: AsyncClie
 
 
 @pytest.fixture
+def _presupuesto_holgado(mocker):
+    """Aparta el límite mensual en los tests del tope anti-bloqueo.
+
+    Son dos compuertas distintas y hay que probarlas por separado: el tope
+    anti-bloqueo protege la cuenta de Meta (cuántas campañas seguidas) y el
+    límite mensual protege el bolsillo del cliente (cuánto dinero). Con el
+    límite por defecto (1000) y cinco campañas de 200, a la sexta la frenaba el
+    presupuesto y este test pasaba a comprobar otra cosa.
+
+    El límite mensual tiene su propia cobertura en
+    `tests/test_spec02_limite_presupuestario.py`.
+    """
+    async def _sin_limite(db, org_id, monto, **kwargs):
+        return None
+
+    mocker.patch(
+        "app.services.campaign_creation.assert_cabe_en_el_mes", side_effect=_sin_limite
+    )
+
+
+@pytest.fixture
 def _writes_are_real(monkeypatch):
     """El tope anti-bloqueo solo aplica cuando las escrituras llegan de verdad
     a Meta — es a la cuenta de Meta a la que protege. La suite corre con
@@ -86,6 +108,7 @@ def _writes_are_real(monkeypatch):
 @pytest.mark.asyncio
 async def test_create_campaign_blocks_after_session_cap(
     async_client: AsyncClient, db_session: AsyncSession, _writes_are_real,
+    _presupuesto_holgado,
 ):
     """Playbook §2: máx ~5 campañas nuevas por sesión (anti-bloqueo de cuenta)."""
     headers, org_id, ad_account_id = await _signup_with_ad_account(async_client, "cap-org")
@@ -104,7 +127,9 @@ async def test_create_campaign_blocks_after_session_cap(
 
 
 @pytest.mark.asyncio
-async def test_create_campaign_session_cap_scoped_per_organization(async_client: AsyncClient, _writes_are_real):
+async def test_create_campaign_session_cap_scoped_per_organization(
+    async_client: AsyncClient, _writes_are_real, _presupuesto_holgado,
+):
     """Los drafts de otra organización no deben contar contra el tope propio."""
     headers_a, _, ad_account_a = await _signup_with_ad_account(async_client, "cap-org-a")
     headers_b, _, ad_account_b = await _signup_with_ad_account(async_client, "cap-org-b")

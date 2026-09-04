@@ -1,6 +1,7 @@
 from datetime import datetime
 import uuid
 from sqlalchemy import String, Text, Float, DateTime, ForeignKey, UniqueConstraint
+from typing import Optional
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 from cryptography.fernet import Fernet
@@ -32,6 +33,12 @@ class AdAccount(Base):
     default_page_id: Mapped[str] = mapped_column(
         String, ForeignKey("meta_pages.id", ondelete="SET NULL"), nullable=True
     )
+    # Moneda de la cuenta segun Meta (ISO 4217: PEN, USD...). La usa la
+    # compuerta de presupuesto mensual: una organizacion con cuentas en monedas
+    # distintas no se puede evaluar sin conversion, y sumar montos
+    # incomparables produciria un numero sin significado que autorizaria gasto
+    # igual (spec 02). Nullable: las cuentas aun no sincronizadas no la tienen.
+    currency: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     spend_cap: Mapped[float] = mapped_column(Float, default=0.0)
     amount_spent: Mapped[float] = mapped_column(Float, default=0.0)
     last_sync_error_code: Mapped[int] = mapped_column(nullable=True)

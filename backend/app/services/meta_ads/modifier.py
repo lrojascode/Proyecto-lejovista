@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.models.ad_account import AdAccount
 from app.models.ai_action import AIAction
+from app.services.budget_gate import assert_cabe_en_el_mes
 from app.services.meta_ads.rate_limiter import MetaAPIRateLimiter
 from app.utils.formatting import money
 
@@ -83,6 +84,17 @@ class MetaCampaignModifier:
             old_budget_nominal = action.parameters.get("old_budget", 0)
             if old_budget_nominal and new_budget_nominal > (old_budget_nominal * 1.5):
                 raise ValueError(f"Presupuesto sugerido {money(new_budget_nominal)} excede la regla de seguridad del 150% (actual: {money(old_budget_nominal)}).")
+
+            # Compuerta de presupuesto mensual (spec 02), tercera superficie:
+            # el escalado. La aprobación ya la evaluó, pero entre aprobar y
+            # ejecutar puede haberse consumido el margen — y esta es la última
+            # línea antes de que el dinero salga. Bajar un presupuesto nunca se
+            # rechaza por límite.
+            incremento = float(new_budget_nominal) - float(old_budget_nominal or 0)
+            if incremento > 0:
+                await assert_cabe_en_el_mes(
+                    self.db, ad_account.organization_id, incremento
+                )
 
             # Detectamos si es daily o lifetime budget por el backup
             if "lifetime_budget" in backup_state:
