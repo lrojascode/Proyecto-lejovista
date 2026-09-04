@@ -71,16 +71,37 @@ def test_modulo_fuera_del_catalogo_nunca_esta_habilitado():
 
 
 # --- La capa que es seguridad ---
+#
+# Desde la spec 05 el módulo acota la experiencia del CLIENTE, no la de la
+# agencia: apagar un módulo para simplificarle la vista al cliente ya no se lo
+# apaga al operador que necesita esa herramienta. Por eso estos tests marcan la
+# membresía como `CLIENT` — la que el módulo gobierna.
+
+
+async def _como_cliente(db: AsyncSession, org_id: str):
+    """Convierte las membresías de la organización en acceso de cliente."""
+    from sqlalchemy import update as _update
+
+    from app.models.organization_user import OrganizationUser
+
+    await db.execute(
+        _update(OrganizationUser)
+        .where(OrganizationUser.organization_id == org_id)
+        .values(access_kind="CLIENT")
+    )
+    await db.commit()
 
 @pytest.mark.asyncio
 async def test_modulo_apagado_responde_403_en_la_api(async_client: AsyncClient, db_session: AsyncSession):
     """Ocultar el menú no alcanza: escribiendo la URL a mano tampoco entra."""
     headers, org_id = await _signup(async_client, "mod-apagado")
     await _set_modules(db_session, org_id, ["campanas", "chat"])
+    await _como_cliente(db_session, org_id)
 
     res = await async_client.get("/api/v1/ai-usage", headers=headers)
     assert res.status_code == 403
-    assert "no está habilitado" in res.json()["detail"]
+    assert res.json()["detail"]["code"] == "MODULE_DISABLED"
+    assert "no está habilitado" in res.json()["detail"]["message"]
 
 
 @pytest.mark.asyncio
@@ -88,8 +109,22 @@ async def test_modulo_encendido_no_bloquea(async_client: AsyncClient, db_session
     headers, org_id = await _signup(async_client, "mod-encendido")
     await _set_modules(db_session, org_id, ["ai_usage"])
 
+    # Como AGENCIA: `ai-usage` es además una superficie operativa, así que el
+    # cliente no la alcanza aunque tenga el módulo (spec 05).
     res = await async_client.get("/api/v1/ai-usage", headers=headers)
     assert res.status_code != 403
+
+
+@pytest.mark.asyncio
+async def test_el_modulo_apagado_no_afecta_a_la_agencia(
+    async_client: AsyncClient, db_session: AsyncSession
+):
+    """La corrección de frontera de la spec 05: el módulo acota al cliente."""
+    headers, org_id = await _signup(async_client, "mod-agencia")
+    await _set_modules(db_session, org_id, ["campanas", "chat"])
+
+    res = await async_client.get("/api/v1/ai-usage", headers=headers)
+    assert res.status_code != 403, "la agencia se gobierna por rol, no por módulo"
 
 
 @pytest.mark.asyncio
@@ -109,6 +144,7 @@ async def test_el_cliente_no_puede_encenderse_modulos_a_si_mismo(
     comercial y pasaría a ser una preferencia del cliente."""
     headers, org_id = await _signup(async_client, "mod-escalada")
     await _set_modules(db_session, org_id, ["campanas"])
+    await _como_cliente(db_session, org_id)
 
     await async_client.patch(
         "/api/v1/organizations/my",

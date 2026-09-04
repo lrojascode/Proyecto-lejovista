@@ -6,7 +6,7 @@ import type {
   ChatSessionResponse, ChatSessionSummary, SyncStatusResponse,
   OrgMember, MemberAdAccounts, Invitation, InvitationDetails, TenantBrand, MyModules, HistoryStatus,
   AdminOrganization,
-  CampaignRulesConfig, AIThresholdsConfig,
+  CampaignRulesConfig, AIThresholdsConfig, MonthlyBudget, Experience,
 } from "./types";
 
 // (S-2) El access token vive SOLO en memoria del módulo, nunca en
@@ -308,15 +308,41 @@ export const api = {
   updateAIThresholdsConfig: (overrides: Record<string, any>) =>
     apiRequest<AIThresholdsConfig>("/api/v1/organizations/my/ai-thresholds", "PUT", { overrides }),
 
+  // Límite mensual de presupuesto y su consumo. Los montos vienen como cadena:
+  // el número que se muestra tiene que ser exactamente el que usó la compuerta
+  // para decidir, y pasarlo por `number` reintroduce el error que evita
+  // (spec 02).
+  // Qué superficie le corresponde a esta sesión (spec 05). Informativo: sirve
+  // para armar la navegación, no para decidir permisos — cada endpoint vuelve a
+  // comprobar módulo y rol en el backend. Filtrar el menú es experiencia de
+  // usuario; lo único que es seguridad son las compuertas.
+  getMyExperience: () =>
+    apiRequest<Experience>("/api/v1/organizations/my/experience", "GET"),
+
+  getMonthlyBudget: () =>
+    apiRequest<MonthlyBudget>("/api/v1/organizations/my/budget", "GET"),
+
   // --- INVITACIONES Y EQUIPO ---
   // --- MI CUENTA ---
   updateProfile: (data: { full_name?: string; email?: string }) =>
     apiRequest<User>("/api/v1/auth/me", "PATCH", data),
+  // Cambiar la contraseña revoca TODAS las sesiones del usuario, incluida la
+  // que hace esta llamada: el backend devuelve un par de tokens nuevo y hay que
+  // adoptarlo, o la siguiente petición sale con un access token ya inválido y
+  // el usuario queda deslogueado por haber cambiado su propia contraseña.
   changePassword: (currentPassword: string, newPassword: string) =>
-    apiRequest<{ message: string }>("/api/v1/auth/change-password", "POST", {
+    apiRequest<TokenResponse>("/api/v1/auth/change-password", "POST", {
       current_password: currentPassword,
       new_password: newPassword,
+    }).then((res) => {
+      setSession(res);
+      return res;
     }),
+
+  // Credencial de un solo uso y 30 segundos de vida para abrir el WebSocket.
+  // El access token ya no viaja en la URL de la conexión (spec 01).
+  getWsTicket: () =>
+    apiRequest<{ ticket: string; expires_in: number }>("/api/v1/auth/ws-ticket", "POST"),
   forgotPassword: (email: string) =>
     apiRequest<{ message: string }>("/api/v1/auth/forgot-password", "POST", { email }),
   resetPassword: (token: string, newPassword: string) =>

@@ -19,11 +19,14 @@ from app.schemas.schemas import (
     PasswordChangeRequest, PasswordForgotRequest, PasswordResetRequest,
     ProfileUpdateRequest,
 )
-from app.schemas.response_schemas import MessageResponse
+from app.schemas.response_schemas import MessageResponse, WsTicketResponse
 from app.utils.security import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
-    decode_token, revoke_jti, is_revoked, get_current_user,
+    create_ws_ticket, decode_token, revoke_jti, is_revoked, get_current_user,
+    WS_TICKET_EXPIRE_SECONDS,
     set_refresh_cookie, clear_refresh_cookie, REFRESH_COOKIE_NAME, RevocationCheckUnavailable,
+    OrganizationSuspended, TOKEN_TYPE_REFRESH, revoke_all_sessions,
+    token_predates_session_cutoff, load_user_with_organizations,
 )
 from app.utils.throttle import enforce_rate_limit
 from app.utils.urls import password_reset_url
@@ -116,6 +119,23 @@ async def resolve_active_org(
     return memberships[0].organization_id
 
 
+async def _assert_organization_active(db: AsyncSession, user: User, org_id: "str | None") -> None:
+    """Corta el login (y la renovación) de una organización suspendida.
+
+    Sin esto, suspender solo impedía las peticiones posteriores: el usuario
+    entraba, veía su panel cargando y recibía 403 por todas partes sin saber por
+    qué. Fallar acá dice el motivo una vez y en el lugar correcto.
+
+    El administrador de plataforma pasa: necesita entrar justamente a las
+    organizaciones suspendidas para exportarlas, investigarlas o reactivarlas.
+    """
+    if not org_id or getattr(user, "is_platform_admin", False):
+        return
+    org = await db.get(Organization, org_id)
+    if org is not None and org.status != "ACTIVE":
+        raise OrganizationSuspended(org.status)
+
+
 def enrich_user(user: User):
     # organization_id respeta el tenant activo de la sesión (property, S-8).
     active_org_id = user.organization_id
@@ -140,6 +160,22 @@ def enrich_user(user: User):
 async def signup(
     user_in: UserCreate, request: Request, response: Response, db: AsyncSession = Depends(get_db)
 ):
+    if not settings.ENABLE_PUBLIC_SIGNUP:
+        # El alta de organizaciones es un flujo asistido que valida Meta, IA y
+        # WhatsApp antes de invitar al cliente (spec 05). Este camino la evitaba
+        # entera: cualquiera podía fundar una organización sin validar nada.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "PUBLIC_SIGNUP_DISABLED",
+                "message": (
+                    "El registro público no está disponible. El acceso se crea "
+                    "por invitación, después de que la agencia configure la "
+                    "organización."
+                ),
+            },
+        )
+
     # Sin esto, cualquiera con la URL puede spamear registros (más relevante
     # una vez expuesta la app vía túnel/internet).
     await enforce_rate_limit("signup", get_client_ip(request), max_attempts=5, window_seconds=3600)
@@ -179,7 +215,7 @@ async def signup(
     # Crear nueva organización (Tenant)
     org = Organization(
         slug=user_in.organization_slug,
-        name=user_in.organization_name
+        name=user_in.organization_name,
     )
     db.add(org)
     await db.flush() # Para obtener el ID generado
@@ -235,6 +271,8 @@ async def login(
         )
 
     active_org = await resolve_active_org(request, db, user)
+    await _assert_organization_active(db, user, active_org)
+
     access_token = create_access_token(subject=user.id, org=active_org)
     refresh_token = create_refresh_token(subject=user.id, org=active_org)
 
@@ -255,9 +293,23 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     if not raw_token:
         raise HTTPException(status_code=401, detail="No hay sesión activa (falta el refresh token).")
 
-    data = decode_token(raw_token)
-    if not data or data.get("type") != "refresh":
+    data = decode_token(raw_token, expected_type=TOKEN_TYPE_REFRESH)
+    if not data:
         raise HTTPException(status_code=401, detail="Refresh token inválido.")
+    user_id = data.get("sub")
+    q = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
+    user = (await db.execute(q)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado.")
+
+    # La revocación en bloque se comprueba ANTES que la blocklist de Redis, y el
+    # orden importa: el corte por usuario vive en la base, así que sigue siendo
+    # comprobable durante una caída del cache. Al revés, un token revocado por
+    # cambio de contraseña recibía un 503 genérico —"reintenta en unos
+    # segundos"— en vez del rechazo que le corresponde.
+    if token_predates_session_cutoff(data, user):
+        raise HTTPException(status_code=401, detail="Refresh token revocado.")
+
     try:
         if await is_revoked(data.get("jti")):
             raise HTTPException(status_code=401, detail="Refresh token revocado.")
@@ -269,12 +321,6 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
             detail="No se pudo validar la sesión en este momento. Intenta de nuevo en unos segundos.",
         )
 
-    user_id = data.get("sub")
-    q = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
-    user = (await db.execute(q)).scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=401, detail="Usuario no encontrado.")
-
     # El claim del refresh manda, PERO se revalida: entre que se emitió y ahora,
     # al usuario lo pueden haber sacado de esa organización, y renovar la sesión
     # contra una organización de la que ya no es miembro sería seguir dándole
@@ -283,6 +329,8 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     org = data.get("org") if data.get("org") in propias else None
     if org is None:
         org = await resolve_active_org(request, db, user)
+
+    await _assert_organization_active(db, user, org)
 
     # Rotación: revocar el refresh usado y emitir uno nuevo.
     await revoke_jti(data.get("jti"), settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
@@ -337,7 +385,7 @@ async def update_me(
     return enrich_user(current_user)
 
 
-@router.post("/change-password", response_model=MessageResponse)
+@router.post("/change-password", response_model=TokenResponse)
 async def change_password(
     payload: PasswordChangeRequest,
     request: Request,
@@ -360,23 +408,34 @@ async def change_password(
         raise HTTPException(status_code=400, detail="La contraseña nueva tiene que ser distinta de la actual.")
 
     current_user.hashed_password = get_password_hash(payload.new_password)
+
+    # Cambiar la contraseña expulsa TODAS las sesiones, no solo rota el refresh
+    # de esta pestaña. Antes el access token viejo seguía sirviendo hasta 24
+    # horas: quien cambia la clave lo hace porque cree que alguien más la tiene,
+    # y dejarle a ese alguien un día entero de acceso vacía la operación de
+    # sentido.
+    await revoke_all_sessions(db, current_user)
     db.add(current_user)
     await db.commit()
 
-    # La sesión actual sigue viva —quien cambió la clave es quien está acá— pero
-    # el refresh se rota: si el token viejo estaba comprometido, cambiar la
-    # contraseña tiene que cortarlo, que es justo para lo que se cambia.
+    # Como el corte alcanza también al token con el que llegó esta petición, hay
+    # que devolverle un par nuevo: si no, cambiar la contraseña te desloguea a
+    # vos mismo. El `iat` del par nuevo es >= al corte, así que sobrevive.
     viejo = request.cookies.get(REFRESH_COOKIE_NAME)
     if viejo:
         data = decode_token(viejo)
         if data and data.get("jti"):
             await revoke_jti(data["jti"], settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60)
-    nuevo_refresh = create_refresh_token(
-        subject=current_user.id, org=current_user.organization_id
-    )
+
+    org_id = current_user.organization_id
+    nuevo_refresh = create_refresh_token(subject=current_user.id, org=org_id)
     set_refresh_cookie(response, request, nuevo_refresh)
 
-    return {"message": "Contraseña actualizada."}
+    return {
+        "access_token": create_access_token(subject=current_user.id, org=org_id),
+        "token_type": "bearer",
+        "user": enrich_user(current_user),
+    }
 
 
 @router.post("/forgot-password", response_model=MessageResponse)
@@ -479,6 +538,9 @@ async def reset_password(
 
     user.hashed_password = get_password_hash(payload.new_password)
     fila.used_at = datetime.datetime.utcnow()
+    # Restablecer la contraseña es el caso en que la revocación total más
+    # importa: se llega acá porque se perdió el control de la cuenta.
+    await revoke_all_sessions(db, user)
     db.add_all([user, fila])
     await db.commit()
 
@@ -489,6 +551,24 @@ def _hash_reset_token(token: str) -> str:
     """SHA-256 del token. Lo que se guarda no puede servir para entrar: la tabla
     es un objetivo tan bueno como `users`."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+@router.post("/ws-ticket", response_model=WsTicketResponse)
+async def issue_ws_ticket(current_user: User = Depends(get_current_user)):
+    """Credencial de un solo uso y vida corta para abrir el WebSocket.
+
+    El WebSocket recibía el access token por query string, y la URL de una
+    conexión la registran el proxy, los historiales del navegador y cualquier
+    intermediario: ahí quedaba una credencial de 24 horas legible en texto
+    plano. El ticket dura 30 segundos, solo sirve para el handshake y se pide
+    desde una petición HTTP normal, donde la credencial viaja en la cabecera.
+    """
+    return {
+        "ticket": create_ws_ticket(
+            subject=current_user.id, org=current_user.organization_id
+        ),
+        "expires_in": WS_TICKET_EXPIRE_SECONDS,
+    }
 
 
 @router.get("/tenant-brand", response_model=TenantBrandResponse)

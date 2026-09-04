@@ -384,3 +384,10 @@ export type ChatProgressMessage = Schemas["ChatProgressMessage"];
 export type ChatResultMessage = Schemas["ChatResultMessage"];
 export type ChatErrorMessage = Schemas["ChatErrorMessage"];
 export type ChatAction = Schemas["ChatAction"];
+
+// Límite mensual de presupuesto (spec 02). Los montos son cadenas a propósito:
+// ver `api.getMonthlyBudget`.
+export type MonthlyBudget = Schemas["MonthlyBudgetResponse"];
+
+// Superficie que le corresponde a la sesión: "cliente" o "agencia" (spec 05).
+export type Experience = Schemas["ExperienceResponse"];

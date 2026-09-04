@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Union, Any, Dict
 import jwt
 import uuid
@@ -76,13 +76,52 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
+# Tipos de credencial. Cada superficie declara cual acepta y lo comprueba ANTES
+# de resolver el sujeto: un refresh (7 dias) presentado como Bearer abria la API
+# entera con la credencial de mayor vida del sistema.
+TOKEN_TYPE_ACCESS = "access"
+TOKEN_TYPE_REFRESH = "refresh"
+TOKEN_TYPE_WS_TICKET = "ws_ticket"
+
+# Vida del ticket de WebSocket: lo justo para ir del `fetch` que lo pide al
+# handshake que lo canjea.
+WS_TICKET_EXPIRE_SECONDS = 30
+
+
+def _base_claims(subject: Union[str, Any], token_type: str, expire: datetime) -> Dict[str, Any]:
+    """Claims comunes a toda credencial emitida.
+
+    `iat` es el que permite revocar en bloque: con el corte por usuario
+    (`User.sessions_valid_from`) no hace falta enumerar jti para expulsar todas
+    las sesiones, basta comparar cuando se emitio cada token.
+    """
+    ahora = datetime.utcnow()
+    return {
+        "exp": expire,
+        "iat": ahora,
+        # `iat` estandar viaja en SEGUNDOS enteros, y con esa resolucion el token
+        # que se emite justo despues de un cambio de contrasena puede caer en el
+        # mismo segundo que el corte y no distinguirse de los que hay que
+        # expulsar. `iat_ms` da la resolucion que hace falta para que el corte
+        # sea exacto; `iat` se conserva por ser el claim estandar.
+        # `.replace(tzinfo=utc)` NO es decorativo: `datetime.utcnow()` devuelve un
+        # naive, y `.timestamp()` sobre un naive lo interpreta como hora LOCAL.
+        # Sin esto el desfase horario del servidor se colaba en la comparacion y
+        # el corte no rechazaba nada.
+        "iat_ms": int(ahora.replace(tzinfo=timezone.utc).timestamp() * 1000),
+        "sub": str(subject),
+        "type": token_type,
+        "jti": str(uuid.uuid4()),
+    }
+
+
 def create_access_token(subject: Union[str, Any], org: Optional[str] = None, expires_delta: Optional[timedelta] = None) -> str:
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    to_encode = {"exp": expire, "sub": str(subject), "type": "access", "jti": str(uuid.uuid4())}
+    to_encode = _base_claims(subject, TOKEN_TYPE_ACCESS, expire)
     if org:
         # Organización "activa" del usuario para esta sesión (multi-tenant, S-8).
         to_encode["org"] = str(org)
@@ -93,17 +132,80 @@ def create_access_token(subject: Union[str, Any], org: Optional[str] = None, exp
 def create_refresh_token(subject: Union[str, Any], org: Optional[str] = None) -> str:
     """Token de refresco de larga duración (S-9). Revocable vía blocklist por jti."""
     expire = datetime.utcnow() + timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES)
-    to_encode = {"exp": expire, "sub": str(subject), "type": "refresh", "jti": str(uuid.uuid4())}
+    to_encode = _base_claims(subject, TOKEN_TYPE_REFRESH, expire)
     if org:
         to_encode["org"] = str(org)
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
 
 
-def decode_token(token: str) -> Optional[Dict[str, Any]]:
+def create_ws_ticket(subject: Union[str, Any], org: Optional[str] = None) -> str:
+    """Credencial de un solo uso para abrir un WebSocket.
+
+    Existe para sacar el access token del query string: la URL de un WebSocket
+    la registran el proxy, los historiales y cualquier intermediario, y ahi
+    quedaba una credencial de 24 horas. El ticket vale 30 segundos, sirve solo
+    para el handshake y se consume al canjearlo.
+    """
+    expire = datetime.utcnow() + timedelta(seconds=WS_TICKET_EXPIRE_SECONDS)
+    to_encode = _base_claims(subject, TOKEN_TYPE_WS_TICKET, expire)
+    if org:
+        to_encode["org"] = str(org)
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
+
+
+def decode_token(token: str, expected_type: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Decodifica y valida la firma. Con `expected_type`, exige ademas ese tipo.
+
+    Un tipo inesperado devuelve `None`, igual que una firma invalida: desde
+    afuera las dos situaciones tienen que ser indistinguibles, o el error
+    mismo dice que la credencial es autentica pero de otra clase.
+    """
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
     except Exception:
         return None
+    if expected_type is not None and payload.get("type") != expected_type:
+        return None
+    return payload
+
+
+def token_predates_session_cutoff(payload: Dict[str, Any], user: "User") -> bool:
+    """True si este token se emitio antes del corte de sesiones del usuario.
+
+    Sin `iat` no se puede probar que sea posterior al corte, asi que se rechaza:
+    son los tokens anteriores al despliegue de este mecanismo, y solo afectan a
+    usuarios que ademas cambiaron su contrasena.
+    """
+    cutoff = getattr(user, "sessions_valid_from", None)
+    if not cutoff:
+        return False
+
+    crudo = payload.get("iat_ms")
+    divisor = 1000.0
+    if crudo is None:
+        # Tokens anteriores al despliegue de `iat_ms`: se cae al claim estandar,
+        # con su resolucion de segundos.
+        crudo = payload.get("iat")
+        divisor = 1.0
+    if crudo is None:
+        return True
+    try:
+        emitido = datetime.utcfromtimestamp(int(crudo) / divisor)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return True
+    return emitido < cutoff
+
+
+def session_cutoff_now() -> datetime:
+    """Instante de corte para revocar todas las sesiones de un usuario.
+
+    Truncado al milisegundo, que es la resolucion de `iat_ms`. Sin truncar, el
+    token que se emite inmediatamente despues del corte podria quedar por
+    debajo de el al redondear su marca hacia abajo, y se rechazaria a si mismo:
+    cambiar la contrasena te dejaria fuera de tu propia sesion.
+    """
+    ahora = datetime.utcnow()
+    return ahora.replace(microsecond=(ahora.microsecond // 1000) * 1000)
 
 
 async def revoke_jti(jti: str, ttl_seconds: int) -> None:
@@ -115,6 +217,34 @@ async def revoke_jti(jti: str, ttl_seconds: int) -> None:
         await client.set(f"revoked:{jti}", "1", ex=max(ttl_seconds, 1))
     except Exception as e:
         logger.warning("No se pudo revocar jti %s (Redis no disponible): %s", jti, e)
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
+
+async def consume_ws_ticket(jti: Optional[str]) -> bool:
+    """Marca un ticket de WebSocket como usado. True si era la primera vez.
+
+    `SET NX` con expiración: la operación de comprobar-y-marcar es una sola, así
+    que dos handshakes simultáneos con el mismo ticket no pueden pasar los dos.
+
+    Fail-**open** deliberado: si el cache no responde no se puede garantizar la
+    unicidad, pero el ticket ya vive 30 segundos y dejar sin notificaciones a
+    todo el producto por una caída del soporte es peor que aceptar un reuso
+    dentro de esa ventana. Lo que no es fail-open es la validez del ticket en sí
+    —firma, tipo, vencimiento, corte de sesiones y pertenencia— que se comprueba
+    igual.
+    """
+    if not jti:
+        return False
+    client = aioredis.Redis.from_url(settings.REDIS_URL)
+    try:
+        return bool(await client.set(f"ws_ticket:{jti}", "1", nx=True, ex=WS_TICKET_EXPIRE_SECONDS * 2))
+    except Exception as e:
+        logger.warning("No se pudo marcar el ticket de WebSocket %s como usado: %s", jti, e)
+        return True
     finally:
         try:
             await client.aclose()
@@ -155,6 +285,79 @@ async def is_revoked(jti: str) -> bool:
             pass
 
 
+class OrganizationSuspended(HTTPException):
+    """La organización activa de la sesión no está ACTIVE.
+
+    Se responde 403 y no 401: la credencial es válida y la sesión existe; lo que
+    no está habilitado es la organización. Distinguirlas importa porque el
+    frontend tiene que mostrar "tu organización está suspendida" y no mandar al
+    usuario a reintentar el login, que fallaría igual.
+    """
+
+    def __init__(self, org_status: str):
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ORGANIZATION_SUSPENDED",
+                "message": (
+                    "Esta organización está suspendida. Contacta con la agencia "
+                    "para reactivarla."
+                ),
+                "status": org_status,
+            },
+        )
+
+
+async def load_user_with_organizations(db: AsyncSession, user_id: str) -> Optional[User]:
+    """El usuario con sus membresías Y la Organization de cada una.
+
+    Se traen las organizaciones enteras y no solo sus ids porque toda request
+    necesita ahora el `status` de la organización activa (suspensión efectiva).
+    Cargarlas de una vez cuesta una consulta más por request y evita una
+    segunda consulta puntual por cada comprobación.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from app.models.organization_user import OrganizationUser
+
+    q = (
+        select(User)
+        .options(
+            selectinload(User.organizations).selectinload(OrganizationUser.organization)
+        )
+        .where(User.id == user_id)
+    )
+    return (await db.execute(q)).scalar_one_or_none()
+
+
+def resolve_active_organization(request: Request, user: User, payload: Dict[str, Any]):
+    """La Organization activa de esta request, o None.
+
+    Mismo orden de decisión que antes (S-8): manda el subdominio, y si no lo
+    hay, el claim del token. Lo que cambia es que se resuelve contra las
+    organizaciones YA cargadas del usuario en vez de consultar por slug: si el
+    slug no es de ninguna de ellas, no hay nada que mirar, y así una petición
+    con el slug de otro tenant no llega ni a leer su fila.
+    """
+    memberships = list(user.organizations or [])
+    por_id = {ou.organization_id: ou.organization for ou in memberships if ou.organization}
+
+    tenant_slug = request.headers.get("X-Tenant-Slug")
+    if tenant_slug:
+        for org in por_id.values():
+            if org.slug == tenant_slug:
+                return org
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso denegado: No tienes permisos para acceder a esta organización.",
+        )
+
+    token_org = payload.get("org")
+    if token_org and token_org in por_id:
+        return por_id[token_org]
+    return None
+
+
 async def get_current_user(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -165,57 +368,123 @@ async def get_current_user(
         detail="No se pudieron validar las credenciales de acceso.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    user_id = None
-    
-    # 1. Intentar validar usando token JWT en headers
-    if token:
-        try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-            user_id = payload.get("sub")
-        except Exception:
-            raise credentials_exception
 
+    if not token:
+        raise credentials_exception
+
+    # El TIPO se comprueba antes que nada: un refresh token bien firmado no es
+    # una credencial de acceso. Antes solo se validaba la firma y se leía `sub`,
+    # así que el refresh —que dura siete días frente a las 24 horas del access,
+    # y viaja en una cookie que el navegador adjunta sola— servía como Bearer
+    # contra la API entera.
+    payload = decode_token(token, expected_type=TOKEN_TYPE_ACCESS)
+    if not payload:
+        raise credentials_exception
+
+    user_id = payload.get("sub")
     if not user_id:
         raise credentials_exception
-        
-    from sqlalchemy.orm import selectinload
-    from sqlalchemy import select
-    q_user = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
-    res_user = await db.execute(q_user)
-    user = res_user.scalar_one_or_none()
-    
+
+    user = await load_user_with_organizations(db, user_id)
     if user is None:
         raise credentials_exception
-        
-    # Determinar la organización ACTIVA de la sesión (S-8) y validar aislamiento.
-    user_org_ids = [ou.organization_id for ou in user.organizations] if user.organizations else []
-    active_org_id = None
 
-    tenant_slug = request.headers.get("X-Tenant-Slug")
-    if tenant_slug:
-        # El subdominio elige el tenant activo; debe pertenecer al usuario.
-        from app.models.organization import Organization
-        q_org = select(Organization).where(Organization.slug == tenant_slug)
-        res_org = await db.execute(q_org)
-        org = res_org.scalar_one_or_none()
-        if not org or org.id not in user_org_ids:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Acceso denegado: No tienes permisos para acceder a esta organización."
-            )
-        active_org_id = org.id
-    else:
-        # Sin subdominio: usar la organización del claim del token si es válida.
-        token_org = payload.get("org")
-        if token_org and token_org in user_org_ids:
-            active_org_id = token_org
+    # Revocación en bloque (cambio/restablecimiento de contraseña). Vive en la
+    # base, así que sigue aplicando aunque Redis esté caído.
+    if token_predates_session_cutoff(payload, user):
+        raise credentials_exception
 
-    if active_org_id:
+    # Revocación de ESTE token (logout). La blocklist vive en Redis, y aquí la
+    # política es fail-**open** a propósito: bloquear toda lectura porque el
+    # cache no responde deja al cliente sin producto por un fallo de soporte.
+    # Lo que sí se hace es marcar la sesión como no verificada, y las
+    # superficies que autorizan gasto —aprobación y write-back— la rechazan
+    # (ver `require_verified_session`). Leer el histórico ya sincronizado no
+    # necesita esa garantía; escribir en Meta, sí.
+    revocation_verified = True
+    try:
+        if await is_revoked(payload.get("jti")):
+            raise credentials_exception
+    except RevocationCheckUnavailable:
+        revocation_verified = False
+    user._revocation_verified = revocation_verified
+
+    org = resolve_active_organization(request, user, payload)
+
+    if org is not None:
+        # Suspensión efectiva. Se comprueba en el único punto por el que pasan
+        # todas las peticiones autenticadas: una compuerta por endpoint se
+        # olvida en el siguiente endpoint que alguien añada.
+        #
+        # El administrador de plataforma la atraviesa porque necesita entrar
+        # justamente a las organizaciones suspendidas —para exportar,
+        # investigar o reactivarlas—; es la excepción que pide la historia 54.
+        if org.status != "ACTIVE" and not getattr(user, "is_platform_admin", False):
+            raise OrganizationSuspended(org.status)
         # Atributo no mapeado leído por User.organization_id (multi-tenant real).
-        user._active_org_id = active_org_id
+        user._active_org_id = org.id
+        user._active_org = org
 
     return user
+
+
+async def require_verified_session(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Exige que la validez de la sesión se haya podido COMPROBAR.
+
+    Se pone donde una acción compromete dinero o autoriza una escritura. Si el
+    mecanismo de revocación no respondió, no se puede afirmar que esta sesión
+    siga siendo válida, y aprobar o escribir bajo esa duda es exactamente lo que
+    la revocación existe para impedir.
+
+    Es la excepción acotada al fail-open general de la capa Redis (ADR-13): el
+    resto —throttle, cache, debounce— sigue degradando abierto.
+    """
+    if not getattr(current_user, "_revocation_verified", True):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "SECURITY_CONTROLS_UNAVAILABLE",
+                "message": (
+                    "No se puede verificar la validez de la sesión en este momento, "
+                    "así que esta acción queda bloqueada. La consulta de datos sigue "
+                    "disponible. Reintenta en unos segundos."
+                ),
+            },
+        )
+    return current_user
+
+
+async def revocation_backend_available() -> bool:
+    """True si el mecanismo de revocación responde.
+
+    Para los caminos que no tienen una sesión HTTP delante —los workers— y que
+    aun así escriben en Meta.
+    """
+    client = aioredis.Redis.from_url(settings.REDIS_URL)
+    try:
+        await client.ping()
+        return True
+    except Exception as e:
+        logger.warning("El mecanismo de revocación no responde: %s", e)
+        return False
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
+
+
+async def revoke_all_sessions(db: AsyncSession, user: User) -> None:
+    """Invalida todas las credenciales vivas de `user`.
+
+    Mueve el corte por usuario al instante actual. No enumera jti —no hay forma
+    de conocerlos— y por eso alcanza también a los access tokens, que hasta
+    ahora solo caducaban por expiración.
+    """
+    user.sessions_valid_from = session_cutoff_now()
+    db.add(user)
 
 
 # (S-1) Jerarquía de roles de OrganizationUser.role: ADMIN por encima de
@@ -255,9 +524,17 @@ def require_role(min_role: str):
                 detail="No perteneces a ninguna organización activa.",
             )
         if not await has_role(db, current_user, min_role):
+            # `code` explicito: el frontend y el operador tienen que poder
+            # distinguir "no contrataste esto" de "no tienes permiso". Son dos
+            # problemas con dos soluciones distintas, y un mensaje suelto los
+            # confunde (spec 05, criterio 6).
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Esta acción requiere el rol {min_role} o superior en la organización.",
+                detail={
+                    "code": "ROLE_REQUIRED",
+                    "message": f"Esta acción requiere el rol {min_role} o superior en la organización.",
+                    "required_role": min_role,
+                },
             )
         return current_user
 
@@ -288,6 +565,29 @@ async def require_platform_admin(
     return current_user
 
 
+async def require_agency(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Restringe una superficie a la experiencia de agencia (spec 05).
+
+    Se pone donde la respuesta expone la altura operativa: consumo y costo de
+    IA, historial de llamadas a Meta, diagnósticos de infraestructura. No es que
+    el cliente no deba "poder": es que esa información no significa nada para él
+    y sí revela cómo está operado su servicio.
+    """
+    from app.services.experiencia import es_agencia
+
+    if not es_agencia(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "AGENCY_ONLY",
+                "message": "Esta sección es parte de la operación de la agencia.",
+            },
+        )
+    return current_user
+
+
 def require_module(module: str):
     """Exige que la organización activa tenga habilitado `module`.
 
@@ -295,6 +595,11 @@ def require_module(module: str):
     redirigir la ruta en el frontend son experiencia de usuario: sin esta
     dependencia el módulo está escondido, no apagado, y basta con llamar al
     endpoint a mano para seguir usándolo.
+
+    **El módulo acota la experiencia del CLIENTE, no la de la agencia** (spec
+    05). Antes acotaba a todos, así que apagar un módulo para simplificarle la
+    vista al cliente se lo apagaba también al operador que necesita esa
+    herramienta para prestar el servicio. La agencia se gobierna por rol.
 
     Se responde 403 y no 404 a propósito: el cliente sabe que el módulo existe
     —se lo vendieron o no—, así que ocultar su existencia no protege nada y sí
@@ -323,13 +628,22 @@ def require_module(module: str):
                 detail="No perteneces a ninguna organización activa.",
             )
 
+        from app.services.experiencia import es_agencia
+
+        if es_agencia(current_user, org_id):
+            return current_user
+
         org = (await db.execute(
             select(Organization).where(Organization.id == org_id)
         )).scalar_one_or_none()
         if not org or not is_module_enabled(org, module):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"El módulo '{AVAILABLE_MODULES[module]}' no está habilitado para tu organización.",
+                detail={
+                    "code": "MODULE_DISABLED",
+                    "message": f"El módulo '{AVAILABLE_MODULES[module]}' no está habilitado para tu organización.",
+                    "module": module,
+                },
             )
         return current_user
 

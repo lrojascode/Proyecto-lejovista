@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.invitation import Invitation
+from app.models.invitation import Invitation, hash_invitation_token
 from app.models.organization import Organization
 from app.models.user import User
 from app.tenant_rules.modules import AVAILABLE_MODULES, enabled_modules_for
@@ -94,11 +94,17 @@ async def test_el_admin_de_plataforma_no_ve_los_datos_de_un_cliente(
 # --- Alta de un cliente ---
 
 @pytest.mark.asyncio
-async def test_alta_de_cliente_crea_la_org_e_invita_sin_poner_contrasena(
+async def test_alta_de_cliente_crea_la_org_y_la_invitacion_espera_al_alta_completa(
     async_client: AsyncClient, db_session: AsyncSession, _no_emails
 ):
     """Nadie escribe la contraseña del cliente: se reusa la invitación de un
-    solo uso que ya existía."""
+    solo uso que ya existía.
+
+    Desde la spec 05 el alta es una SECUENCIA: crear la organización e invitar al
+    cliente en el mismo paso es lo que permitía que entrara a un espacio sin
+    Meta, sin IA y sin WhatsApp. El email queda como intención registrada y la
+    invitación sale cuando el alta está completa.
+    """
     headers, _, user_id = await _signup(async_client, "adm-alta")
     await _hacer_platform_admin(db_session, user_id)
 
@@ -113,21 +119,42 @@ async def test_alta_de_cliente_crea_la_org_e_invita_sin_poner_contrasena(
     assert body["slug"] == "cliente-nuevo"
     assert set(body["enabled_modules"]) == {"campanas", "chat", "settings"}
 
+    # Todavía no hay invitación: falta validar el alta.
+    assert body["invitacion"] is None
+    assert (await db_session.execute(
+        select(Invitation).where(Invitation.email == "dueno@clientenuevo.com")
+    )).scalar_one_or_none() is None
+    org = await db_session.get(Organization, body["id"])
+    assert org.onboarding_state["admin_email_previsto"] == "dueno@clientenuevo.com"
+
+    # Con el alta resuelta, la invitación sale y nadie escribió una contraseña.
+    for paso in ("meta", "ia", "whatsapp"):
+        r = await async_client.post(
+            f"/api/v1/admin/organizations/{org.id}/onboarding/{paso}",
+            headers=headers, json={"omitir": True, "motivo": "alta de prueba"},
+        )
+        assert r.status_code == 200, r.text
+
+    invitado = await async_client.post(
+        f"/api/v1/admin/organizations/{org.id}/invite-admin", headers=headers, json={},
+    )
+    assert invitado.status_code == 201, invitado.text
+
     inv = (await db_session.execute(
         select(Invitation).where(Invitation.email == "dueno@clientenuevo.com")
     )).scalar_one()
     assert inv.role == "ADMIN"
-    assert inv.token and len(inv.token) > 20
+    # Lo persistido es el hash: el token en claro solo existe en la respuesta
+    # que crea la invitación (spec 01).
+    assert inv.token is None
+    assert inv.token_hash and len(inv.token_hash) == 64
     _no_emails.assert_awaited_once()
 
-    # El enlace vuelve en la respuesta. `send_email` es best-effort: sin
-    # BREVO_API_KEY registra el envio en el log y devuelve exito sin mandar
-    # nada, asi que sin esto el alta decia "invitacion enviada" mientras el
-    # cliente no recibia absolutamente nada.
-    assert body["invitacion"]["invite_url"].endswith(inv.token)
-    assert body["invitacion"]["email"] == "dueno@clientenuevo.com"
+    token_en_claro = invitado.json()["invite_url"].rsplit("/", 1)[-1]
+    assert inv.token_hash == hash_invitation_token(token_en_claro)
+    assert invitado.json()["email"] == "dueno@clientenuevo.com"
     # Y distingue "se mando" de "se creo y nadie lo mando".
-    assert body["invitacion"]["correo_enviado"] is False   # sin BREVO_API_KEY en tests
+    assert invitado.json()["correo_enviado"] is False   # sin BREVO_API_KEY en tests
 
 
 @pytest.mark.asyncio
@@ -197,7 +224,20 @@ async def test_prender_y_apagar_modulos_de_un_cliente(
     assert res.status_code == 200
     assert set(res.json()["enabled_modules"]) == {"campanas", "chat", "settings"}
 
-    # Y el efecto es real del lado del cliente: la API le cierra el modulo.
+    # Y el efecto es real del lado del CLIENTE: la API le cierra el modulo.
+    # Desde la spec 05 hay que marcar la membresia como tal — el modulo acota la
+    # experiencia del cliente, no la de la agencia.
+    from sqlalchemy import update as _update
+
+    from app.models.organization_user import OrganizationUser
+
+    await db_session.execute(
+        _update(OrganizationUser)
+        .where(OrganizationUser.organization_id == org_cliente)
+        .values(access_kind="CLIENT")
+    )
+    await db_session.commit()
+
     apagado = await async_client.get("/api/v1/ai-usage", headers=headers_cli)
     assert apagado.status_code == 403
 
