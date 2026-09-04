@@ -10,8 +10,19 @@ from app.models.sync_job import SyncJob
 from app.schemas.schemas import CampaignSnapshotResponse
 from app.utils.security import (
     get_current_user, get_active_ad_account_id, require_module, require_role,
-    granted_ad_account_ids, require_granted_ad_account,
+    granted_ad_account_ids, require_granted_ad_account, require_verified_session,
+    require_agency,
 )
+from app.models.organization import Organization
+from app.services.baseline import (
+    Baseline, calcular_baseline, evaluar_campana, get_madurez_for_org,
+)
+from app.services.baseline_repository import campanas_agregadas
+from app.models.media_asset import KIND_IMAGEN, KIND_VIDEO
+from app.services.media_service import CuotaExcedida, guardar_medio
+from app.services.media_storage import ExcedeElLimite
+from app.services.media_validation import MedioInvalido
+from app.services.budget_gate import BudgetLimitExceeded, MixedCurrencies
 from app.services.history_reconciliation import get_history_status
 from app.utils.throttle import enforce_cooldown
 from app.workers.tasks import sync_ad_account
@@ -30,7 +41,6 @@ logger = logging.getLogger(__name__)
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.meta_page import MetaPage
-from app.models.organization import Organization
 from app.schemas.campaign_schemas import (
     CampaignCreateRequest, CampaignRiskPreviewRequest, CampaignPreflightRequest,
 )
@@ -53,6 +63,8 @@ from app.schemas.response_schemas import (
     ApiCallHistoryEntry, SuggestionResponse, ImageUploadResponse, RiskPreviewResponse,
     CampaignCreateAcceptedResponse, LearningLogResponse, MessageResponse,
     CampaignPreflightResponse, VideoUploadResponse, SyncLearningResponse,
+
+    CampaignPerformanceResponse,
 )
 from app.models.account_learning_snapshot import AccountLearningSnapshot
 
@@ -133,7 +145,8 @@ async def list_recent_campaign_snapshots(
 
     return responses
 
-@router.get("/api-call-history", response_model=List[ApiCallHistoryEntry])
+@router.get("/api-call-history", response_model=List[ApiCallHistoryEntry],
+            dependencies=[Depends(require_agency)])
 async def list_api_call_history(
     limit: int = 10,
     current_user: User = Depends(get_current_user),
@@ -544,112 +557,70 @@ async def get_campaign_suggestion(
     return await build_campaign_proposal(db, current_user, ad_account, product_name, image_path)
 
 
-_ALLOWED_IMAGE_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-}
-_MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 8MB
-
-
-def _webp_to_png(data: bytes) -> bytes:
-    """Convierte bytes WebP a PNG (Meta /adimages no admite WebP). Preserva
-    transparencia; aplana modos de paleta a RGBA."""
-    from PIL import Image
-
-    with Image.open(io.BytesIO(data)) as img:
-        if img.mode in ("P", "LA"):
-            img = img.convert("RGBA")
-        elif img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
-        out = io.BytesIO()
-        img.save(out, format="PNG")
-        return out.getvalue()
-
-
 @router.post("/upload-image", response_model=ImageUploadResponse)
 async def upload_campaign_image(
     file: UploadFile = File(...),
     current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Sube una foto para usar en la creación de campaña (reemplaza pegar una
-    URL a mano). Se guarda en MEDIA_ROOT/{organization_id}/{uuid}.{ext} — el
-    Saga de creación la lee del mismo disco vía `image_path`
-    (MetaAssetRepository.get_or_upload_image), sin volver a subirla por HTTP."""
-    ext = _ALLOWED_IMAGE_TYPES.get(file.content_type)
-    if not ext:
-        raise HTTPException(status_code=400, detail="Formato no soportado. Usa JPG, PNG o WebP.")
+    """Sube una foto para usar en la creación de campaña.
 
-    contents = await file.read()
-    if len(contents) > _MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=400, detail="La imagen supera el límite de 8MB.")
+    Se conserva por compatibilidad con el frontend actual y delega en el mismo
+    servicio que `POST /media` (spec 07): carga por streaming, validación del
+    contenido REAL y cuota por organización. Antes leía el archivo entero en
+    memoria y validaba por el tipo declarado.
 
-    # Meta /adimages NO admite WebP (rechaza con error_subcode 1487411, "tipo de
-    # archivo no admitido"), pero es un formato común (fotos descargadas, Mac).
-    # Lo convertimos a PNG aquí para que el WebP del usuario funcione sin que
-    # tenga que reconvertirlo a mano. JPG/PNG se guardan tal cual.
-    if file.content_type == "image/webp":
-        try:
-            contents = _webp_to_png(contents)
-            ext = ".png"
-        except Exception:
-            logger.exception("No se pudo convertir el WebP a PNG")
-            raise HTTPException(
-                status_code=400,
-                detail="No se pudo procesar la imagen WebP. Súbela en JPG o PNG.",
-            )
-
-    org_dir = os.path.join(settings.MEDIA_ROOT, current_user.organization_id)
-    os.makedirs(org_dir, exist_ok=True)
-    filename = f"{uuid.uuid4()}{ext}"
-    with open(os.path.join(org_dir, filename), "wb") as f:
-        f.write(contents)
-
-    return {"image_path": f"{current_user.organization_id}/{filename}"}
-
-
-_ALLOWED_VIDEO_TYPES = {
-    "video/mp4": ".mp4",
-    "video/quicktime": ".mov",
-}
-# Subida simple (no chunked). Por encima de esto habría que implementar el
-# protocolo por partes de Meta (upload_phase start/transfer/finish).
-_MAX_VIDEO_BYTES = 100 * 1024 * 1024
+    Devuelve `image_path` con la forma de siempre —`{org}/{archivo}`— para que
+    la Saga lo siga resolviendo sin cambios.
+    """
+    asset = await _subir_medio_de_campana(db, file, current_user, KIND_IMAGEN)
+    return {"image_path": asset.storage_key}
 
 
 @router.post("/upload-video", response_model=VideoUploadResponse)
 async def upload_campaign_video(
     file: UploadFile = File(...),
     current_user: User = Depends(require_role("OPERATOR")),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Sube un video para usar en la creación de campaña (playbook §5 Paso 4:
-    "el video suele rendir mejor que la imagen estática").
+    """Gemelo de `/upload-image` para video. Mismo servicio, mismas garantías."""
+    asset = await _subir_medio_de_campana(db, file, current_user, KIND_VIDEO)
+    return {"video_path": asset.storage_key}
 
-    Gemelo de `/upload-image`: guarda en el disco compartido y devuelve la ruta;
-    la Saga lo lee del mismo volumen y lo sube a `/{act}/advideos`. Antes había
-    que conseguir el `video_id` y la miniatura a mano fuera de la app, aunque
-    `CreativeBuilder` ya sabía armar el `video_data`.
+
+async def _subir_medio_de_campana(db, file, current_user, kind_esperado: str):
+    """Carga compartida por los dos endpoints heredados.
+
+    Comprueba que el tipo REAL coincida con el que pide el endpoint: subir un
+    video a `/upload-image` produciría una Saga que le manda a Meta un creativo
+    que no puede construir.
     """
-    ext = _ALLOWED_VIDEO_TYPES.get(file.content_type)
-    if not ext:
-        raise HTTPException(status_code=400, detail="Formato no soportado. Usa MP4 o MOV.")
+    try:
+        asset = await guardar_medio(
+            db, fuente=file, filename=file.filename,
+            organization_id=current_user.organization_id,
+            uploaded_by_user_id=current_user.id,
+        )
+    except CuotaExcedida as e:
+        raise HTTPException(status_code=413, detail=e.as_detail())
+    except ExcedeElLimite as e:
+        raise HTTPException(status_code=413,
+                            detail={"code": "MEDIA_TOO_LARGE", "message": str(e)})
+    except MedioInvalido as e:
+        raise HTTPException(status_code=400, detail=e.as_detail())
 
-    contents = await file.read()
-    if len(contents) > _MAX_VIDEO_BYTES:
+    if asset.kind != kind_esperado:
+        await db.rollback()
+        esperado = "una imagen" if kind_esperado == KIND_IMAGEN else "un video"
         raise HTTPException(
             status_code=400,
-            detail=f"El video supera el límite de {_MAX_VIDEO_BYTES // 1024 // 1024}MB.",
+            detail={"code": "MEDIA_WRONG_KIND",
+                    "message": f"Este campo espera {esperado}, y el archivo es de otro tipo."},
         )
-    if not contents:
-        raise HTTPException(status_code=400, detail="El archivo está vacío.")
 
-    org_dir = os.path.join(settings.MEDIA_ROOT, current_user.organization_id)
-    os.makedirs(org_dir, exist_ok=True)
-    filename = f"{uuid.uuid4()}{ext}"
-    with open(os.path.join(org_dir, filename), "wb") as f:
-        f.write(contents)
-
-    return {"video_path": f"{current_user.organization_id}/{filename}"}
+    await db.commit()
+    await db.refresh(asset)
+    return asset
 
 
 def _preflight_warnings(request, rules) -> List[Dict[str, str]]:
@@ -772,6 +743,8 @@ async def preview_campaign_risk(
 async def create_campaign(
     request: CampaignCreateRequest,
     current_user: User = Depends(require_role("OPERATOR")),
+    # Crear una campaña compromete gasto real: misma exigencia que aprobar.
+    _verificada: User = Depends(require_verified_session),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -788,6 +761,106 @@ async def create_campaign(
         return await start_campaign_creation(db, current_user, ad_account, request)
     except CampaignCapReachedError as e:
         raise HTTPException(status_code=429, detail=str(e))
+    except BudgetLimitExceeded as e:
+        # 400 y no 429: no es "reintenta más tarde", es "no cabe en el mes". El
+        # detalle lleva límite, consumo y margen — un rechazo financiero que no
+        # dice cuánto falta obliga a adivinar.
+        raise HTTPException(status_code=400, detail=e.as_detail())
+    except MixedCurrencies as e:
+        raise HTTPException(status_code=400, detail=e.as_detail())
+
+
+@router.get("/performance", response_model=CampaignPerformanceResponse,
+            dependencies=[Depends(require_module("campanas"))])
+async def rendimiento_de_campanas(
+    current_user: User = Depends(get_current_user),
+    ad_account_id: Optional[str] = Depends(get_active_ad_account_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Costo por conversación de cada campaña frente al baseline comparable.
+
+    Es la superficie donde vive el vocabulario común de la spec 06: la métrica
+    primaria con su origen declarado, el baseline con el tamaño del conjunto que
+    lo sostiene, y los cuatro estados — ninguno definitivo sobre muestra pequeña.
+
+    Declara además la frescura: una cifra sin saber de cuándo son los datos que
+    la sustentan invita a decidir sobre una falsa sensación de actualidad.
+    """
+    if not ad_account_id:
+        return CampaignPerformanceResponse(
+            baseline=Baseline(None, 0, 0, 0.0).as_dict(),
+            campanas=[], frescura={"hay_datos": False},
+        )
+
+    acc = await require_granted_ad_account(db, current_user, ad_account_id)
+    org = await db.get(Organization, current_user.organization_id)
+    umbrales = get_madurez_for_org(org)
+
+    filas = await campanas_agregadas(db, acc.id)
+    baseline = calcular_baseline(filas, umbrales=umbrales)
+
+    campanas = []
+    for fila in sorted(filas, key=lambda f: f["gasto"], reverse=True):
+        estado = evaluar_campana(
+            gasto=fila["gasto"], conversaciones=fila["conversaciones"],
+            leads=fila["leads"], dias=fila["dias"],
+            baseline=baseline, umbrales=umbrales,
+        )
+        campanas.append({
+            "campaign_id": fila["campaign_id"],
+            "nombre": fila["nombre"],
+            "objetivo": fila["objetivo"],
+            "gasto": round(fila["gasto"], 2),
+            "conversaciones": fila["conversaciones"],
+            "dias": fila["dias"],
+            **estado.as_dict(),
+        })
+
+    return CampaignPerformanceResponse(
+        baseline=baseline.as_dict(),
+        campanas=campanas,
+        frescura=_frescura(acc),
+        umbrales_de_madurez={
+            "dias_minimos": umbrales.dias_minimos,
+            "conversaciones_minimas": umbrales.conversaciones_minimas,
+            "gasto_minimo": umbrales.gasto_minimo,
+        },
+    )
+
+
+# Cuántas horas puede tener la última sincronización antes de que los datos se
+# declaren desactualizados. Un sync diario que se saltó una vuelta todavía sirve;
+# dos vueltas ya es otra cosa.
+HORAS_PARA_DESACTUALIZADO = 36
+
+
+def _frescura(acc) -> dict:
+    """De cuándo son los datos que sustentan estas cifras.
+
+    Se declara SIEMPRE, no solo cuando hay problema: una cifra sin fecha invita a
+    decidir sobre una falsa sensación de actualidad, y el cliente no tiene forma
+    de distinguir "no pasó nada" de "no nos enteramos".
+    """
+    ultimo = getattr(acc, "last_synced_at", None)
+    if ultimo is None:
+        return {
+            "hay_datos": False,
+            "ultima_sincronizacion": None,
+            "desactualizado": True,
+            "motivo": "Esta cuenta todavía no se ha sincronizado.",
+        }
+    horas = (datetime.datetime.utcnow() - ultimo).total_seconds() / 3600
+    desactualizado = horas > HORAS_PARA_DESACTUALIZADO
+    return {
+        "hay_datos": True,
+        "ultima_sincronizacion": ultimo.isoformat(),
+        "horas_desde_la_sincronizacion": round(horas, 1),
+        "desactualizado": desactualizado,
+        "motivo": (
+            f"Los datos son de hace {round(horas)} horas."
+            if desactualizado else None
+        ),
+    }
 
 
 @router.get("/drafts/{draft_id}", response_model=CampaignDraftResponse)

@@ -33,19 +33,26 @@ async def test_upload_image_saves_file_and_returns_path(async_client: AsyncClien
     monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
     headers = await _signup(async_client, "upload-org")
 
+    # Un JPEG REAL. Desde la spec 07 la validación mira el CONTENIDO, no el tipo
+    # declarado, así que `b"\xff\xd8\xff\xd9"` con nombre de foto ya no pasa —
+    # y hace bien en no pasar: era el hueco que aprovechaba un ejecutable
+    # renombrado.
+    from tests.fixtures import jpg_real
+
+    contenido = jpg_real()
     res = await async_client.post(
         "/api/v1/campaigns/upload-image",
         headers=headers,
-        files={"file": ("photo.jpg", b"\xff\xd8\xff\xd9", "image/jpeg")},
+        files={"file": ("photo.jpg", contenido, "image/jpeg")},
     )
-    assert res.status_code == 200
+    assert res.status_code == 200, res.text
     image_path = res.json()["image_path"]
     assert image_path.endswith(".jpg")
 
     full_path = os.path.join(str(tmp_path), image_path)
     assert os.path.exists(full_path)
     with open(full_path, "rb") as f:
-        assert f.read() == b"\xff\xd8\xff\xd9"
+        assert f.read() == contenido
 
 
 @pytest.mark.asyncio

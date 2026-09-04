@@ -152,7 +152,9 @@ async def test_upload_video_rejects_non_video(async_client, tmp_path, monkeypatc
         files={"file": ("doc.pdf", io.BytesIO(b"%PDF-1.4"), "application/pdf")},
     )
     assert res.status_code == 400
-    assert "MP4" in res.json()["detail"]
+    # El PDF se rechaza por su CONTENIDO, no por el tipo que declara.
+    assert res.json()["detail"]["code"] == "MEDIA_UNSUPPORTED_TYPE"
+    assert "MP4" in res.json()["detail"]["message"]
 
 
 @pytest.mark.asyncio
@@ -161,11 +163,15 @@ async def test_upload_video_returns_scoped_path(async_client, tmp_path, monkeypa
     monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
     headers = await _signup(async_client, "video-b")
 
+    # Un MP4 REAL: desde la spec 07 el archivo se abre de verdad, así que mil
+    # bytes de ceros con nombre de video ya no pasan.
+    from tests.fixtures import mp4_real
+
     res = await async_client.post(
         "/api/v1/campaigns/upload-video", headers=headers,
-        files={"file": ("clip.mp4", io.BytesIO(b"\x00" * 1024), "video/mp4")},
+        files={"file": ("clip.mp4", mp4_real(), "video/mp4")},
     )
-    assert res.status_code == 200
+    assert res.status_code == 200, res.text
     video_path = res.json()["video_path"]
     # Scopeado por organización, igual que las imágenes.
     assert video_path.endswith(".mp4") and "/" in video_path
@@ -174,16 +180,18 @@ async def test_upload_video_returns_scoped_path(async_client, tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_upload_video_rejects_oversized(async_client, tmp_path, monkeypatch):
+    """El límite se aplica DURANTE la transferencia (spec 07), no al final."""
     from app.config import settings
-    from app.api.v1 import campaigns as campaigns_api
+    from app.services import media_service
+    from tests.fixtures import mp4_real
 
     monkeypatch.setattr(settings, "MEDIA_ROOT", str(tmp_path))
-    monkeypatch.setattr(campaigns_api, "_MAX_VIDEO_BYTES", 1024)
+    monkeypatch.setattr(media_service, "MAX_VIDEO_BYTES", 512)
     headers = await _signup(async_client, "video-c")
 
     res = await async_client.post(
         "/api/v1/campaigns/upload-video", headers=headers,
-        files={"file": ("big.mp4", io.BytesIO(b"\x00" * 4096), "video/mp4")},
+        files={"file": ("big.mp4", mp4_real(), "video/mp4")},
     )
-    assert res.status_code == 400
-    assert "límite" in res.json()["detail"]
+    assert res.status_code == 413
+    assert res.json()["detail"]["code"] == "MEDIA_TOO_LARGE"

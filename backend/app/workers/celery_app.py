@@ -114,6 +114,14 @@ celery_app.conf.update(
             "task": "app.workers.tasks.schedule_pending_history_backfills",
             "schedule": crontab(hour=4, minute=0),
             "args": ()
+        },
+        # Limpieza de medios vencidos (spec 07), a las 2:00 AM. Antes del
+        # archivado semanal y lejos del sync: es E/S de disco y no compite con
+        # nada. Idempotente, así que repetirla no tiene coste.
+        "daily-media-cleanup": {
+            "task": "app.workers.tasks.limpiar_medios_vencidos_task",
+            "schedule": crontab(hour=2, minute=0),
+            "args": ()
         }
     }
 )
