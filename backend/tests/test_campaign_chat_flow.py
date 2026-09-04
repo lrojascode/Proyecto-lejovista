@@ -64,6 +64,47 @@ def _turn_id() -> str:
 
 
 @pytest.mark.asyncio
+async def _confirmar_medio_y_completar_brief(async_client, headers, session_id):
+    """Pasa por las dos compuertas nuevas de la spec 12.
+
+    Confirmar lo entendido del medio y contestar la capacidad de atención. Los
+    tests anteriores a la spec saltaban de la foto directo a la propuesta.
+    """
+    confirmar = await async_client.post(
+        f"/api/v1/campaigns/chat/sessions/{session_id}/decision",
+        json={"client_turn_id": _turn_id(), "card_id": "media", "decision": "accept"},
+        headers=headers,
+    )
+    assert confirmar.status_code == 200, confirmar.text
+    session = confirmar.json()
+
+    # El brief se contesta de a un elemento por turno, en el orden en que el
+    # sistema los pide. Cuántos falten depende de lo que el cliente ya haya
+    # dicho, así que se contesta hasta que deje de pedir.
+    respuestas = [
+        "300 soles en total",
+        "por 7 dias",
+        "puedo atender unas 20 consultas por dia",
+    ]
+    for respuesta in respuestas:
+        if session["state"] != "ASK_BRIEF":
+            break
+        siguiente = await async_client.post(
+            f"/api/v1/campaigns/chat/sessions/{session_id}/messages",
+            json={"client_turn_id": _turn_id(), "text": respuesta},
+            headers=headers,
+        )
+        assert siguiente.status_code == 200, siguiente.text
+        session = siguiente.json()
+
+    assert session["state"] != "ASK_BRIEF", (
+        "el brief quedó incompleto: "
+        f"slots={session.get('slots')} "
+        f"ultimo={[m.get('text') for m in session['messages'][-2:]]}"
+    )
+    return session
+
+
 async def test_full_chat_flow_creates_one_draft_and_learning_log(
     async_client: AsyncClient, db_session: AsyncSession
 ):
@@ -98,6 +139,14 @@ async def test_full_chat_flow_creates_one_draft_and_learning_log(
     )
     assert media_res.status_code == 200, media_res.text
     session = media_res.json()
+    # Spec 12: el medio se revisa antes de usarse, y el brief mínimo de negocio
+    # se completa antes de proponer. Los dos pasos nuevos son compuertas: una
+    # interpretación equivocada que nadie ve se convierte en una campaña
+    # equivocada, y proponer sin la capacidad de atención obliga al sistema a
+    # inventar una decisión de negocio del cliente.
+    assert session["state"] == "REVIEW_MEDIA"
+    session = await _confirmar_medio_y_completar_brief(async_client, headers, session_id)
+
     assert session["state"] == "REVIEW_PLAN"
     review_card = next(m for m in session["messages"] if m["type"] == "review_card")
     budget_field = next(f for f in review_card["fields"] if f["key"] == "budget")
@@ -166,4 +215,9 @@ async def test_two_slots_in_one_message_skip_straight_to_media(
         json={"client_turn_id": _turn_id(), "image_path": f"{org_id}/x.jpg"},
         headers=headers,
     )
-    assert res2.json()["state"] == "REVIEW_PLAN"
+    # Lo que este test cuida sigue siendo que dos slots en un mensaje saltan dos
+    # estados. Lo que cambia es dónde termina el salto: desde la spec 12 hay que
+    # revisar lo entendido del medio y completar el brief antes de proponer.
+    assert res2.json()["state"] == "REVIEW_MEDIA"
+    session = await _confirmar_medio_y_completar_brief(async_client, headers, session_id)
+    assert session["state"] == "REVIEW_PLAN"

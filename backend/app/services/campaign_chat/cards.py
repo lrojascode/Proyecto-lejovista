@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 
 from app.services.campaign_chat.markdown_utils import normalize_markdown
 from app.utils import formatting
+from app.services.ai import origen
+from app.services.campaign_chat import vocabulario
 
 GREETING_TEXT = (
     "¡Hola! Te ayudo a armar una campaña de anuncios en un par de minutos, y también "
@@ -58,20 +60,88 @@ def _base(role: str) -> Dict[str, Any]:
     return {"id": new_id(), "role": role, "created_at": now_iso()}
 
 
-def text_message(text: str, role: str = "assistant", quick_replies: Optional[List[str]] = None) -> Dict[str, Any]:
+def text_message(
+    text: str,
+    role: str = "assistant",
+    quick_replies: Optional[List[str]] = None,
+    origen_de_la_respuesta: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Un mensaje de texto del chat.
+
+    `origen_de_la_respuesta` dice si lo redactó el modelo o lo escribió el
+    código (spec 10, criterio 6). Antes las dos cosas llegaban al cliente
+    idénticas, así que "el asistente no entiende" y "el asistente no está
+    disponible" se veían igual — y ninguna de las dos se podía diagnosticar
+    desde una captura de pantalla.
+
+    Es un campo, no un prefijo en el texto: la interfaz decide cómo mostrarlo, y
+    una advertencia incrustada se rompe al copiar, truncar o reenviar.
+    """
     # Solo el texto del asistente pasa por el normalizador: es el único que se
     # renderiza como markdown generado (canónico o reescrito por el LLM). El
     # texto del usuario se muestra tal cual lo escribió.
     if role == "assistant":
-        text = normalize_markdown(text)
+        text = vocabulario.traducir(normalize_markdown(text))
     msg = {**_base(role), "type": "text", "text": text}
     if quick_replies:
         msg["quick_replies"] = quick_replies
+    if origen_de_la_respuesta and role == "assistant":
+        msg = origen.marcar(msg, origen_de_la_respuesta)
     return msg
 
 
 def user_text_message(text: str) -> Dict[str, Any]:
     return text_message(text, role="user")
+
+
+def text_message_con_contexto(
+    text: str,
+    contexto: Optional[Any] = None,
+    role: str = "assistant",
+    quick_replies: Optional[List[str]] = None,
+    origen_de_la_respuesta: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Un mensaje con la cuenta, el periodo, la frescura y la suficiencia
+    declaradas (spec 12, criterios 3-5).
+
+    El contexto viaja estructurado Y sus avisos van también en el texto. Lo
+    estructurado es para la interfaz; el texto es para el caso en que la
+    interfaz no lo renderice o el cliente no lo despliegue, y esos dos avisos
+    cambian cómo se debe leer la cifra.
+    """
+    avisos = contexto.avisos() if contexto is not None else []
+    if avisos:
+        text = f"{text}\n\n" + "\n".join(f"_{a}_" for a in avisos)
+
+    msg = text_message(
+        text, role=role, quick_replies=quick_replies,
+        origen_de_la_respuesta=origen_de_la_respuesta,
+    )
+    if contexto is not None:
+        msg["contexto"] = contexto.as_dict()
+    return msg
+
+
+def degradacion_message(degradacion: Any, quick_replies: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Una de las cuatro situaciones degradadas, nombrada (spec 12, 13-15).
+
+    `situacion` viaja como campo: es lo que permite que la interfaz distinga un
+    fallo de autorización de una cuenta sin datos, que es exactamente la
+    confusión que el criterio impide.
+    """
+    msg = text_message(
+        degradacion.como_texto(), quick_replies=quick_replies,
+        origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA,
+    )
+    msg["degradacion"] = degradacion.as_dict()
+    return msg
+
+
+def avisos_message(texto: str, avisos: List[Any]) -> Dict[str, Any]:
+    """El bloque de avisos proactivos, con sus huellas para poder auditarlo."""
+    msg = text_message(texto, origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA)
+    msg["avisos"] = [a.as_dict() for a in avisos]
+    return msg
 
 
 def media_message(image_path: Optional[str] = None, video_path: Optional[str] = None) -> Dict[str, Any]:
@@ -191,6 +261,11 @@ def build_result_message(draft_id: str, result: Dict[str, Any], campaign_name: O
 def build_error_message(
     code: str, text: str, retry_after_hours: Optional[int] = None, actions: Optional[List[Dict[str, Any]]] = None
 ) -> Dict[str, Any]:
+    # El vocabulario interno se traduce en el borde (spec 12, criterio 16). Los
+    # mensajes de error son por donde más se cuela: llegan de excepciones y de
+    # capas que no saben que su texto va a llegar a un cliente, así que nadie
+    # los relee pensando en quién los lee.
+    text = vocabulario.traducir(text)
     msg = {**_base("assistant"), "type": "error", "code": code, "text": text}
     if retry_after_hours is not None:
         msg["retry_after_hours"] = retry_after_hours

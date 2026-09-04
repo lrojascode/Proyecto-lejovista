@@ -15,9 +15,17 @@ from typing import FrozenSet, Optional
 from app.services.campaign_chat.slots import HARD_INVALIDATING_SLOTS, SOFT_INVALIDATING_SLOTS
 
 # Estados "ask": el motor espera un mensaje del usuario.
-ASK_STATES = frozenset({"ASK_GOAL", "ASK_MEDIA", "BROWSING"})
+#
+# `ASK_BRIEF` recoge lo que falta del brief mínimo de negocio (spec 12): lo que
+# el cliente puede contestar, no los parámetros de Meta que se derivan de ello.
+ASK_STATES = frozenset({"ASK_GOAL", "ASK_MEDIA", "ASK_BRIEF", "BROWSING"})
 # Estados "gate": el motor espera una DECISIÓN explícita (aceptar/cambiar/rechazar).
-GATE_STATES = frozenset({"REVIEW_PLAN", "CONFIRM_RISK"})
+#
+# `REVIEW_MEDIA` es la tercera compuerta: el cliente confirma o corrige lo que el
+# sistema entendió de la foto o el video ANTES de que eso llegue a la propuesta.
+# Una interpretación equivocada que nadie ve se convierte en una campaña
+# equivocada, y el momento barato de corregirla es antes de gastar.
+GATE_STATES = frozenset({"REVIEW_MEDIA", "REVIEW_PLAN", "CONFIRM_RISK"})
 # Estados terminales: la sesión ya no avanza sola.
 TERMINAL_STATES = frozenset({"DONE", "FAILED", "ABANDONED", "BLOCKED_CAP"})
 
@@ -34,6 +42,11 @@ class SessionFacts:
     proposal_accepted: bool
     draft_id: Optional[str]
     mode: str = "BUILD"
+    # Spec 12. Por defecto `True` para que una sesión anterior a la spec —o
+    # cualquier llamador que no los pase— siga comportándose como antes: un
+    # default que BLOQUEA dejaría atascadas las conversaciones ya abiertas.
+    medio_revisado: bool = True
+    brief_completo: bool = True
 
 
 def next_state(facts: SessionFacts) -> str:
@@ -46,6 +59,16 @@ def next_state(facts: SessionFacts) -> str:
         return "ASK_GOAL"
     if not has_media:
         return "ASK_MEDIA"
+    # El medio se revisa recién llegado, mientras el cliente lo tiene en la
+    # cabeza. Preguntarle después de armar la propuesta lo obligaría a
+    # reconstruir de qué foto se está hablando.
+    if not facts.medio_revisado:
+        return "REVIEW_MEDIA"
+    # Y sin el brief completo no se propone: es el criterio 9. Proponer con
+    # elementos obligatorios ausentes obliga al sistema a rellenarlos por su
+    # cuenta, que es inventar la decisión de negocio del cliente.
+    if not facts.brief_completo:
+        return "ASK_BRIEF"
     if not facts.has_proposal:
         return "BUILD_PLAN"
     if not facts.proposal_accepted:

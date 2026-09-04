@@ -30,9 +30,48 @@ async def _create_session_at_review(async_client: AsyncClient, db_session: Async
         json={"client_turn_id": _turn_id(), "image_path": f"{org_id}/x.jpg"},
         headers=headers,
     )
-    session = res.json()
+    session = await _pasar_las_compuertas_del_brief(
+        async_client, headers, session_id, res.json(),
+    )
     review_card = next(m for m in session["messages"] if m["type"] == "review_card")
     return headers, org_id, session_id, review_card
+
+
+async def _pasar_las_compuertas_del_brief(async_client, headers, session_id, session):
+    """Lleva la sesión desde la foto hasta la tarjeta de revisión.
+
+    Desde la spec 12 hay dos pasos entre medio: confirmar lo que el sistema
+    entendió del medio, y completar los elementos del brief mínimo de negocio
+    que falten. Los dos son compuertas deliberadas —una interpretación
+    equivocada que nadie ve produce una campaña equivocada, y proponer sin
+    presupuesto ni capacidad de atención obliga al sistema a inventar decisiones
+    de negocio del cliente— así que los tests que llegan a la propuesta tienen
+    que atravesarlas igual que una persona.
+
+    Vive acá, junto al helper que ya compartían siete archivos de test: duplicar
+    este recorrido en cada uno los haría divergir al primer cambio del brief.
+    """
+    if session.get("state") == "REVIEW_MEDIA":
+        session = (await async_client.post(
+            f"/api/v1/campaigns/chat/sessions/{session_id}/decision",
+            json={"client_turn_id": _turn_id(), "card_id": "media", "decision": "accept"},
+            headers=headers,
+        )).json()
+
+    # El brief se contesta de a un elemento por turno. Cuántos falten depende de
+    # lo que el cliente ya haya dicho, así que se responde hasta que deje de
+    # pedir en vez de asumir un número fijo.
+    for respuesta in ("300 soles en total", "por 7 dias",
+                      "puedo atender unas 20 consultas por dia"):
+        if session.get("state") != "ASK_BRIEF":
+            break
+        session = (await async_client.post(
+            f"/api/v1/campaigns/chat/sessions/{session_id}/messages",
+            json={"client_turn_id": _turn_id(), "text": respuesta},
+            headers=headers,
+        )).json()
+
+    return session
 
 
 @pytest.mark.asyncio

@@ -110,6 +110,13 @@ def _textos(mensajes):
     return [m.get("text", "") for m in mensajes if m.get("role") == "assistant"]
 
 
+def _contiene(mensajes, esperado: str) -> bool:
+    """Contención y no igualdad: desde la spec 12 la respuesta lleva pegados los
+    avisos de contexto —frescura, suficiencia— cuando cambian cómo hay que leer
+    la cifra. El texto del analista sigue estando; ya no está solo."""
+    return any(esperado in t for t in _textos(mensajes))
+
+
 # --- El test que hubiera atajado esto ---
 
 @pytest.mark.parametrize("pregunta", PREGUNTAS_REALES)
@@ -124,7 +131,7 @@ async def test_las_preguntas_reales_llegan_al_analista(sesion, analista, pregunt
     mensajes = await _preguntar(sesion, pregunta)
 
     assert analista.called, f"el analista no se llamó para: {pregunta}"
-    assert RESPUESTA_DEL_ANALISTA in _textos(mensajes)
+    assert _contiene(mensajes, RESPUESTA_DEL_ANALISTA)
 
 
 @pytest.mark.parametrize("pregunta", PREGUNTAS_REALES)

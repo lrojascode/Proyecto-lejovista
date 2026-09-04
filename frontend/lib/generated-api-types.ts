@@ -171,6 +171,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/ws-ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue Ws Ticket
+         * @description Credencial de un solo uso y vida corta para abrir el WebSocket.
+         *
+         *     El WebSocket recibía el access token por query string, y la URL de una
+         *     conexión la registran el proxy, los historiales del navegador y cualquier
+         *     intermediario: ahí quedaba una credencial de 24 horas legible en texto
+         *     plano. El ticket dura 30 segundos, solo sirve para el handshake y se pide
+         *     desde una petición HTTP normal, donde la credencial viaja en la cabecera.
+         */
+        post: operations["issue_ws_ticket_api_v1_auth_ws_ticket_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/tenant-brand": {
         parameters: {
             query?: never;
@@ -202,9 +228,18 @@ export interface paths {
         };
         /**
          * Get Available Ai Models
-         * @description Modelos de IA que el selector de Preferencias debería ofrecer: si se pasa un
-         *     proveedor específico, sus modelos; si no, los del proveedor activo de la
-         *     organización o del sistema.
+         * @description Modelos que el selector debe ofrecer, leídos del CATÁLOGO (spec 10).
+         *
+         *     Tres cambios respecto de la versión anterior, y los tres son criterios de la
+         *     spec:
+         *
+         *     * El proveedor activo es el que la Organización **declara**, no el que
+         *       resulte de qué credencial esté presente en el entorno (criterio 9).
+         *     * Solo se ofrecen modelos disponibles del catálogo: uno retirado deja de
+         *       aparecer sin necesidad de desplegar código (criterio 11).
+         *     * Si el modelo guardado ya no se ofrece, la Organización queda señalada con
+         *       el motivo y sigue funcionando (criterio 12). Reasignarla automáticamente
+         *       sería el cambio silencioso de modelo —y de precio— que la spec prohíbe.
          */
         get: operations["get_available_ai_models_api_v1_organizations_ai_models_get"];
         put?: never;
@@ -232,6 +267,59 @@ export interface paths {
         head?: never;
         /** Update My Organization */
         patch: operations["update_my_organization_api_v1_organizations_my_patch"];
+        trace?: never;
+    };
+    "/api/v1/organizations/my/experience": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Experience
+         * @description Qué superficie le corresponde a esta sesión, y con qué alcance.
+         *
+         *     La experiencia se DERIVA del acceso; no se elige. Este endpoint la informa
+         *     para que el frontend arme la navegación correcta, pero no la decide: aunque
+         *     alguien mienta en el cliente, cada endpoint vuelve a comprobar módulo y rol
+         *     en el backend. Filtrar el menú es experiencia de usuario; lo único que es
+         *     seguridad son las compuertas.
+         */
+        get: operations["get_my_experience_api_v1_organizations_my_experience_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/organizations/my/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get My Monthly Budget
+         * @description Límite mensual, consumo y margen de la organización activa.
+         *
+         *     Misma fuente que la compuerta: la cifra que ve el cliente, la que ve la
+         *     agencia y la que decide son la misma. Si cada consumidor la calculara por su
+         *     cuenta, la pantalla podría prometer margen que el backend rechaza.
+         *
+         *     No expone identificadores internos ni configuración de la agencia: es una
+         *     superficie del cliente (spec 02, criterio 10).
+         */
+        get: operations["get_my_monthly_budget_api_v1_organizations_my_budget_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/organizations/my/logo": {
@@ -872,6 +960,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/campaigns/chat/sessions/{session_id}/media-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Corregir Contexto Del Medio
+         * @description El cliente corrige lo que el sistema entendió de la foto o el video.
+         *
+         *     Es la otra mitad del criterio 10 de la spec 12: mostrar lo extraído sirve de
+         *     poco si no se puede corregir. La corrección MANDA sobre lo extraído y llega
+         *     a la propuesta — si el cliente dice que el producto es otro, el texto del
+         *     anuncio tiene que hablar de ese.
+         */
+        post: operations["corregir_contexto_del_medio_api_v1_campaigns_chat_sessions__session_id__media_context_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/campaigns/chat/observabilidad": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observabilidad Del Chat
+         * @description Si el chat está sirviendo, y si los avisos se han vuelto ruido (spec 12).
+         *
+         *     Cuatro cosas que no se pueden ver desde dentro de una conversación:
+         *
+         *     * **Aperturas con resumen entregado.** Si baja, el resumen está fallando y
+         *       el cliente vuelve a encontrarse el cursor.
+         *     * **Avisos entregados frente a silenciados por frecuencia.** Es lo único que
+         *       dice si la ventana está bien puesta: si se silencia casi todo, ahoga; si
+         *       no se silencia nada, no está haciendo nada.
+         *     * **Briefs completados frente a abandonados.** La recogida del brief es la
+         *       pieza con más riesgo de fricción, y esta es la cifra que decide si hay que
+         *       revertirla.
+         *     * **Respuestas deterministas.** Cuántas veces el modelo no estuvo.
+         */
+        get: operations["observabilidad_del_chat_api_v1_campaigns_chat_observabilidad_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaigns/recent": {
         parameters: {
             query?: never;
@@ -1078,10 +1223,15 @@ export interface paths {
         put?: never;
         /**
          * Upload Campaign Image
-         * @description Sube una foto para usar en la creación de campaña (reemplaza pegar una
-         *     URL a mano). Se guarda en MEDIA_ROOT/{organization_id}/{uuid}.{ext} — el
-         *     Saga de creación la lee del mismo disco vía `image_path`
-         *     (MetaAssetRepository.get_or_upload_image), sin volver a subirla por HTTP.
+         * @description Sube una foto para usar en la creación de campaña.
+         *
+         *     Se conserva por compatibilidad con el frontend actual y delega en el mismo
+         *     servicio que `POST /media` (spec 07): carga por streaming, validación del
+         *     contenido REAL y cuota por organización. Antes leía el archivo entero en
+         *     memoria y validaba por el tipo declarado.
+         *
+         *     Devuelve `image_path` con la forma de siempre —`{org}/{archivo}`— para que
+         *     la Saga lo siga resolviendo sin cambios.
          */
         post: operations["upload_campaign_image_api_v1_campaigns_upload_image_post"];
         delete?: never;
@@ -1101,13 +1251,7 @@ export interface paths {
         put?: never;
         /**
          * Upload Campaign Video
-         * @description Sube un video para usar en la creación de campaña (playbook §5 Paso 4:
-         *     "el video suele rendir mejor que la imagen estática").
-         *
-         *     Gemelo de `/upload-image`: guarda en el disco compartido y devuelve la ruta;
-         *     la Saga lo lee del mismo volumen y lo sube a `/{act}/advideos`. Antes había
-         *     que conseguir el `video_id` y la miniatura a mano fuera de la app, aunque
-         *     `CreativeBuilder` ya sabía armar el `video_data`.
+         * @description Gemelo de `/upload-image` para video. Mismo servicio, mismas garantías.
          */
         post: operations["upload_campaign_video_api_v1_campaigns_upload_video_post"];
         delete?: never;
@@ -1187,6 +1331,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/campaigns/performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Rendimiento De Campanas
+         * @description Costo por conversación de cada campaña frente al baseline comparable.
+         *
+         *     Es la superficie donde vive el vocabulario común de la spec 06: la métrica
+         *     primaria con su origen declarado, el baseline con el tamaño del conjunto que
+         *     lo sostiene, y los cuatro estados — ninguno definitivo sobre muestra pequeña.
+         *
+         *     Declara además la frescura: una cifra sin saber de cuándo son los datos que
+         *     la sustentan invita a decidir sobre una falsa sensación de actualidad.
+         */
+        get: operations["rendimiento_de_campanas_api_v1_campaigns_performance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/campaigns/drafts/{draft_id}": {
         parameters: {
             query?: never;
@@ -1245,6 +1416,235 @@ export interface paths {
          *     tendencia y observaciones deterministas. Scopeado a la cuenta activa.
          */
         get: operations["get_sync_learning_history_api_v1_campaigns_sync_learning_history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/drafts/{draft_id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Crear Version De Propuesta
+         * @description Congela una modificación como la versión siguiente.
+         *
+         *     Toda versión nueva invalida la aprobación anterior. Y cuando el cambio es
+         *     MATERIAL se vuelven a ejecutar las compuertas —presupuesto, riesgo y
+         *     preflight— sobre la configuración nueva: aprobar una versión cuyo riesgo se
+         *     calculó sobre otra sería autorizar a ciegas.
+         */
+        post: operations["crear_version_de_propuesta_api_v1_proposals_drafts__draft_id__versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/versions/{version_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Aprobar Version
+         * @description Autoriza EXACTAMENTE esta versión.
+         *
+         *     No se aprueba "la propuesta": se aprueba una versión identificable, y esa
+         *     versión ya no se puede editar. Es lo que hace que la autorización deje de ser
+         *     ambigua.
+         */
+        post: operations["aprobar_version_api_v1_proposals_versions__version_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/versions/{version_id}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ejecutar Version
+         * @description Consume la autorización y lanza la Saga. Exactamente una vez.
+         *
+         *     Una segunda llamada sobre la misma autorización NO lanza otra Saga: devuelve
+         *     el resultado de la primera. Es la diferencia entre un doble clic inocuo y una
+         *     campaña duplicada gastando el doble.
+         */
+        post: operations["ejecutar_version_api_v1_proposals_versions__version_id__execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/drafts/{draft_id}/audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Auditoria De La Propuesta
+         * @description Reconstruye qué versión se aprobó, quién la aprobó y qué resultó.
+         *
+         *     Los identificadores de Meta salen del registro de intenciones, no del
+         *     documento de resultado del Draft: son un campo de primera clase justamente
+         *     para poder responder esta pregunta.
+         */
+        get: operations["auditoria_de_la_propuesta_api_v1_proposals_drafts__draft_id__audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/motivos-de-cambio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar Motivos De Cambio
+         * @description El conjunto acotado de motivos que acepta una modificación.
+         *
+         *     Se sirve desde el backend para que la pantalla no mantenga su propia copia:
+         *     dos listas que hay que sincronizar a mano acaban divergiendo, y la que se
+         *     quedaría vieja es la que ve la persona que elige el motivo.
+         */
+        get: operations["listar_motivos_de_cambio_api_v1_proposals_motivos_de_cambio_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/drafts/{draft_id}/evidencia": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evidencia De La Propuesta
+         * @description En qué se basó esta propuesta y qué cambió una persona (criterios 1 y 12).
+         *
+         *     Solo agencia: es la vista de revisión, y el cliente no negocia la evidencia
+         *     interna de una recomendación (dependencia con `05`).
+         *
+         *     Devuelve el registro PERSISTIDO, no uno recalculado. Recalcular daría el
+         *     conjunto comparable de hoy, y la pregunta que responde este endpoint es en
+         *     qué se basó la propuesta cuando se hizo.
+         */
+        get: operations["evidencia_de_la_propuesta_api_v1_proposals_drafts__draft_id__evidencia_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/reglas-candidatas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Listar Reglas Candidatas
+         * @description Patrones de corrección repetidos, propuestos como regla (criterio 14).
+         *
+         *     Ninguna está en vigor: son propuestas para que una persona decida.
+         */
+        get: operations["listar_reglas_candidatas_api_v1_proposals_reglas_candidatas_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/reglas-candidatas/{regla_id}/resolver": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolver Regla
+         * @description Acepta o rechaza una regla candidata (criterios 14 y 15).
+         *
+         *     Las dos dejan constancia. El rechazo además abre un plazo de espera: volver
+         *     a proponer lo mismo al día siguiente convierte la propuesta en ruido y
+         *     garantiza que se dejen de leer también las buenas.
+         */
+        post: operations["resolver_regla_api_v1_proposals_reglas_candidatas__regla_id__resolver_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/proposals/aprendizaje": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resumen De Aprendizaje
+         * @description Observabilidad del aprendizaje (spec 11, lista de finalización).
+         *
+         *     Cuatro números que responden si el sistema está aprendiendo o solo
+         *     proponiendo:
+         *
+         *     * **Proporción de exploratorias.** Si no baja con el tiempo, la
+         *       comparabilidad está demasiado estricta o la cuenta no acumula histórico
+         *       utilizable. Las dos causas se arreglan distinto, y sin este número no se
+         *       distinguen.
+         *     * **Confianza y tamaño del conjunto por propuesta.** Un conjunto que no
+         *       crece con los meses significa que la ventana o las condiciones duras están
+         *       recortando de más.
+         *     * **Tasa de modificación humana por motivo.** Es la señal de en qué se
+         *       equivoca el sistema, agrupada por causa y no por campo tocado.
+         *     * **Veredictos del Outcome loop.** Lo único que dice si las propuestas
+         *       funcionaron.
+         */
+        get: operations["resumen_de_aprendizaje_api_v1_proposals_aprendizaje_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1513,6 +1913,158 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai-usage/budget": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ai Budget
+         * @description Techo, consumo y margen de IA del mes en curso (spec 10).
+         *
+         *     Solo agencia: el proveedor, el modelo y el consumo son palancas suyas y no
+         *     se muestran al cliente (dependencia con `05`).
+         *
+         *     Sale de `presupuesto.estado_del_mes`, la misma función que usa la compuerta.
+         *     Si la pantalla lo calculara por su cuenta podría mostrar margen mientras el
+         *     backend bloquea, que es la clase de discrepancia más difícil de diagnosticar
+         *     desde una captura de pantalla.
+         */
+        get: operations["get_ai_budget_api_v1_ai_usage_budget_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai-usage/discards": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ai Discards
+         * @description Descartes de salidas del modelo, por motivo (spec 10, observabilidad).
+         *
+         *     Es lo que convierte "el chat suena a plantilla" en un diagnóstico. Una tasa
+         *     de descarte que sube de golpe después de tocar un prompt es la señal más
+         *     temprana de que se rompió, y sin este desglose el síntoma tarda semanas en
+         *     atribuirse a su causa — ya pasó una vez.
+         *
+         *     `aplicados` frente a `solo_registrados` separa los descartes reales de los
+         *     del modo de registro, que es como se mide el falso positivo sobre tráfico
+         *     real antes de encender el descarte.
+         */
+        get: operations["get_ai_discards_api_v1_ai_usage_discards_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Subir Medio
+         * @description Sube una imagen o un video para el brief de una campaña.
+         *
+         *     El archivo viaja por trozos y nunca se materializa entero en memoria: con un
+         *     límite de 100 MB por video y un VPS de 4 GB compartido entre API, workers,
+         *     base y Redis, unas pocas cargas simultáneas agotaban el proceso que atiende a
+         *     todos los clientes.
+         *
+         *     El formato se determina leyendo el CONTENIDO. El tipo que declara el cliente
+         *     no es evidencia.
+         */
+        post: operations["subir_medio_api_v1_media_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Cuota De Medios
+         * @description Cuánto ocupa la organización y cuánto le queda.
+         */
+        get: operations["cuota_de_medios_api_v1_media_quota_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/{asset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Detalle Del Medio
+         * @description Metadatos y una URL firmada nueva.
+         *
+         *     La pertenencia se comprueba acá, contra la sesión que pregunta: 404 y no 403
+         *     para no revelar qué medios existen en otras organizaciones.
+         */
+        get: operations["detalle_del_medio_api_v1_media__asset_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/media/{asset_id}/contenido": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Contenido Del Medio
+         * @description Sirve el archivo, solo con una firma válida y vigente.
+         *
+         *     **No lleva sesión**: es el único camino por el que un `<img src>` puede
+         *     cargar un medio privado. Por eso la firma es corta y de un solo recurso — la
+         *     pertenencia ya se comprobó al emitirla.
+         */
+        get: operations["contenido_del_medio_api_v1_media__asset_id__contenido_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/invitations/{token}": {
         parameters: {
             query?: never;
@@ -1604,6 +2156,156 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/organizations/{org_id}/offboarding/iniciar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Iniciar Baja De Cliente
+         * @description Corta todos los accesos del cliente, ya. **No borra nada.**
+         *
+         *     Es la fase inmediata de la baja (spec 09): revoca las credenciales de Meta,
+         *     elimina la clave de IA, invalida las sesiones de los miembros y bloquea
+         *     login, API, sync, IA y write-back.
+         *
+         *     La eliminación de datos es otra operación, a los 30 días, para que el cliente
+         *     pueda exportar. Juntarlas obligaría a elegir entre cortar tarde o borrar sin
+         *     dar tiempo.
+         *
+         *     Exige confirmar el identificador de la organización: es la clase de operación
+         *     que no se puede lanzar por un clic en la fila equivocada.
+         */
+        post: operations["iniciar_baja_de_cliente_api_v1_admin_organizations__org_id__offboarding_iniciar_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/offboarding/exportacion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Exportar Datos Del Cliente
+         * @description Los datos comerciales del cliente, para que se los lleve.
+         *
+         *     Sin secretos, sin identificadores internos y sin nada de otras
+         *     Organizaciones: lo que se lleva es su histórico, no nuestra base de datos.
+         */
+        get: operations["exportar_datos_del_cliente_api_v1_admin_organizations__org_id__offboarding_exportacion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/offboarding/eliminar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Eliminar Datos Del Cliente
+         * @description Elimina histórico, medios y datos de campañas. **Irreversible.**
+         *
+         *     Alcanza también a las tablas de archivo, que se diseñaron sin claves foráneas
+         *     para sobrevivir al borrado de un tenant: omitirlas convertiría la promesa de
+         *     eliminación en falsa.
+         *
+         *     Se niega antes del plazo comunicado salvo `forzar` explícito. Y exige un
+         *     respaldo externo verificado inmediatamente antes: el único rollback de esta
+         *     operación es una restauración.
+         */
+        post: operations["eliminar_datos_del_cliente_api_v1_admin_organizations__org_id__offboarding_eliminar_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/offboarding/certificado": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Certificado De Baja
+         * @description Lo que el cliente recibe: qué se eliminó, qué se conserva y por cuánto.
+         */
+        get: operations["certificado_de_baja_api_v1_admin_organizations__org_id__offboarding_certificado_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Estado Del Alta
+         * @description Qué pasos del alta están resueltos y cuáles faltan.
+         */
+        get: operations["estado_del_alta_api_v1_admin_organizations__org_id__onboarding_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/organizations/{org_id}/onboarding/{paso}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validar Paso Del Alta
+         * @description Valida un paso del alta contra el sistema externo REAL.
+         *
+         *     No comprueba que el campo esté lleno: comprueba que funcione. Un token de
+         *     Meta inválido se guarda igual de bien que uno bueno, y la diferencia solo
+         *     aparece en el primer sync — con el cliente ya dentro.
+         *
+         *     Con `{"omitir": true, "motivo": "..."}` el paso se marca OMITIDO. Queda
+         *     registrado y es distinto de "validado": hacer el hueco explícito evita
+         *     dejarlo en silencio.
+         */
+        post: operations["validar_paso_del_alta_api_v1_admin_organizations__org_id__onboarding__paso__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/organizations/{org_id}/modules": {
         parameters: {
             query?: never;
@@ -1663,6 +2365,181 @@ export interface paths {
          * @description Invita al primer ADMIN de un cliente ya creado.
          */
         post: operations["invite_organization_admin_api_v1_admin_organizations__org_id__invite_admin_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/interruptores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ver Interruptores
+         * @description Qué está encendido y qué apagado, ahora mismo.
+         */
+        get: operations["ver_interruptores_api_v1_operacion_interruptores_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/interruptores/{capacidad}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Cambiar Interruptor
+         * @description Enciende o apaga una capacidad. Efecto inmediato, sin desplegar.
+         */
+        put: operations["cambiar_interruptor_api_v1_operacion_interruptores__capacidad__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/flags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ver Flags
+         * @description Todos los flags con su valor efectivo y de dónde sale.
+         *
+         *     El origen viaja con el valor porque "está encendido" no dice si lo está por
+         *     su valor predeterminado, por una decisión global o porque esta cuenta es la
+         *     piloto — y apagarlo exige saber cuál de las tres.
+         */
+        get: operations["ver_flags_api_v1_operacion_flags_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/flags/{clave}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Cambiar Flag */
+        put: operations["cambiar_flag_api_v1_operacion_flags__clave__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/senales": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ver Senales
+         * @description Las señales funcionales con su umbral. **Sin autenticación** (criterio 12).
+         *
+         *     Lo consulta un vigilante externo al VPS, que comprueba dos cosas: que haya
+         *     alertas, y que `generado_en` AVANCE. Con el VPS apagado no hay respuesta que
+         *     leer, y esa ausencia es en sí misma la alerta — un sistema que solo alerta
+         *     desde dentro no puede informar de su propia muerte.
+         *
+         *     No expone datos de ningún cliente: estados, umbrales y una marca de tiempo.
+         */
+        get: operations["ver_senales_api_v1_operacion_senales_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/diagnostico": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Diagnostico
+         * @description Qué falla, qué está apagado y quién lo movió. Solo agencia (criterio 13).
+         */
+        get: operations["diagnostico_api_v1_operacion_diagnostico_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/aviso": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Aviso
+         * @description Qué puede y qué no puede hacer el cliente ahora. Sin infraestructura.
+         *
+         *     Devuelve `hay_incidente: false` cuando todo funciona, en vez de un mensaje
+         *     tranquilizador: una interfaz que siempre dice algo sobre el estado del
+         *     sistema entrena a no mirar ese sitio, y el día que importe no se mirará.
+         */
+        get: operations["aviso_api_v1_operacion_aviso_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/operacion/metricas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Metricas
+         * @description Las seis métricas declaradas, para esta Organización y un periodo.
+         *
+         *     Son las que responden si el producto cumple su promesa: ahorro operativo
+         *     para la agencia y beneficio publicitario para el cliente.
+         */
+        get: operations["metricas_api_v1_operacion_metricas_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1972,6 +2849,65 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /**
+         * AiBudgetResponse
+         * @description Techo mensual de IA, consumo y margen. Los montos viajan como TEXTO.
+         *
+         *     Un `Decimal` serializado a `float` en el borde de salida vuelve a introducir
+         *     el residuo binario que la spec 02 saca de la decisión, y esta cifra es la que
+         *     la agencia usa para decidir si amplía el techo.
+         */
+        AiBudgetResponse: {
+            /**
+             * Moneda
+             * @default USD
+             */
+            moneda: string;
+            /** Limite Usd */
+            limite_usd?: string | null;
+            /** Consumido Usd */
+            consumido_usd: string;
+            /** Margen Usd */
+            margen_usd?: string | null;
+            /** Proporcion */
+            proporcion?: number | null;
+            /** Umbral Alcanzado */
+            umbral_alcanzado?: number | null;
+            /** Agotado */
+            agotado: boolean;
+            /** Sin Techo */
+            sin_techo: boolean;
+            /** Desde */
+            desde: string;
+        };
+        /** AiDiscardMotivo */
+        AiDiscardMotivo: {
+            /** Motivo */
+            motivo: string;
+            /** Feature */
+            feature: string;
+            /** Aplicado */
+            aplicado: boolean;
+            /** Veces */
+            veces: number;
+        };
+        /** AiDiscardsResponse */
+        AiDiscardsResponse: {
+            /** Days */
+            days: number;
+            /** Llamadas */
+            llamadas: number;
+            /** Aplicados */
+            aplicados: number;
+            /** Solo Registrados */
+            solo_registrados: number;
+            /** Tasa */
+            tasa?: number | null;
+            /** Modo Registro */
+            modo_registro: boolean;
+            /** Por Motivo */
+            por_motivo: components["schemas"]["AiDiscardMotivo"][];
+        };
         /** AiModelOption */
         AiModelOption: {
             /** Value */
@@ -1992,6 +2928,15 @@ export interface components {
             credential_ok: boolean;
             /** Effective Model */
             effective_model?: string | null;
+            /** Config Error */
+            config_error?: string | null;
+            /**
+             * Modelo No Elegible
+             * @default false
+             */
+            modelo_no_elegible: boolean;
+            /** Modelo No Elegible Motivo */
+            modelo_no_elegible_motivo?: string | null;
         };
         /** AiUsageAdAccount */
         AiUsageAdAccount: {
@@ -2099,6 +3044,112 @@ export interface components {
             /** Timestamp */
             timestamp: string;
         };
+        /** AprendizajeResponse */
+        AprendizajeResponse: {
+            /** Dias */
+            dias: number;
+            /** Propuestas */
+            propuestas: number;
+            /** Exploratorias */
+            exploratorias: number;
+            /** Proporcion Exploratorias */
+            proporcion_exploratorias?: number | null;
+            /**
+             * Confianza Por Nivel
+             * @default {}
+             */
+            confianza_por_nivel: {
+                [key: string]: number;
+            };
+            /** Comparables Promedio */
+            comparables_promedio?: number | null;
+            /**
+             * Cambios Por Motivo
+             * @default []
+             */
+            cambios_por_motivo: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Veredictos
+             * @default {}
+             */
+            veredictos: {
+                [key: string]: number;
+            };
+            /**
+             * Reglas Candidatas Abiertas
+             * @default 0
+             */
+            reglas_candidatas_abiertas: number;
+        };
+        /**
+         * AuditResponse
+         * @description El recorrido completo de una solicitud de campaña (specs 03 y 09).
+         *
+         *     Actor, rol, Organización, AdAccount, solicitud, medios, evidencia, propuesta,
+         *     versiones, cambios, aprobaciones, validaciones y resultado externo saneado.
+         *     Las piezas ya existían dispersas; lo que faltaba era poder recorrerlas juntas
+         *     a partir de una sola pregunta.
+         */
+        AuditResponse: {
+            /** Draft Id */
+            draft_id: string;
+            /** Status */
+            status: string;
+            /** Organizacion Id */
+            organizacion_id?: string | null;
+            /** Solicitada Por */
+            solicitada_por?: {
+                [key: string]: unknown;
+            } | null;
+            /** Solicitada En */
+            solicitada_en?: string | null;
+            /** Aprobada Por */
+            aprobada_por?: {
+                [key: string]: unknown;
+            } | null;
+            /** Aprobada En */
+            aprobada_en?: string | null;
+            /**
+             * Medios
+             * @default []
+             */
+            medios: {
+                [key: string]: unknown;
+            }[];
+            /** Evidencia */
+            evidencia?: {
+                [key: string]: unknown;
+            } | null;
+            /** Versions */
+            versions: {
+                [key: string]: unknown;
+            }[];
+            /** Approved Version Id */
+            approved_version_id?: string | null;
+            /** Approved By User Id */
+            approved_by_user_id?: string | null;
+            /**
+             * External Ids
+             * @default {}
+             */
+            external_ids: {
+                [key: string]: string | null;
+            };
+            /**
+             * Writes
+             * @default []
+             */
+            writes: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** Body_subir_medio_api_v1_media_post */
+        Body_subir_medio_api_v1_media_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_campaign_image_api_v1_campaigns_upload_image_post */
         Body_upload_campaign_image_api_v1_campaigns_upload_image_post: {
             /** File */
@@ -2148,6 +3199,26 @@ export interface components {
             policies: components["schemas"]["PolicyItem"][];
             /** Available Industries */
             available_industries: components["schemas"]["IndustryOption"][];
+        };
+        /** CambioDeFlag */
+        CambioDeFlag: {
+            /** Activo */
+            activo: boolean;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Ad Account Id */
+            ad_account_id?: string | null;
+            /** Nota */
+            nota?: string | null;
+        };
+        /** CambioDeInterruptor */
+        CambioDeInterruptor: {
+            /** Encendido */
+            encendido: boolean;
+            /** Motivo */
+            motivo?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
         };
         /** CampaignActionDetail */
         CampaignActionDetail: {
@@ -2389,6 +3460,36 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /**
+         * CampaignPerformanceResponse
+         * @description Rendimiento frente al baseline comparable (spec 06).
+         *
+         *     `baseline` lleva siempre el tamaño del conjunto que lo sostiene: una mediana
+         *     sobre tres campañas diminutas y una sobre treinta campañas grandes son
+         *     cifras distintas aunque coincidan, y quien la lea tiene que poder
+         *     distinguirlas.
+         */
+        CampaignPerformanceResponse: {
+            /** Baseline */
+            baseline: {
+                [key: string]: unknown;
+            };
+            /** Campanas */
+            campanas: {
+                [key: string]: unknown;
+            }[];
+            /** Frescura */
+            frescura: {
+                [key: string]: unknown;
+            };
+            /**
+             * Umbrales De Madurez
+             * @default {}
+             */
+            umbrales_de_madurez: {
+                [key: string]: unknown;
+            };
         };
         /**
          * CampaignPreflightRequest
@@ -2949,6 +4050,127 @@ export interface components {
             text: string;
             /** Quick Replies */
             quick_replies?: string[];
+            /** Origen */
+            origen?: string | null;
+            /** Origen Label */
+            origen_label?: string | null;
+            /** Contexto */
+            contexto?: {
+                [key: string]: unknown;
+            } | null;
+            /** Resumen */
+            resumen?: {
+                [key: string]: unknown;
+            } | null;
+            /** Avisos */
+            avisos?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Medio Contexto */
+            medio_contexto?: {
+                [key: string]: unknown;
+            } | null;
+            /** Brief */
+            brief?: {
+                [key: string]: unknown;
+            } | null;
+            /** Degradacion */
+            degradacion?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * CorreccionDelMedioRequest
+         * @description Lo que el cliente corrige de lo que el sistema entendió del medio.
+         */
+        CorreccionDelMedioRequest: {
+            /** Client Turn Id */
+            client_turn_id: string;
+            /** Producto */
+            producto?: string | null;
+            /** Descripcion */
+            descripcion?: string | null;
+            /** Texto Visible */
+            texto_visible?: string | null;
+            /** Elementos */
+            elementos?: string[] | null;
+        };
+        /** EvidenciaResponse */
+        EvidenciaResponse: {
+            /** Draft Id */
+            draft_id: string;
+            /** Exploratoria */
+            exploratoria: boolean;
+            /** Ventana Dias */
+            ventana_dias?: number | null;
+            /**
+             * Campanas Comparables
+             * @default []
+             */
+            campanas_comparables: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Confianza
+             * @default {}
+             */
+            confianza: {
+                [key: string]: unknown;
+            };
+            /**
+             * Afirmaciones
+             * @default []
+             */
+            afirmaciones: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Excluidas Por Motivo
+             * @default []
+             */
+            excluidas_por_motivo: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Baseline Congelado
+             * @default {}
+             */
+            baseline_congelado: {
+                [key: string]: unknown;
+            };
+            /** Reglas Version */
+            reglas_version?: string | null;
+            /** Prompt Version */
+            prompt_version?: string | null;
+            /** Modelo */
+            modelo?: string | null;
+            /** Proveedor */
+            proveedor?: string | null;
+            /**
+             * Cambios Humanos
+             * @default []
+             */
+            cambios_humanos: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * ExperienceResponse
+         * @description Qué superficie le corresponde a esta sesión (spec 05).
+         *
+         *     Informativo, no decisorio: cada endpoint vuelve a comprobar módulo y rol.
+         */
+        ExperienceResponse: {
+            /** Experiencia */
+            experiencia: string;
+            /** Rol */
+            rol: string;
+            /** Modulos */
+            modulos: string[];
+            /** Es Admin De Plataforma */
+            es_admin_de_plataforma: boolean;
+            /** Organizacion Slug */
+            organizacion_slug: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3016,9 +4238,9 @@ export interface components {
             /** Organization Id */
             organization_id: string;
             /** Token */
-            token: string;
+            token?: string | null;
             /** Invite Url */
-            invite_url: string;
+            invite_url?: string | null;
             /** Expires At */
             expires_at: string;
             /** Accepted At */
@@ -3085,6 +4307,56 @@ export interface components {
             /** Created At */
             created_at?: string | null;
         };
+        /**
+         * MediaAssetResponse
+         * @description Un medio subido, con su verificación técnica (spec 07).
+         *
+         *     `avisos` son accionables y NO predicen rendimiento: el comportamiento de un
+         *     creativo no se lee en sus píxeles, y prometerlo estaría prohibido además de
+         *     ser falso.
+         */
+        MediaAssetResponse: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Content Type */
+            content_type: string;
+            /** Filename */
+            filename?: string | null;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Ancho */
+            ancho?: number | null;
+            /** Alto */
+            alto?: number | null;
+            /** Duracion Segundos */
+            duracion_segundos?: number | null;
+            /** Status */
+            status: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Url */
+            url: string;
+            /**
+             * Avisos
+             * @default []
+             */
+            avisos: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** MediaQuotaResponse */
+        MediaQuotaResponse: {
+            /** Usado Bytes */
+            usado_bytes: number;
+            /** Limite Bytes */
+            limite_bytes: number;
+            /** Archivos */
+            archivos: number;
+            /** Limite Archivos */
+            limite_archivos: number;
+        };
         /** MemberAdAccountsUpdate */
         MemberAdAccountsUpdate: {
             /**
@@ -3129,6 +4401,43 @@ export interface components {
              */
             whatsapp_number: string;
         };
+        /**
+         * MonthlyBudgetResponse
+         * @description Límite mensual de presupuesto y su consumo (spec 02).
+         *
+         *     Los montos viajan como cadena y no como `float`: el número que se muestra al
+         *     cliente tiene que ser exactamente el que usó la compuerta para decidir, y
+         *     serializar un decimal a float en el borde reintroduce justo el error que la
+         *     compuerta evita.
+         */
+        MonthlyBudgetResponse: {
+            /** Periodo */
+            periodo: string;
+            /** Moneda */
+            moneda: string;
+            /** Limite Mensual */
+            limite_mensual: string;
+            /** Gasto Real */
+            gasto_real: string;
+            /** Comprometido */
+            comprometido: string;
+            /** Consumido */
+            consumido: string;
+            /** Margen Disponible */
+            margen_disponible: string;
+        };
+        /** MotivoDeCambio */
+        MotivoDeCambio: {
+            /** Code */
+            code: string;
+            /** Label */
+            label: string;
+            /**
+             * Exige Detalle
+             * @default false
+             */
+            exige_detalle: boolean;
+        };
         /** OptimalParam */
         OptimalParam: {
             /** Param */
@@ -3153,16 +4462,15 @@ export interface components {
             /** Accent Color */
             accent_color?: string | null;
             /** Ai Model */
-            ai_model: string;
+            ai_model?: string | null;
             /** Llm Provider */
             llm_provider?: string | null;
-            /**
-             * Has Llm Api Key
-             * @default false
-             */
-            has_llm_api_key: boolean;
+            /** Has Llm Api Key */
+            has_llm_api_key?: boolean | null;
             /** Llm Api Key Preview */
             llm_api_key_preview?: string | null;
+            /** Ai Monthly Budget Usd */
+            ai_monthly_budget_usd?: string | null;
             /** Max Budget */
             max_budget: number;
             /** Status */
@@ -3191,6 +4499,8 @@ export interface components {
             llm_api_key?: string | null;
             /** Max Budget */
             max_budget?: number | null;
+            /** Ai Monthly Budget Usd */
+            ai_monthly_budget_usd?: string | null;
             /** Industry */
             industry?: string | null;
         };
@@ -3271,6 +4581,32 @@ export interface components {
             full_name?: string | null;
             /** Email */
             email?: string | null;
+        };
+        /** ReglaCandidataResponse */
+        ReglaCandidataResponse: {
+            /** Id */
+            id: string;
+            /** Motivo */
+            motivo: string;
+            /** Motivo Legible */
+            motivo_legible: string;
+            /** Propuesta */
+            propuesta: string;
+            /** Ocurrencias */
+            ocurrencias: number;
+            /** Status */
+            status: string;
+            /**
+             * Ocurrencias Json
+             * @default []
+             */
+            ocurrencias_json: {
+                [key: string]: unknown;
+            }[];
+            /** Resuelta En */
+            resuelta_en?: string | null;
+            /** Nota De Resolucion */
+            nota_de_resolucion?: string | null;
         };
         /** Report */
         Report: {
@@ -3490,6 +4826,32 @@ export interface components {
             /** Conversions */
             conversions: number;
         };
+        /** ResolverReglaRequest */
+        ResolverReglaRequest: {
+            /** Aceptar */
+            aceptar: boolean;
+            /** Nota */
+            nota?: string | null;
+        };
+        /** ResumenDelChatResponse */
+        ResumenDelChatResponse: {
+            /** Dias */
+            dias: number;
+            /** Sesiones Abiertas */
+            sesiones_abiertas: number;
+            /** Con Resumen Entregado */
+            con_resumen_entregado: number;
+            /** Avisos Entregados */
+            avisos_entregados: number;
+            /** Avisos Silenciados Por Frecuencia */
+            avisos_silenciados_por_frecuencia: number;
+            /** Briefs Completados */
+            briefs_completados: number;
+            /** Briefs Abandonados */
+            briefs_abandonados: number;
+            /** Respuestas Deterministas */
+            respuestas_deterministas: number;
+        };
         /** RiskPreviewResponse */
         RiskPreviewResponse: {
             /** Risk Level */
@@ -3605,6 +4967,10 @@ export interface components {
             copy: components["schemas"]["SuggestionCopy"];
             /** Suggested Product Name */
             suggested_product_name?: string | null;
+            /** Evidencia */
+            evidencia?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** SuggestionWinningCampaign */
         SuggestionWinningCampaign: {
@@ -3727,6 +5093,48 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /**
+         * VersionCreateRequest
+         * @description Una modificación de la propuesta. Produce la versión siguiente.
+         */
+        VersionCreateRequest: {
+            config: components["schemas"]["CampaignCreateRequest"];
+            /** Change Reason */
+            change_reason: string;
+            /**
+             * Change Reason Code
+             * @description Uno de MOTIVOS_DE_CAMBIO
+             */
+            change_reason_code: string;
+        };
+        /** VersionResponse */
+        VersionResponse: {
+            /** Id */
+            id: string;
+            /** Draft Id */
+            draft_id: string;
+            /** Version Number */
+            version_number: number;
+            /** Material Fingerprint */
+            material_fingerprint: string;
+            /** Risk Level */
+            risk_level?: string | null;
+            /**
+             * Gates
+             * @default {}
+             */
+            gates: {
+                [key: string]: unknown;
+            };
+            /** Change Reason */
+            change_reason?: string | null;
+            /** Approval Id */
+            approval_id?: string | null;
+            /** Approval Status */
+            approval_status?: string | null;
+            /** Material Change */
+            material_change?: boolean | null;
+        };
         /** VideoUploadResponse */
         VideoUploadResponse: {
             /** Video Path */
@@ -3772,6 +5180,16 @@ export interface components {
             conversations: number;
             /** Cost Per Conv */
             cost_per_conv: number;
+        };
+        /**
+         * WsTicketResponse
+         * @description Credencial de un solo uso para el handshake del WebSocket (spec 01).
+         */
+        WsTicketResponse: {
+            /** Ticket */
+            ticket: string;
+            /** Expires In */
+            expires_in: number;
         };
     };
     responses: never;
@@ -3960,7 +5378,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MessageResponse"];
+                    "application/json": components["schemas"]["TokenResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4036,6 +5454,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    issue_ws_ticket_api_v1_auth_ws_ticket_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WsTicketResponse"];
                 };
             };
         };
@@ -4184,6 +5622,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_my_experience_api_v1_organizations_my_experience_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExperienceResponse"];
+                };
+            };
+        };
+    };
+    get_my_monthly_budget_api_v1_organizations_my_budget_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonthlyBudgetResponse"];
                 };
             };
         };
@@ -5273,6 +6751,72 @@ export interface operations {
             };
         };
     };
+    corregir_contexto_del_medio_api_v1_campaigns_chat_sessions__session_id__media_context_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CorreccionDelMedioRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSessionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observabilidad_del_chat_api_v1_campaigns_chat_observabilidad_get: {
+        parameters: {
+            query?: {
+                dias?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResumenDelChatResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_recent_campaign_snapshots_api_v1_campaigns_recent_get: {
         parameters: {
             query?: {
@@ -5666,6 +7210,26 @@ export interface operations {
             };
         };
     };
+    rendimiento_de_campanas_api_v1_campaigns_performance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CampaignPerformanceResponse"];
+                };
+            };
+        };
+    };
     get_campaign_draft_status_api_v1_campaigns_drafts__draft_id__get: {
         parameters: {
             query?: never;
@@ -5746,6 +7310,282 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SyncLearningResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    crear_version_de_propuesta_api_v1_proposals_drafts__draft_id__versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VersionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aprobar_version_api_v1_proposals_versions__version_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VersionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ejecutar_version_api_v1_proposals_versions__version_id__execute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auditoria_de_la_propuesta_api_v1_proposals_drafts__draft_id__audit_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_motivos_de_cambio_api_v1_proposals_motivos_de_cambio_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MotivoDeCambio"][];
+                };
+            };
+        };
+    };
+    evidencia_de_la_propuesta_api_v1_proposals_drafts__draft_id__evidencia_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                draft_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenciaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    listar_reglas_candidatas_api_v1_proposals_reglas_candidatas_get: {
+        parameters: {
+            query?: {
+                incluir_resueltas?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReglaCandidataResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolver_regla_api_v1_proposals_reglas_candidatas__regla_id__resolver_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                regla_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolverReglaRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReglaCandidataResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resumen_de_aprendizaje_api_v1_proposals_aprendizaje_get: {
+        parameters: {
+            query?: {
+                dias?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AprendizajeResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6070,6 +7910,174 @@ export interface operations {
             };
         };
     };
+    get_ai_budget_api_v1_ai_usage_budget_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiBudgetResponse"];
+                };
+            };
+        };
+    };
+    get_ai_discards_api_v1_ai_usage_discards_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiDiscardsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    subir_medio_api_v1_media_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_subir_medio_api_v1_media_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAssetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cuota_de_medios_api_v1_media_quota_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaQuotaResponse"];
+                };
+            };
+        };
+    };
+    detalle_del_medio_api_v1_media__asset_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MediaAssetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    contenido_del_medio_api_v1_media__asset_id__contenido_get: {
+        parameters: {
+            query: {
+                token: string;
+            };
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_invitation_details_api_v1_invitations__token__get: {
         parameters: {
             query?: never;
@@ -6209,6 +8217,211 @@ export interface operations {
             };
         };
     };
+    iniciar_baja_de_cliente_api_v1_admin_organizations__org_id__offboarding_iniciar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    exportar_datos_del_cliente_api_v1_admin_organizations__org_id__offboarding_exportacion_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    eliminar_datos_del_cliente_api_v1_admin_organizations__org_id__offboarding_eliminar_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    certificado_de_baja_api_v1_admin_organizations__org_id__offboarding_certificado_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    estado_del_alta_api_v1_admin_organizations__org_id__onboarding_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validar_paso_del_alta_api_v1_admin_organizations__org_id__onboarding__paso__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org_id: string;
+                paso: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                } | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_organization_modules_api_v1_admin_organizations__org_id__modules_patch: {
         parameters: {
             query?: never;
@@ -6298,6 +8511,241 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ver_interruptores_api_v1_operacion_interruptores_get: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cambiar_interruptor_api_v1_operacion_interruptores__capacidad__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                capacidad: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CambioDeInterruptor"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ver_flags_api_v1_operacion_flags_get: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+                ad_account_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cambiar_flag_api_v1_operacion_flags__clave__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clave: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CambioDeFlag"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ver_senales_api_v1_operacion_senales_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    diagnostico_api_v1_operacion_diagnostico_get: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    aviso_api_v1_operacion_aviso_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    metricas_api_v1_operacion_metricas_get: {
+        parameters: {
+            query?: {
+                dias?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -9,6 +9,7 @@ Principio rector: el chat NO abre un segundo camino de escritura. Todo
 termina llamando a las mismas funciones que usa `POST /campaigns/` — nunca
 construye su propio `CampaignDraft` ni su propio chain de Celery.
 """
+import datetime
 import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,6 +23,15 @@ from app.models.campaign_chat_session import CampaignChatSession
 from app.models.campaign_draft import CampaignDraft
 from app.models.meta_page import MetaPage
 from app.models.organization import Organization
+from app.services.ai import guardas, origen, presupuesto, validacion
+from app.services.campaign_chat.apertura import construir_apertura, registrar_entrega
+from app.services.campaign_chat import contexto as contexto_mod
+from app.services.campaign_chat import medios_contexto
+from app.services.campaign_chat.brief import (
+    estado_del_brief, interpretar_capacidad, resumen_para_el_cliente,
+)
+from app.services.campaign_chat import degradacion
+from app.services.ai import llm as llm_module
 from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
 from app.services.ai.llm import ChatPlan, OpenRouterClient
@@ -34,6 +44,7 @@ from app.services.campaign_chat.machine import GATE_STATES, SessionFacts, invali
 from app.services.campaign_chat.period import PERIOD_ENUM, Period, parse_period, period_from_enum
 from app.services.campaign_chat.slots import sanitize_product_name
 
+from app.services.budget_gate import BudgetLimitExceeded, MixedCurrencies
 from app.services.campaign_creation import (
     CAMPAIGN_SESSION_WINDOW_HOURS,
     MAX_CAMPAIGNS_PER_SESSION,
@@ -77,6 +88,13 @@ _SLOT_KEYS = {
     "goal_text", "product_name", "budget", "budget_type", "days",
     "image_path", "video_path", "page_id", "whatsapp_number",
     "headline", "description", "copy_text",
+    # Brief mínimo de negocio (spec 12). Van en `slots_json` y no en columnas
+    # nuevas porque son parte del mismo estado multi-turno que el resto: una
+    # tabla aparte obligaría a mantener dos cosas en sincronía para responder
+    # "¿qué le falta a esta solicitud?".
+    "capacidad_de_atencion", "condiciones", "publico",
+    # Lo que el sistema entendió del medio, y lo que el cliente corrigió.
+    "medio_contexto",
 }
 _APPLICABLE_EXTRACTED_KEYS = _SLOT_KEYS - {"page_id", "video_path", "image_path"}
 
@@ -110,6 +128,33 @@ async def create_session(
         raise ChatGuardError("AdAccount no encontrada para esta organización.")
 
     if mode == "ASK":
+        # El chat abre con CONTENIDO, no con un cursor (spec 12, criterio 1).
+        # Un cursor parpadeante le exige al cliente justo lo que no tiene: saber
+        # qué preguntar. Todo lo que sigue es determinista, así que la apertura
+        # es idéntica con el modelo caído (criterio 2).
+        org = await db.get(Organization, current_user.organization_id)
+        try:
+            mensajes, avisos_entregados = await construir_apertura(
+                db, ad_account,
+                organization_id=current_user.organization_id,
+                user_id=current_user.id,
+                organization=org,
+            )
+        except Exception:
+            # Un fallo armando el resumen no puede impedir abrir el chat: el
+            # cliente perdería la conversación entera por no poder calcular una
+            # cifra. Se cae al saludo de siempre y queda registrado.
+            logger.exception(
+                "No se pudo construir el resumen de apertura para la cuenta %s; "
+                "se abre el chat sin él.", ad_account.id,
+            )
+            mensajes, avisos_entregados = [cards.text_message(
+                "¡Hola! Soy tu analista de Meta Ads. ¿Qué querés saber sobre el "
+                "rendimiento de tu cuenta?",
+                quick_replies=["¿Cómo vengo este mes?", "¿Cuál campaña rinde mejor?",
+                               "¿Dónde estoy perdiendo plata?"],
+            )], []
+
         session = CampaignChatSession(
             organization_id=current_user.organization_id,
             created_by_user_id=current_user.id,
@@ -118,12 +163,16 @@ async def create_session(
             status="OPEN",
             mode="ASK",
             slots_json={"_origin_mode": "ASK"},
-            messages_json=[cards.text_message(
-                "¡Hola! Soy tu analista de Meta Ads. ¿Qué querés saber sobre el rendimiento de tu cuenta?",
-                quick_replies=["¿Cómo vengo este mes?", "¿Cuál campaña rinde mejor?", "¿Dónde estoy perdiendo plata?"]
-            )],
+            messages_json=mensajes,
         )
         db.add(session)
+        if avisos_entregados:
+            await registrar_entrega(
+                db, avisos_entregados,
+                organization_id=current_user.organization_id,
+                ad_account_id=ad_account.id,
+                user_id=current_user.id,
+            )
         await db.commit()
         await db.refresh(session)
         return session
@@ -274,6 +323,77 @@ def _facts(session: CampaignChatSession) -> SessionFacts:
         proposal_accepted=bool(proposal.get("_accepted")),
         draft_id=session.draft_id,
         mode=session.mode or "BUILD",
+        medio_revisado=_medio_revisado(slots),
+        brief_completo=estado_del_brief(slots).completo,
+    )
+
+
+def _medio_revisado(slots: Dict[str, Any]) -> bool:
+    """¿Ya vio el cliente qué entendimos del medio? (spec 12, criterio 10)
+
+    Sin medio no hay nada que revisar, y decir que falta revisarlo dejaría la
+    conversación atascada antes de que el cliente mande la foto.
+    """
+    if not (slots.get("image_path") or slots.get("video_path")):
+        return True
+    contexto = slots.get("medio_contexto") or {}
+    return bool(contexto.get("revisado"))
+
+
+async def _medir_el_medio(
+    db: AsyncSession, current_user: User, storage_key: Optional[str],
+) -> Any:
+    """Lo que se sabe del archivo sin interpretarlo: dimensiones, duración, avisos.
+
+    La interpretación visual —qué producto se ve— exige un modelo con visión y
+    todavía no existe en este camino. Se declara ausente en vez de inventarse:
+    el texto de revisión sabe pedirle al cliente que lo cuente él.
+    """
+    from app.models.media_asset import MediaAsset
+
+    if not storage_key:
+        return medios_contexto.ContextoDelMedio()
+    try:
+        asset = (await db.execute(
+            select(MediaAsset).where(
+                MediaAsset.storage_key == storage_key,
+                MediaAsset.organization_id == current_user.organization_id,
+            )
+        )).scalar_one_or_none()
+    except Exception:
+        logger.exception("No se pudo leer el medio %s para describirlo.", storage_key)
+        return medios_contexto.ContextoDelMedio()
+
+    if asset is None:
+        return medios_contexto.ContextoDelMedio()
+    return medios_contexto.desde_asset(asset)
+
+
+def _contexto_del_medio(session: CampaignChatSession) -> Any:
+    """Reconstruye el contexto del medio desde los slots de la sesión.
+
+    Se guarda serializado en `slots_json` para que sobreviva entre turnos; acá
+    se vuelve a armar el objeto. Cuando todavía no hay nada extraído se
+    construye vacío: el texto de revisión sabe decir que no pudo describir la
+    pieza, que es mejor que callarse.
+    """
+    slots = session.slots_json or {}
+    guardado = slots.get("medio_contexto") or {}
+    medido = guardado.get("medido") or {}
+    interpretado = guardado.get("interpretado") or {}
+    return medios_contexto.ContextoDelMedio(
+        kind=medido.get("kind") or ("VIDEO" if slots.get("video_path") else "IMAGE"),
+        ancho=medido.get("ancho"),
+        alto=medido.get("alto"),
+        duracion_segundos=medido.get("duracion_segundos"),
+        tamano_bytes=medido.get("tamano_bytes"),
+        producto=interpretado.get("producto"),
+        descripcion=interpretado.get("descripcion"),
+        texto_visible=interpretado.get("texto_visible"),
+        elementos=tuple(interpretado.get("elementos") or ()),
+        avisos=tuple(guardado.get("avisos") or ()),
+        correcciones=dict(guardado.get("correcciones") or {}),
+        revisado=bool(guardado.get("revisado")),
     )
 
 
@@ -382,6 +502,32 @@ async def _run_auto_steps(
     if state == "ASK_MEDIA":
         session.state = state
         messages.append(await _say(db, current_user, session, cards.ASK_MEDIA_TEXT, user_text))
+        return
+    if state == "REVIEW_MEDIA":
+        # Lo extraído se MUESTRA antes de usarse (spec 12, criterio 10). No es
+        # un juicio de calidad ni una promesa: describe lo que hay y pregunta si
+        # está bien.
+        session.state = state
+        contexto_medio = _contexto_del_medio(session)
+        messages.append(cards.text_message(
+            "\n".join(medios_contexto.texto_de_revision(contexto_medio)),
+            quick_replies=["Está bien", "Corregir"],
+            origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA,
+        ))
+        messages[-1]["medio_contexto"] = contexto_medio.as_dict()
+        return
+    if state == "ASK_BRIEF":
+        # Se pide UN elemento por turno. Siete preguntas en un mensaje de chat
+        # no se contestan: se abandonan.
+        session.state = state
+        estado = estado_del_brief(session.slots_json or {})
+        siguiente = estado.siguiente
+        if siguiente is not None:
+            texto = siguiente.pregunta
+            if siguiente.porque:
+                texto = f"{texto}\n\n_{siguiente.porque}_"
+            messages.append(await _say(db, current_user, session, texto, user_text))
+            messages[-1]["brief"] = estado.as_dict()
         return
     if state == "BUILD_PLAN":
         # BUILDING_TEXT no se reescribe: es el relleno que se muestra justo
@@ -515,6 +661,19 @@ async def _handle_accept_risk(
             "CAP_REACHED", cards.cap_reached_text(e.limit, e.window_hours), retry_after_hours=e.window_hours,
         ))
         return
+    except BudgetLimitExceeded as e:
+        # El límite mensual es un fallo de DOMINIO, no técnico: se queda dentro
+        # de la conversación y dice cuánto margen queda, en vez de romper el
+        # chat con un error de infraestructura (spec 02).
+        messages.append(cards.build_error_message(
+            "BUDGET_LIMIT",
+            f"Esta campaña no entra en el límite mensual de presupuesto. "
+            f"Disponible este mes: {e.margen}; solicitado: {e.solicitado}.",
+        ))
+        return
+    except MixedCurrencies as e:
+        messages.append(cards.build_error_message("BUDGET_LIMIT", str(e)))
+        return
     except HTTPException as e:
         detail = e.detail if isinstance(e.detail, str) else str(e.detail)
         messages.append(cards.build_error_message("PREFLIGHT_FAILED", f"{cards.PREFLIGHT_FAILED_TEXT} {detail}"))
@@ -528,7 +687,9 @@ async def _handle_accept_risk(
 async def _handle_accept(
     db: AsyncSession, current_user: User, session: CampaignChatSession, messages: List[Dict[str, Any]]
 ) -> None:
-    if session.state == "REVIEW_PLAN":
+    if session.state == "REVIEW_MEDIA":
+        await _handle_accept_media(db, current_user, session, messages)
+    elif session.state == "REVIEW_PLAN":
         await _handle_accept_review(db, current_user, session, messages)
     elif session.state == "CONFIRM_RISK":
         await _handle_accept_risk(db, current_user, session, messages)
@@ -536,7 +697,67 @@ async def _handle_accept(
         messages.append(cards.build_error_message("VALIDATION", "No hay nada que confirmar en este momento."))
 
 
+async def _handle_accept_media(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    messages: List[Dict[str, Any]],
+) -> None:
+    """El cliente da por bueno lo que entendimos del medio.
+
+    Marca la revisión y sigue. No confirmar nada más: dar por aceptada la
+    interpretación NO es dar por aceptada la campaña, y confundirlas saltaría la
+    compuerta de revisión de la propuesta.
+    """
+    contexto = _contexto_del_medio(session)
+    marcado = medios_contexto.ContextoDelMedio(
+        kind=contexto.kind, ancho=contexto.ancho, alto=contexto.alto,
+        duracion_segundos=contexto.duracion_segundos, tamano_bytes=contexto.tamano_bytes,
+        producto=contexto.producto, descripcion=contexto.descripcion,
+        texto_visible=contexto.texto_visible, elementos=contexto.elementos,
+        avisos=contexto.avisos, correcciones=dict(contexto.correcciones), revisado=True,
+    )
+    _apply_slot_changes(session, {"medio_contexto": marcado.as_dict()})
+    await _run_auto_steps(db, current_user, session, messages)
+
+
+async def aplicar_correccion_del_medio(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    correcciones: Dict[str, Any], messages: List[Dict[str, Any]],
+) -> None:
+    """El cliente corrige lo que entendimos (spec 12, criterio 11).
+
+    La corrección MANDA sobre lo extraído y se refleja en la propuesta: si el
+    cliente dice que el producto es otro, el copy tiene que hablar de ese. Se
+    guarda aparte de lo interpretado en vez de pisarlo, para poder responder en
+    qué se equivoca el sistema.
+    """
+    contexto = _contexto_del_medio(session)
+    corregido = medios_contexto.corregir(contexto, correcciones)
+    cambios: Dict[str, Any] = {"medio_contexto": corregido.as_dict()}
+
+    # El producto corregido es el que usa la propuesta. Va al slot que ya
+    # existe, para que no haya dos fuentes sobre qué se está anunciando.
+    producto = corregido.efectivo("producto")
+    if producto:
+        cambios["product_name"] = producto
+
+    _apply_slot_changes(session, cambios)
+    messages.append(cards.text_message(
+        "Anotado. " + "\n".join(medios_contexto.texto_de_revision(corregido)),
+        origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA,
+    ))
+    await _run_auto_steps(db, current_user, session, messages)
+
+
 def _handle_reject(session: CampaignChatSession, messages: List[Dict[str, Any]]) -> None:
+    # En REVIEW_MEDIA, "no" significa "está mal entendido", no "cancelá todo".
+    # Cerrar la sesión ahí castigaría al cliente por corregir, que es
+    # exactamente lo que se le está pidiendo que haga.
+    if session.state == "REVIEW_MEDIA":
+        messages.append(cards.text_message(
+            "Contame qué es lo que muestra la pieza y lo corrijo.",
+            origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA,
+        ))
+        return
     text = cards.REJECTED_AT_REVIEW_TEXT if session.state == "REVIEW_PLAN" else cards.REJECTED_AT_RISK_TEXT
     _close_as_cancelled(session, messages, text)
 
@@ -716,7 +937,7 @@ async def _analyze(
     exigencia es igualdad exacta.
     """
     if (session.turn_count or 0) >= _max_analysis_turns(session):
-        return cards.text_message(canonical)
+        return cards.text_message(canonical, origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA)
 
     org = await db.get(Organization, current_user.organization_id)
     usage_ctx = UsageContext(
@@ -737,8 +958,18 @@ async def _analyze(
         written = None
 
     if written is None:
-        return cards.text_message(canonical)
-    return cards.text_message(rephrase.grounded_or_canonical(facts_blob, canonical, written))
+        return cards.text_message(canonical, origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA)
+
+    contexto = await _contexto_de_validacion(
+        db, current_user, session, "campaign_chat_analisis",
+    )
+    veredicto = await validacion.validar(
+        hechos=facts_blob, respuesta=written, contexto=contexto,
+    )
+    if veredicto.aceptada:
+        return cards.text_message(veredicto.texto, origen_de_la_respuesta=origen.ORIGEN_MODELO)
+    # La guarda descartó: lo que sale es el texto del código, y se dice.
+    return cards.text_message(canonical, origen_de_la_respuesta=origen.ORIGEN_DETERMINISTA)
 
 
 async def _analista_con_consultas(
@@ -783,19 +1014,135 @@ async def _analista_con_consultas(
     if not resultado:
         return None
     texto, consultado = resultado
-    # Igual que en el otro camino: el enlace se quita, no descarta la respuesta.
-    texto = grounding.limpiar_enlaces(texto)
-    if rephrase.numbers_are_grounded(consultado, texto):
+    contexto = await _contexto_de_validacion(
+        db, current_user, session, "campaign_chat_analista",
+    )
+    veredicto = await validacion.validar(
+        hechos=consultado, respuesta=texto, contexto=contexto,
+    )
+    if veredicto.aceptada:
         logger.info(
             "Analista respondió con %d consulta(s) a la base (sesión %s).",
             len(consultado), session.id,
         )
-        return texto
+        return veredicto.texto
     logger.warning(
-        "La respuesta del analista con consultas no pasó la validación; "
-        "se cae al camino determinista (sesión %s).", session.id,
+        "La respuesta del analista con consultas se descartó por '%s' (%s); "
+        "se cae al camino determinista (sesión %s).",
+        veredicto.motivo, veredicto.detalle, session.id,
     )
     return None
+
+
+async def _contexto_de_validacion(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    feature: str, *, period: Any = None,
+) -> validacion.Contexto:
+    """Arma lo que la respuesta del modelo tiene permitido mencionar.
+
+    Las cuentas HERMANAS se cargan a propósito. Sin ellas la guarda solo podría
+    comprobar que la cuenta activa aparece, y el riesgo real es el contrario: que
+    la respuesta hable de otra cuenta de la misma Organización, cuyos datos el
+    modelo pudo ver en otro turno. Eso pasa la validación numérica entera —las
+    cifras existen, solo que en otra cuenta— y produce un análisis con todos sus
+    números correctos y su conclusión falsa.
+    """
+    cuentas = list((await db.execute(
+        select(AdAccount).where(AdAccount.organization_id == current_user.organization_id)
+    )).scalars().all())
+
+    activa = next((c for c in cuentas if c.id == session.ad_account_id), None)
+    cuenta = guardas.CuentaAutorizada(
+        external_id=getattr(activa, "external_account_id", None),
+        nombre=getattr(activa, "name", None),
+        otras_ids=tuple(
+            c.external_account_id for c in cuentas
+            if c.id != session.ad_account_id and c.external_account_id
+        ),
+        otros_nombres=tuple(
+            c.name for c in cuentas if c.id != session.ad_account_id and c.name
+        ),
+    )
+
+    periodo = None
+    if period is not None and getattr(period, "days", None):
+        hasta = datetime.date.today()
+        periodo = guardas.PeriodoAutorizado(
+            desde=hasta - datetime.timedelta(days=period.days),
+            hasta=hasta,
+            dias=period.days,
+        )
+
+    return validacion.Contexto(
+        feature=feature,
+        organization_id=current_user.organization_id,
+        ad_account_id=session.ad_account_id,
+        periodo=periodo,
+        cuenta=cuenta,
+        prompt_version=llm_module.CHAT_ANALYST_PROMPT_VERSION,
+    )
+
+
+async def _estado_de_ia(
+    db: AsyncSession, current_user: User
+) -> Tuple[Optional[Organization], Optional[Dict[str, Any]]]:
+    """La Organización y, si la IA no está disponible, el motivo para el cliente.
+
+    Devolver el motivo en vez de un booleano es lo que permite cumplir el
+    criterio 14 de la spec 10: con el presupuesto agotado el producto tiene que
+    decirlo, no contestar con una plantilla indistinguible de un fallo. Antes,
+    las dos situaciones —"no hay IA" y "la IA falló"— llegaban al cliente como el
+    mismo texto robótico, y ninguna de las dos se podía diagnosticar desde
+    afuera.
+    """
+    org = await db.get(Organization, current_user.organization_id)
+    if org is None:
+        return None, None
+
+    estado = await presupuesto.estado_del_mes(db, org.id, org=org)
+    if estado.agotado:
+        return org, presupuesto.PresupuestoDeIAAgotado(
+            limite=estado.limite, consumo=estado.consumo, slug=org.slug,
+        ).as_detail()
+    return org, None
+
+
+def _nota_de_ia_no_disponible(detalle: Dict[str, Any]) -> str:
+    """Lo que se le dice al cliente cuando la redacción no está disponible.
+
+    Se nombra lo que SIGUE funcionando antes que lo que no. La respuesta que
+    acompaña esta nota es determinista y correcta —sus cifras salen de la misma
+    consulta de siempre—, así que presentarla como una degradación total sería
+    tan inexacto como no avisar.
+    """
+    return (
+        f"_{detalle['message']}_\n\n"
+        "Lo de arriba lo calculó el sistema con tus datos reales; lo único que "
+        "falta es la explicación redactada."
+    )
+
+
+async def _contexto_de_la_respuesta(
+    db: AsyncSession, session: CampaignChatSession, *, period: Any = None,
+    suficiencia: Any = None,
+) -> Any:
+    """Cuenta, periodo y frescura de una respuesta del chat (spec 12, 3-5).
+
+    La cuenta sale de la SESIÓN, no del encabezado de la petición: la sesión
+    congela su cuenta al abrirse, y leerla del encabezado haría que una
+    conversación empezada sobre una cuenta terminara declarando otra (criterio
+    7).
+    """
+    cuenta = await db.get(AdAccount, session.ad_account_id)
+    dias = getattr(period, "days", None)
+    label = getattr(period, "label", None)
+    return contexto_mod.ContextoDeRespuesta(
+        cuenta_id=session.ad_account_id,
+        cuenta_nombre=getattr(cuenta, "name", None),
+        frescura=contexto_mod.frescura_de(cuenta) if cuenta is not None else None,
+        suficiencia=suficiencia or contexto_mod.Suficiencia(),
+        **contexto_mod.periodo_desde_dias(dias, label),
+    )
 
 
 async def _responder_como_analista(
@@ -807,15 +1154,47 @@ async def _responder_como_analista(
     El orden importa y es el cambio de fondo: el LLM con herramientas primero,
     el regex como respaldo. Al revés —que era lo de antes— el regex decidía si
     el modelo llegaba a existir.
+
+    Con el presupuesto de IA agotado se salta directo al camino determinista y se
+    avisa. Intentar la llamada para que la bloquee la compuerta del cliente LLM
+    funcionaría igual, pero gastaría una consulta a la base por mensaje para
+    llegar al mismo sitio, y el cliente no se enteraría de por qué.
     """
+    _org, sin_ia = await _estado_de_ia(db, current_user)
+    if sin_ia is not None:
+        await _sin_analista(db, current_user, session, text, messages, result)
+        # Nombrada: `ia_no_disponible`, no un texto que el cliente pueda
+        # confundir con "no hay datos" (spec 12, criterio 13).
+        messages.append(cards.degradacion_message(
+            degradacion.ia_no_disponible(detalle=sin_ia.get("message")),
+        ))
+        return
+
     texto = await _analista_con_consultas(db, current_user, session, text, messages)
     if texto is not None:
-        messages.append(cards.text_message(texto))
+        ctx = await _contexto_de_la_respuesta(
+            db, session, period=getattr(result, "question_period", None),
+        )
+        messages.append(cards.text_message_con_contexto(
+            texto, contexto=ctx, origen_de_la_respuesta=origen.ORIGEN_MODELO,
+        ))
         pendiente = _pending_prompt_for_state(session.state)
         if pendiente:
             messages.append(cards.text_message(pendiente))
         return
 
+    await _sin_analista(db, current_user, session, text, messages, result)
+
+
+async def _sin_analista(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    text: str, messages: List[Dict[str, Any]], result: Any,
+) -> None:
+    """El camino determinista: temas reconocidos, o pregunta fuera de alcance.
+
+    Es la respuesta que el producto sabe dar sin el modelo, y la que tiene que
+    seguir funcionando con el presupuesto de IA agotado (criterio 15).
+    """
     topics = result.question_topics or (
         [result.question_topic] if result.question_topic else []
     )
@@ -900,6 +1279,41 @@ def _pending_prompt_for_state(state: str) -> Optional[str]:
     return None
 
 
+async def _responder_al_brief(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    text: str, messages: List[Dict[str, Any]],
+) -> bool:
+    """Guarda la respuesta al elemento del brief que se estaba pidiendo.
+
+    Devuelve `True` si la consumió. El elemento se sabe por lo que FALTA, no
+    por un campo aparte que diga qué se preguntó: dos fuentes sobre lo mismo se
+    desincronizan en cuanto alguien conteste dos cosas de golpe.
+    """
+    estado = estado_del_brief(session.slots_json or {})
+    siguiente = estado.siguiente
+    if siguiente is None:
+        return False
+
+    limpio = (text or "").strip()
+    if not limpio:
+        return False
+
+    if siguiente.clave == "capacidad_de_atencion":
+        interpretado = interpretar_capacidad(limpio)
+        if interpretado is None:
+            return False
+        _apply_slot_changes(session, {"capacidad_de_atencion": interpretado})
+    elif siguiente.clave in ("condiciones", "publico"):
+        _apply_slot_changes(session, {siguiente.clave: limpio})
+    else:
+        # El resto de elementos son slots publicitarios que el extractor ya
+        # sabe leer: se deja pasar para que lo haga él.
+        return False
+
+    await _run_auto_steps(db, current_user, session, messages, user_text=text)
+    return True
+
+
 async def _handle_text(
     db: AsyncSession, current_user: User, session: CampaignChatSession, text: str, messages: List[Dict[str, Any]]
 ) -> None:
@@ -953,6 +1367,19 @@ async def _handle_text(
                 quick_replies=["Sí, armemos la campaña", "No, solo estoy consultando"]
             ))
             return
+
+    # Estando en ASK_BRIEF o REVIEW_MEDIA, el mensaje contesta a lo que se acaba
+    # de preguntar. Mandarlo al extractor genérico haría que "unas 20 al día" se
+    # interpretara como un presupuesto de 20, que es peor que no entenderlo.
+    if session.state == "ASK_BRIEF":
+        if await _responder_al_brief(db, current_user, session, text, messages):
+            return
+    if session.state == "REVIEW_MEDIA" and result.intent not in ("accept", "reject", "cancel"):
+        # Cualquier texto que no sea un sí o un no es la corrección misma.
+        await aplicar_correccion_del_medio(
+            db, current_user, session, {"producto": text.strip()}, messages,
+        )
+        return
 
     # Mientras se arma una campaña, un mensaje incomprensible suele ser un slot
     # mal escrito: se intenta recuperar antes de tratarlo como pregunta.
@@ -1033,11 +1460,43 @@ async def process_message(
         else:
             changes["video_path"] = video_path
             changes["image_path"] = None
+        # Lo que se puede medir del archivo, para poder mostrárselo al cliente
+        # antes de usarlo (spec 12, criterio 10). Un medio nuevo reinicia la
+        # revisión: la interpretación anterior era de OTRA foto.
+        changes["medio_contexto"] = (await _medir_el_medio(
+            db, current_user, image_path or video_path,
+        )).as_dict()
         _apply_slot_changes(session, changes)
         await _run_auto_steps(db, current_user, session, messages)
     elif text:
         messages.append(cards.user_text_message(text))
         await _handle_text(db, current_user, session, text, messages)
+
+    session.turn_count = (session.turn_count or 0) + 1
+    session.last_client_turn_id = client_turn_id
+    session.messages_json = messages[-MAX_MESSAGES_PERSISTED:]
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+async def process_media_correction(
+    db: AsyncSession, current_user: User, session: CampaignChatSession,
+    client_turn_id: str, correcciones: Dict[str, Any],
+) -> CampaignChatSession:
+    """Aplica la corrección del cliente sobre lo entendido del medio.
+
+    Mismo contrato de turno que el resto: idempotente por `client_turn_id`, para
+    que un doble clic no aplique la corrección dos veces.
+    """
+    _ensure_open(session)
+    if session.last_client_turn_id == client_turn_id:
+        return session
+
+    messages = list(session.messages_json or [])
+    await aplicar_correccion_del_medio(
+        db, current_user, session, correcciones, messages,
+    )
 
     session.turn_count = (session.turn_count or 0) + 1
     session.last_client_turn_id = client_turn_id

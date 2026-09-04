@@ -328,6 +328,17 @@ class SuggestionResponse(BaseModel):
     evidence: List[str]
     copy: SuggestionCopy
     suggested_product_name: Optional[str] = None
+    # Las campañas históricas comparables que respaldan esta propuesta, con su
+    # nivel de confianza y sus afirmaciones marcadas (spec 11).
+    #
+    # `evidence` (arriba) es la lista de frases que ya existía: describe de qué
+    # datos salieron los parámetros. `evidencia` es el conjunto identificable de
+    # campañas anteriores. Los dos nombres conviven porque son cosas distintas y
+    # fusionarlos perdería la primera.
+    #
+    # Sin este campo en el modelo, FastAPI lo descartaría en silencio: el
+    # servicio lo devuelve y la pantalla no lo vería nunca.
+    evidencia: Optional[Dict[str, Any]] = None
 
 
 # --- Historial de entrenamiento de la IA (creación de campañas) ---
@@ -375,6 +386,15 @@ class AiModelsResponse(BaseModel):
     # sin credencial: el analista contestaba con plantillas y nada se veía roto.
     credential_ok: bool = True
     effective_model: Optional[str] = None
+    # Por qué NO hay IA disponible, en texto para la pantalla. Desde la spec 10
+    # el proveedor es explícito: si falta la credencial DE ESE proveedor, el
+    # sistema no resuelve a otro — lo dice (criterio 8).
+    config_error: Optional[str] = None
+    # El modelo guardado ya no se ofrece (retirado, en retirada o ausente del
+    # catálogo). La organización sigue funcionando; queda SEÑALADA para que
+    # alguien le elija otro, en vez de romperse en silencio (criterio 12).
+    modelo_no_elegible: bool = False
+    modelo_no_elegible_motivo: Optional[str] = None
 
 
 # --- Políticas de Meta por rubro de negocio ---
@@ -396,6 +416,88 @@ class BusinessPoliciesResponse(BaseModel):
 
 
 # --- Respuestas simples ({"message": "..."}) y de la creación de campañas ---
+
+class MediaAssetResponse(BaseModel):
+    """Un medio subido, con su verificación técnica (spec 07).
+
+    `avisos` son accionables y NO predicen rendimiento: el comportamiento de un
+    creativo no se lee en sus píxeles, y prometerlo estaría prohibido además de
+    ser falso.
+    """
+
+    id: str
+    kind: str
+    content_type: str
+    filename: Optional[str] = None
+    size_bytes: int
+    ancho: Optional[int] = None
+    alto: Optional[int] = None
+    duracion_segundos: Optional[float] = None
+    status: str
+    expires_at: Optional[str] = None
+    url: str
+    avisos: List[Dict[str, Any]] = []
+
+
+class MediaQuotaResponse(BaseModel):
+    usado_bytes: int
+    limite_bytes: int
+    archivos: int
+    limite_archivos: int
+
+
+class CampaignPerformanceResponse(BaseModel):
+    """Rendimiento frente al baseline comparable (spec 06).
+
+    `baseline` lleva siempre el tamaño del conjunto que lo sostiene: una mediana
+    sobre tres campañas diminutas y una sobre treinta campañas grandes son
+    cifras distintas aunque coincidan, y quien la lea tiene que poder
+    distinguirlas.
+    """
+
+    baseline: Dict[str, Any]
+    campanas: List[Dict[str, Any]]
+    frescura: Dict[str, Any]
+    umbrales_de_madurez: Dict[str, Any] = {}
+
+
+class ExperienceResponse(BaseModel):
+    """Qué superficie le corresponde a esta sesión (spec 05).
+
+    Informativo, no decisorio: cada endpoint vuelve a comprobar módulo y rol.
+    """
+
+    experiencia: str          # "cliente" | "agencia"
+    rol: str                  # ADMIN | OPERATOR | VIEWER
+    modulos: List[str]
+    es_admin_de_plataforma: bool
+    organizacion_slug: str
+
+
+class MonthlyBudgetResponse(BaseModel):
+    """Límite mensual de presupuesto y su consumo (spec 02).
+
+    Los montos viajan como cadena y no como `float`: el número que se muestra al
+    cliente tiene que ser exactamente el que usó la compuerta para decidir, y
+    serializar un decimal a float en el borde reintroduce justo el error que la
+    compuerta evita.
+    """
+
+    periodo: str          # "YYYY-MM"
+    moneda: str
+    limite_mensual: str
+    gasto_real: str
+    comprometido: str
+    consumido: str
+    margen_disponible: str
+
+
+class WsTicketResponse(BaseModel):
+    """Credencial de un solo uso para el handshake del WebSocket (spec 01)."""
+
+    ticket: str
+    expires_in: int
+
 
 class MessageResponse(BaseModel):
     message: str
@@ -477,6 +579,22 @@ class ChatTextMessage(ChatMessageBase):
     type: Literal["text"] = "text"
     text: str
     quick_replies: List[str] = Field(default_factory=list)
+    # De dónde salió la respuesta: modelo, código o simulación (spec 10).
+    origen: Optional[str] = None
+    origen_label: Optional[str] = None
+    # Cuenta, periodo, frescura y suficiencia (spec 12, criterios 3-5). Sin
+    # declararlos aquí, FastAPI los descarta en silencio: el motor los pone y la
+    # pantalla no los ve nunca.
+    contexto: Optional[Dict[str, Any]] = None
+    # El resumen de apertura, los avisos proactivos y lo que el sistema entendió
+    # del medio adjunto.
+    resumen: Optional[Dict[str, Any]] = None
+    avisos: Optional[List[Dict[str, Any]]] = None
+    medio_contexto: Optional[Dict[str, Any]] = None
+    brief: Optional[Dict[str, Any]] = None
+    # Cuál de las cuatro situaciones degradadas es, cuando lo es. Es el campo
+    # que permite distinguir un fallo de autorización de una cuenta sin datos.
+    degradacion: Optional[Dict[str, Any]] = None
 
 
 class ChatMediaMessage(ChatMessageBase):
@@ -612,8 +730,12 @@ class InvitationResponse(BaseModel):
     email: str
     role: str
     organization_id: str
-    token: str
-    invite_url: str
+    # El enlace solo existe en la respuesta que CREA o reemite la invitación: lo
+    # que se guarda es el hash del token, así que al listar no hay nada que
+    # devolver. Si hace falta el enlace otra vez, se reemite (y el anterior deja
+    # de servir), que es lo correcto: un enlace de invitación es una llave viva.
+    token: Optional[str] = None
+    invite_url: Optional[str] = None
     expires_at: str
     accepted_at: Optional[str] = None
     created_at: str
@@ -738,3 +860,43 @@ class CampaignDetailResponse(BaseModel):
     actions: List[CampaignActionDetail] = Field(default_factory=list)
     history: List[CampaignSnapshotItem] = Field(default_factory=list)
 
+
+
+# --- Gobernanza del LLM (spec 10) ---
+
+class AiBudgetResponse(BaseModel):
+    """Techo mensual de IA, consumo y margen. Los montos viajan como TEXTO.
+
+    Un `Decimal` serializado a `float` en el borde de salida vuelve a introducir
+    el residuo binario que la spec 02 saca de la decisión, y esta cifra es la que
+    la agencia usa para decidir si amplía el techo.
+    """
+
+    moneda: str = "USD"
+    limite_usd: Optional[str] = None       # None = sin techo configurado
+    consumido_usd: str
+    margen_usd: Optional[str] = None
+    proporcion: Optional[float] = None     # para la barra de progreso, no decide nada
+    umbral_alcanzado: Optional[int] = None  # 70 | 90 | 100
+    agotado: bool
+    sin_techo: bool
+    desde: str
+
+
+class AiDiscardMotivo(BaseModel):
+    motivo: str
+    feature: str
+    aplicado: bool
+    veces: int
+
+
+class AiDiscardsResponse(BaseModel):
+    days: int
+    llamadas: int
+    aplicados: int
+    solo_registrados: int
+    # `None` cuando no hubo llamadas: una tasa de descarte sin llamadas no
+    # significa "perfecto", significa "sin datos".
+    tasa: Optional[float] = None
+    modo_registro: bool
+    por_motivo: List[AiDiscardMotivo]

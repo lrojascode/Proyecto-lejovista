@@ -11,7 +11,10 @@ Una máquina de estados **determinista** es dueña de los datos y de toda acció
 ```mermaid
 flowchart TB
     ASK_GOAL -->|"objetivo en texto libre"| ASK_MEDIA
-    ASK_MEDIA -->|"foto o video"| BUILD_PLAN
+    ASK_MEDIA -->|"foto o video"| REVIEW_MEDIA
+    REVIEW_MEDIA -->|"'Está bien'"| ASK_BRIEF
+    REVIEW_MEDIA -->|"corrección del cliente"| REVIEW_MEDIA
+    ASK_BRIEF -->|"último obligatorio del brief"| BUILD_PLAN
     BUILD_PLAN -->|"automático: CampaignSuggester + copy LLM"| REVIEW_PLAN
     REVIEW_PLAN -->|"Aceptar"| CONFIRM_RISK
     REVIEW_PLAN -->|"Cambiar algo"| REVIEW_PLAN
@@ -22,6 +25,13 @@ flowchart TB
     CREATING -->|"Saga OK"| DONE
     CREATING -->|"Saga falló"| FAILED
 ```
+
+**`REVIEW_MEDIA` y `ASK_BRIEF` son de la spec 12.** El medio se revisa recién
+llegado, mientras el cliente lo tiene en la cabeza: una interpretación
+equivocada que nadie ve se convierte en una campaña equivocada. Y el brief
+mínimo de negocio se completa antes de proponer, porque proponer con elementos
+obligatorios ausentes obliga al sistema a rellenarlos, que es inventar la
+decisión de negocio del cliente. Ver §11.
 
 `next_state(SessionFacts)` es una función PURA del conjunto de slots llenos, no un contador lineal: si el usuario contesta el objetivo y ya venía con la foto en el mismo turno, se salta `BUILD_PLAN` directo. `REVIEW_PLAN`/`CONFIRM_RISK` son compuertas — solo una decisión explícita (botón o "sí"/"no" en texto libre cuando hay una tarjeta pendiente) las mueve.
 
@@ -190,3 +200,83 @@ Flujo completo contra el stack local de Docker Compose con `MOCK_SERVICES=true`:
   *"¿cuánto vendí?"* caía en `SPEND` y contestaba con la **inversión**.
 - **`effective_status`.** Se sincroniza en los tres niveles. `status` dice cómo
   quedó configurada la campaña; `effective_status` dice si está entregando.
+
+
+## 11. El chat como superficie de valor (spec 12)
+
+### 11.1 Apertura con contenido (`apertura.py`, `resumen.py`, `avisos.py`)
+
+El chat abre con un resumen del periodo reciente, no con un cursor. Un cursor
+parpadeante le exige al cliente justo lo que no tiene: saber qué preguntar.
+
+Todo determinista: el resumen sale de datos ya sincronizados y los avisos de los
+`AIInsight` que el análisis ya produjo. El LLM, si está, solo redacta. Así la
+apertura es idéntica con el modelo caído.
+
+**No dispara análisis**: consume lo que el análisis agendado dejó (ADR-07).
+
+Los avisos se limitan por **huella** —categoría más sujeto, no el texto, que
+lleva las cifras del día y cambia solo— con ventana según el nivel:
+
+| Nivel | Ventana | Por qué |
+|---|---|---|
+| `CRITICAL` | 24 h | Una campaña gastando sin resultados merece insistir |
+| `WARNING` | 72 h | |
+| `INFO` | 168 h | Una oportunidad no merece más de una vez por semana |
+
+Sin límite, un hallazgo vigente saldría en cada apertura; en tres el cliente
+deja de leerlos y se pierde también el que importaba.
+
+### 11.2 El contexto de cada respuesta (`contexto.py`)
+
+Cuenta, periodo, frescura y suficiencia viajan **estructurados** con la
+respuesta, y sus avisos van además en el texto porque la interfaz puede no
+renderizar el bloque.
+
+La frescura se declara SIEMPRE. Una cifra sin fecha no permite distinguir "no
+pasó nada" de "no nos enteramos", y las dos se ven igual.
+
+La suficiencia tiene tres estados: `no_aplica`, `suficiente`, `insuficiente`.
+Con muestra corta la cifra se muestra —es real— pero no se concluye.
+
+### 11.3 El brief mínimo (`brief.py`)
+
+| Elemento | Obligatorio |
+|---|---|
+| Objetivo comercial, oferta, presupuesto, duración, WhatsApp de destino, medios, **capacidad de atención** | Sí |
+| Condiciones, público o restricciones | No |
+
+La capacidad de atención es el menos obvio y es obligatorio: una campaña que
+trae más consultas de las que el negocio puede atender **empeora** su negocio
+aunque mejore la métrica.
+
+Se pide de a un elemento por turno. El estado del brief se **deriva** de los
+slots, no se duplica.
+
+### 11.4 El contexto del medio (`medios_contexto.py`)
+
+Lo **medido** del archivo (dimensiones, duración, avisos técnicos) se separa de
+lo **interpretado** (producto, descripción, texto visible). Solo lo interpretado
+se puede corregir, y la corrección se guarda junto a lo extraído en vez de
+pisarlo.
+
+`POST /campaigns/chat/sessions/{id}/media-context` aplica la corrección, que
+manda sobre lo extraído y llega a la propuesta.
+
+### 11.5 Las cuatro situaciones (`degradacion.py`)
+
+`ia_no_disponible`, `meta_no_disponible`, `no_autorizado` y `sin_datos`. Cada
+mensaje nombra primero **lo que sigue funcionando**. La ausencia de datos no es
+una degradación: nada está roto, la cuenta es nueva.
+
+### 11.6 Vocabulario (`vocabulario.py`)
+
+`Draft`, `Saga`, `AIAction`, `grounding` y `write-back` se traducen en el borde,
+en `cards.text_message` y en `cards.build_error_message` — que es por donde más
+se cuelan, porque llegan de excepciones que nadie relee.
+
+### 11.7 Observabilidad
+
+`GET /campaigns/chat/observabilidad` — aperturas con resumen entregado, avisos
+entregados, briefs completados frente a abandonados y respuestas deterministas.
+Solo agencia.
