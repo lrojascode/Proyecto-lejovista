@@ -12,6 +12,15 @@ from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.user import User
 from app.schemas.campaign_schemas import CampaignCreateRequest
+from app.services.ai.llm import CAMPAIGN_COPY_PROMPT_VERSION, OpenRouterClient
+from app.models.operacion import CAP_CREACION
+from app.services import interruptores
+from app.services.baseline_repository import baseline_de_la_cuenta
+from app.services.recuperacion import persistir_evidencia, recuperar_comparables
+from app.services.budget_gate import assert_cabe_en_el_mes
+from app.services.proposal_versioning import (
+    aprobar, consumir_aprobacion, crear_version,
+)
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.campaign_validator import CampaignValidator, normalize_product_name
@@ -136,6 +145,13 @@ async def start_campaign_creation(
     """
     tenant_id = current_user.organization_id
 
+    # Interruptor operativo de creación (spec 13). Va acá y no en el endpoint
+    # porque este es el único camino de escritura: el formulario y el chat pasan
+    # los dos por aquí, y ponerlo en uno solo dejaría el otro abierto.
+    await interruptores.assert_encendida(
+        db, CAP_CREACION, organization_id=tenant_id,
+    )
+
     if await cap_reached(db, tenant_id, ad_account):
         org = await db.get(Organization, tenant_id)
         rules = get_campaign_rules_for_org(org)
@@ -162,6 +178,15 @@ async def start_campaign_creation(
     # (`suggested_budget / 20`)— asume un total de la campaña.
     budget_total = request.total_budget()
 
+    # Compuerta de presupuesto mensual (spec 02). Va DESPUÉS de validar y ANTES
+    # de persistir el Draft: un Draft en PENDING_CREATION ya compromete margen,
+    # así que crearlo para después rechazar contaminaría el cálculo del mes.
+    #
+    # Está acá y no en el endpoint porque este es el único camino de creación
+    # real (A-1): lo comparten `POST /campaigns/` y el chat de creación. Puesta
+    # en el endpoint, el chat la evitaría.
+    await assert_cabe_en_el_mes(db, tenant_id, budget_total)
+
     suggestion = await CampaignSuggester(db).suggest(ad_account, product_name=request.product_name)
     risk = assess_campaign_risk(
         budget=budget_total,
@@ -177,8 +202,42 @@ async def start_campaign_creation(
         status="PENDING_CREATION",
     )
     db.add(draft)
-    await db.commit()
+    await db.flush()
     draft_id = draft.id
+
+    # Versión inmutable + autorización de un solo uso (spec 03). En este camino
+    # el operador que llama ES quien autoriza: la versión se congela, se aprueba
+    # y se consume en la misma transacción. En el camino de revisión (crear
+    # versión → aprobar → ejecutar) los tres pasos están separados, pero los
+    # objetos son los mismos, así que la Saga no distingue de dónde viene la
+    # autorización que le llega.
+    # Baseline CONGELADO (spec 06): el número contra el que se prometió esta
+    # campaña, y contra el que se la evaluará toda su vida. El baseline vigente
+    # de la cuenta seguirá recalibrándose con temporada y variantes; los dos
+    # coexisten sin pisarse. Reevaluar el pasado con el baseline de hoy destruye
+    # la posibilidad de saber si el sistema acertó.
+    baseline_congelado = await baseline_de_la_cuenta(db, ad_account.id)
+
+    version = await crear_version(
+        db,
+        draft_id=draft_id,
+        organization_id=tenant_id,
+        ad_account_id=ad_account.id,
+        config=request.model_dump(),
+        risk_level=risk["level"],
+        gates={
+            "budget_total": float(budget_total),
+            "risk_reasons": risk["reasons"],
+            "preflight": "ok",
+            "baseline_congelado": baseline_congelado.as_dict(),
+        },
+        created_by_user_id=current_user.id,
+    )
+    aprobacion = await aprobar(db, version, user_id=current_user.id)
+    await db.commit()
+
+    aprobacion = await consumir_aprobacion(db, aprobacion.id)
+    await db.commit()
 
     learning_log = CampaignLearningLog(
         organization_id=tenant_id,
@@ -202,10 +261,63 @@ async def start_campaign_creation(
         status="CREATED",
     )
     db.add(learning_log)
+
+    # Trazabilidad de la propuesta (spec 11, criterio 10). Se escribe junto al
+    # registro de aprendizaje y ANTES de lanzar la Saga: si se escribiera
+    # después, una creación que falla dejaría una campaña sin poder responder en
+    # qué se basó — y esas son justamente las que hay que revisar.
+    #
+    # El baseline va CONGELADO, el mismo que se metió en los gates de la
+    # versión. El outcome loop lo lee de acá para juzgar contra la referencia
+    # que estaba vigente al decidir, no contra la de hoy (criterio 13).
+    try:
+        evidencia_comparable = await recuperar_comparables(
+            db, ad_account,
+            referencia={
+                "campaign_id": None,
+                "objetivo": suggestion["objective"],
+                "optimization_goal": suggestion["optimization_goal"],
+                "gasto": suggestion["suggested_budget"],
+                "fecha": datetime.date.today(),
+            },
+        )
+        # `org` y `rules` solo estaban ligadas dentro de la rama del tope de
+        # campañas: se resuelven acá para este bloque.
+        org_actual = await db.get(Organization, tenant_id)
+        reglas_actuales = get_campaign_rules_for_org(org_actual)
+        cliente_ia = OpenRouterClient(organization=org_actual)
+        await persistir_evidencia(
+            db,
+            organization_id=tenant_id,
+            ad_account_id=ad_account.id,
+            evidencia=evidencia_comparable,
+            baseline_congelado=baseline_congelado.as_dict(),
+            draft_id=draft_id,
+            version_id=version.id,
+            reglas_version=str((reglas_actuales or {}).get("version") or "tenant-rules-v1"),
+            prompt_version=CAMPAIGN_COPY_PROMPT_VERSION,
+            modelo=org_actual.ai_model if org_actual else None,
+            proveedor=cliente_ia.provider,
+        )
+    except Exception:
+        # Canal lateral: la trazabilidad no puede impedir que se cree una
+        # campaña ya aprobada y autorizada. Se registra el fallo, que es lo que
+        # permite detectar que se está perdiendo.
+        logger.exception(
+            "No se pudo persistir la trazabilidad de la propuesta (draft=%s). "
+            "La campaña sigue; el registro de en qué se basó se pierde.",
+            draft_id,
+        )
+
     await db.commit()
 
     initial_context = {
         "draft_id": draft_id,
+        # La clave de idempotencia de cada paso deriva de esto: sin la
+        # autorización en el contexto, un reintento de la Saga no puede saber
+        # que ya escribió.
+        "approval_id": aprobacion.id,
+        "version_id": version.id,
         "tenant_id": tenant_id,
         "ad_account_id": request.ad_account_id,
         "page_id": request.page_id,

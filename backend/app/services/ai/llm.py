@@ -8,6 +8,7 @@ import httpx
 from app.config import settings
 from app.models.organization import Organization
 from app.models.ad_account import AdAccount
+from app.services.ai import compuerta, limites, proveedor
 from app.services.ai.token_tracking import UsageContext, record_token_usage
 from app.services.ai.thresholds import classify_campaign, compute_target_cpl
 from app.services.ai.statistics import INSUFFICIENT_HISTORY_TITLE
@@ -51,6 +52,11 @@ CAMPAIGN_CHAT_PROMPT_VERSION = "campaign-chat-extract-v1"
 CAMPAIGN_CHAT_QUESTION_PROMPT_VERSION = "campaign-chat-question-v1"
 CAMPAIGN_CHAT_REPHRASE_PROMPT_VERSION = "campaign-chat-rephrase-v1"
 CAMPAIGN_CHAT_ANSWER_PROMPT_VERSION = "campaign-chat-answer-v1"
+# El analista con herramientas y el planificador no tenían versión de prompt:
+# su consumo se registraba sin poder atribuirlo a unas instrucciones concretas
+# (spec 10, criterio 7). Son, además, los dos caminos que más tokens gastan.
+CHAT_ANALYST_PROMPT_VERSION = "campaign-chat-analyst-v1"
+CHAT_PLAN_PROMPT_VERSION = "campaign-chat-plan-v1"
 
 # Claves obligatorias del JSON de copy que debe devolver el LLM. headline y
 # primary_text son ARRAYS de 2 variantes (v2); description/welcome_message
@@ -100,25 +106,27 @@ MODELS_BY_PROVIDER = {
 
 
 def pick_model(org: Optional[Organization], provider: str) -> str:
-    """Modelo a usar: el que eligio la organizacion, si sirve para el proveedor.
+    """El modelo que la Organización declara. Sin sustituciones (spec 10).
 
-    Antes esto era `candidates[0]` en cinco llamadas distintas y `org.ai_model`
-    solo entraba cuando el proveedor no tenia catalogo -- o sea casi nunca. El
-    selector de Configuracion no cambiaba nada: se podia elegir un modelo caro
-    o barato y las llamadas seguian yendo al primero de la lista.
+    Antes, un modelo que no figurara en el catálogo del proveedor activo se
+    reemplazaba por `candidates[0]`. La intención era buena —evitar un 404 que
+    no explica nada— pero el efecto es un **cambio silencioso de modelo**, que es
+    justo lo que el criterio 12 prohíbe: la Organización termina llamando a un
+    modelo que nadie eligió, con otro precio, y el único rastro es la factura.
+    En el catálogo de OpenRouter el primer candidato podía costar un múltiplo del
+    modelo configurado.
 
-    Se valida contra el catalogo del proveedor ACTIVO a proposito: guardar un
-    modelo de OpenAI y que las llamadas salgan por OpenRouter da un 404 que no
-    dice nada util.
+    Ahora se devuelve lo declarado. Que el modelo sea elegible se comprueba
+    donde se ELIGE —`catalogo.assert_elegible`, en el selector y en el alta— y
+    una Organización apuntando a un modelo retirado queda señalada en
+    `/organizations/ai-models` en vez de resolverse a otro por su cuenta.
     """
-    candidates = MODELS_BY_PROVIDER.get(provider) or []
-    validos = {c["value"] for c in candidates}
     elegido = (getattr(org, "ai_model", None) or "").strip()
-    if elegido in validos:
+    if elegido:
         return elegido
-    if candidates:
-        return candidates[0]["value"]
-    return elegido or settings.DEFAULT_AI_MODEL
+    # Sin modelo declarado se usa el default de configuración. No es una
+    # sustitución: es el valor con el que nace una Organización.
+    return settings.DEFAULT_AI_MODEL
 
 
 def _extract_json_object(content: str) -> Optional[Dict[str, Any]]:
@@ -413,11 +421,13 @@ _SIN_CREDENCIAL_AVISADO: set = set()
 
 
 def _proveedor_por_forma(key: str) -> str:
-    """Deduce el proveedor mirando la credencial.
+    """DEROGADA (spec 10). Deducir el proveedor de la forma de la clave era un
+    cambio silencioso: rotar la credencial de un cliente por una de otro
+    proveedor le cambiaba proveedor, modelo y precio sin que nadie lo decidiera.
 
-    Sirve cuando `llm_provider` quedó en NULL: la key sola alcanza para saber a
-    qué endpoint va. Es mejor que asumir un default, que manda la credencial de
-    un proveedor al endpoint de otro y devuelve un 401 que no explica nada.
+    Se conserva como utilidad de DIAGNÓSTICO —la usa la migración que pobló
+    `llm_provider` con el valor de facto, y el panel para avisar "esta clave no
+    parece de este proveedor"— pero ya no elige nada.
     """
     k = (key or "").strip()
     if k.startswith("sk-or-"):
@@ -467,18 +477,41 @@ def _adaptar_payload(payload: Dict[str, Any], clave: str) -> Dict[str, Any]:
 
 async def _post_chat(
     client: "httpx.AsyncClient", url: str, headers: Dict[str, str],
-    payload: Dict[str, Any], *, provider: str = "", intentos: int = 3,
+    payload: Dict[str, Any], *, provider: str = "", intentos: Optional[int] = None,
+    org_id: Optional[str] = None,
 ):
     """POST al endpoint de chat, adaptándose a lo que el modelo rechace.
 
     Devuelve la respuesta de httpx. Un 400 que nombra un parámetro no es un
     fallo: es la API diciendo qué no soporta. Se corrige y se reintenta.
+
+    Es el punto por el que pasa TODA llamada real al modelo, así que es donde se
+    aplica el límite de frecuencia por Organización (spec 10, criterio 16).
+    Ponerlo en cada método público habría dejado fuera el que se agregue mañana;
+    acá el que se agregue mañana queda cubierto por construcción.
+
+    `intentos` sale de la configuración en vez de estar fijo en 3. Un bucle de
+    reintentos es la forma más barata de consumir el presupuesto del cliente, y
+    la clave del LLM es suya: el tope tiene que poder bajarse sin desplegar.
     """
+    if org_id:
+        # El interruptor operativo primero: si la capacidad está apagada, hablar
+        # de presupuesto o de ritmo sería contestar otra pregunta (spec 13).
+        await compuerta.verificar_interruptor_de_ia(org_id)
+        # El presupuesto ANTES de la frecuencia: agotado el techo acordado, un
+        # mensaje sobre el ritmo de las llamadas sería engañoso.
+        await compuerta.verificar_presupuesto_autonomo(org_id)
+        await limites.assert_frecuencia(org_id)
+
     clave = f"{provider}:{payload.get('model', '')}"
     cuerpo = _adaptar_payload(payload, clave)
 
+    tope = (limites.max_reintentos() + 1) if intentos is None else intentos
+
     res = None
-    for _ in range(max(1, intentos)):
+    for numero in range(max(1, tope)):
+        if numero:
+            await limites.esperar_antes_de_reintentar(numero)
         res = await client.post(url, headers=headers, json=cuerpo)
         if res.status_code != 400:
             return res
@@ -513,68 +546,73 @@ class OpenRouterClient:
         self.organization = organization
         self._explicit_api_key = api_key
         self._explicit_provider = provider
+        # Por qué NO hay IA disponible, cuando no la hay. Es lo que permite que
+        # la pantalla de Configuración diga qué falta en vez de mostrar la
+        # credencial como si todo estuviera bien mientras el analista contesta
+        # con plantillas (spec 10, criterio 8).
+        self.config_error: Optional[proveedor.ConfiguracionDeIAInvalida] = None
         self.api_key, self.base_url, self.provider, self.is_gemini_direct = self._resolve_config(organization)
 
     def _resolve_config(self, org: Optional[Organization] = None) -> tuple[str, str, str, bool]:
+        """Proveedor, endpoint y credencial efectivos. Sin cascada (spec 10).
+
+        Delega en `ai/proveedor.py`, que aplica una sola regla: **el proveedor es
+        el que la Organización declara**, y la credencial se busca solo para ese
+        proveedor. Lo que había antes eran dos cascadas, y las dos cambiaban de
+        proveedor sin que nadie lo decidiera:
+
+        * se deducía el proveedor por la FORMA de la clave del cliente, así que
+          rotarla por una de otro proveedor cambiaba proveedor, modelo y precio;
+        * sin clave propia, se tomaba la primera global que hubiera, en el orden
+          OpenAI → Gemini → OpenRouter. Añadir `OPENAI_API_KEY` al entorno movía
+          a TODAS las organizaciones sin clave propia de OpenRouter a OpenAI en
+          el siguiente reinicio.
+
+        Se mantiene la tupla de cuatro elementos porque la consumen once
+        métodos; lo que cambia es de dónde sale. Cuando no se puede resolver, la
+        credencial vuelve vacía —los caminos existentes ya saben caer a su
+        respuesta determinista— y el motivo queda en `self.config_error` para
+        que la interfaz pueda decir QUÉ falta en vez de mostrar todo en orden.
+        """
         target_org = org or self.organization
-        org_key = target_org.get_llm_api_key() if target_org else None
-        org_provider = target_org.llm_provider if target_org else None
 
-        # 1. Credencial configurada en la organización
-        #
-        # Alcanza con la key. `llm_provider` es otra columna y se guarda por
-        # separado, así que puede quedar en NULL con la credencial presente —
-        # pasó en producción. Exigir las dos hacía que la key se descartara y
-        # la organización quedara sin IA **en silencio**, con la pantalla de
-        # Configuración mostrando la credencial como si todo estuviera bien.
-        if org_key:
-            provider = org_provider or _proveedor_por_forma(org_key)
-            api_key = org_key
-            if not org_provider:
-                logger.warning(
-                    "La organización %s tiene credencial de IA pero no proveedor; "
-                    "se dedujo '%s' por la forma de la key.",
-                    getattr(target_org, "slug", "?"), provider,
-                )
-            if provider == "openai":
-                return api_key, "https://api.openai.com/v1/chat/completions", "openai", False
-            elif provider == "gemini_direct":
-                return api_key, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
-            else:  # openrouter
-                return api_key, "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
-
-        # 2. Credencial pasada explícitamente al cliente
+        # Credencial pasada explícitamente al constructor: es el camino de
+        # `test_key`, donde se prueba una clave que todavía no se guardó. El
+        # proveedor tiene que venir con ella; no se deduce.
         if self._explicit_api_key:
-            provider = self._explicit_provider or "openrouter"
-            api_key = self._explicit_api_key
-            if provider == "openai":
-                return api_key, "https://api.openai.com/v1/chat/completions", "openai", False
-            elif provider == "gemini_direct":
-                return api_key, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
-            else:
-                return api_key, "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
+            provider = self._explicit_provider or (
+                (getattr(target_org, "llm_provider", None) or "").strip()
+            )
+            if provider not in proveedor.PROVEEDORES:
+                self.config_error = proveedor.ProveedorNoConfigurado(
+                    "Para probar una credencial hay que decir de qué proveedor es.",
+                    slug=getattr(target_org, "slug", "?"),
+                )
+                return "", proveedor.ENDPOINTS["openrouter"], provider or "openrouter", False
+            self.config_error = None
+            return (
+                self._explicit_api_key,
+                proveedor.ENDPOINTS[provider],
+                provider,
+                provider == "gemini_direct",
+            )
 
-        # 3. Fallback a credenciales globales de entorno: OPENAI > GEMINI > OPENROUTER
-        if settings.OPENAI_API_KEY:
-            return settings.OPENAI_API_KEY, "https://api.openai.com/v1/chat/completions", "openai", False
-        elif settings.GEMINI_API_KEY:
-            return settings.GEMINI_API_KEY, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", "gemini_direct", True
-        # Sin credencial de ningún lado. Es un estado ROTO, no un default: cada
-        # llamada va a dar 401, cada 401 devuelve None y el chat va a contestar
-        # con texto de plantilla para siempre. El producto sigue "andando" y
-        # nadie se entera — eso ya costó un día entero de buscar el problema en
-        # el lugar equivocado. Que grite.
-        if not settings.OPENROUTER_API_KEY:
+        try:
+            cfg = proveedor.resolver(target_org)
+        except proveedor.ConfiguracionDeIAInvalida as e:
+            self.config_error = e
+            # Se avisa UNA vez por organización, no en cada mensaje del chat.
             slug = getattr(target_org, "slug", "?")
             if slug not in _SIN_CREDENCIAL_AVISADO:
                 _SIN_CREDENCIAL_AVISADO.add(slug)
-                logger.error(
-                    "La organización %s no tiene credencial de IA, y tampoco hay una "
-                    "global. El analista va a devolver texto de plantilla en TODAS las "
-                    "respuestas. Cargá la key en Configuración de ESA organización.",
-                    slug,
-                )
-        return settings.OPENROUTER_API_KEY or "", "https://openrouter.ai/api/v1/chat/completions", "openrouter", False
+                logger.error("IA no disponible para '%s': %s", slug, e)
+            declarado = (getattr(target_org, "llm_provider", None) or "openrouter")
+            declarado = declarado if declarado in proveedor.PROVEEDORES else "openrouter"
+            return "", proveedor.ENDPOINTS[declarado], declarado, declarado == "gemini_direct"
+
+        self.config_error = None
+        _SIN_CREDENCIAL_AVISADO.discard(getattr(target_org, "slug", "?"))
+        return cfg.api_key, cfg.base_url, cfg.provider, cfg.is_gemini_direct
 
     async def test_key(self, model: Optional[str] = None) -> tuple[bool, str]:
         """
@@ -619,7 +657,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await _post_chat(client, self.base_url, headers, payload, provider=self.provider)
+                response = await _post_chat(client, self.base_url, headers, payload, provider=self.provider, org_id=getattr(self.organization, 'id', None))
                 if response.status_code == 200:
                     return True, f"Credencial de {self.provider} verificada correctamente."
                 else:
@@ -696,10 +734,10 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await _post_chat(client, base_url, headers, payload, provider=provider)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if response.status_code == 200:
                     result = response.json()
-                    await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                    await record_token_usage(usage_ctx, provider, model, result.get("usage"), PROMPT_VERSION)
                     return result["choices"][0]["message"]["content"], False
                 else:
                     logger.error(f"LLM API returned error {response.status_code}: {response.text}")
@@ -848,10 +886,10 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=45.0) as client:
-                response = await _post_chat(client, base_url, headers, payload, provider=provider)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if response.status_code == 200:
                     result = response.json()
-                    await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                    await record_token_usage(usage_ctx, provider, model, result.get("usage"), CAMPAIGN_COPY_PROMPT_VERSION)
                     content = result["choices"][0]["message"]["content"]
                     parsed = self._parse_copy_json(content)
                     if parsed:
@@ -953,7 +991,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await _post_chat(client, base_url, headers, payload, provider=provider)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (extracción del chat) devolvió error %s: %s",
@@ -961,7 +999,7 @@ class OpenRouterClient:
                     )
                     return None
                 result = response.json()
-                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"), CAMPAIGN_CHAT_PROMPT_VERSION)
                 content = result["choices"][0]["message"]["content"]
                 return self._parse_chat_extraction_json(content)
         except Exception:
@@ -1074,7 +1112,7 @@ class OpenRouterClient:
                         "messages": mensajes,
                         "tools": chat_tools.TOOL_SCHEMAS,
                         **extra_openai,
-                    }, provider=provider)
+                    }, provider=provider, org_id=getattr(org, 'id', None))
                     if res.status_code != 200:
                         # Se loguea el cuerpo entero del error, no un prefijo: si
                         # el modelo no soporta herramientas, el motivo está acá y
@@ -1086,7 +1124,7 @@ class OpenRouterClient:
                         )
                         return None
                     cuerpo = res.json()
-                    await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"))
+                    await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"), CHAT_ANALYST_PROMPT_VERSION)
                     msg = cuerpo["choices"][0]["message"]
                     llamadas = msg.get("tool_calls") or []
 
@@ -1127,13 +1165,13 @@ class OpenRouterClient:
                 })
                 res = await _post_chat(client, base_url, headers, {
                     "model": model, "temperature": 0.3, "messages": mensajes,
-                }, provider=provider)
+                }, provider=provider, org_id=getattr(org, 'id', None))
                 if res.status_code != 200:
                     logger.error("El cierre del analista devolvió %s: %s",
                                  res.status_code, res.text[:1200])
                     return None
                 cuerpo = res.json()
-                await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, cuerpo.get("usage"), CHAT_ANALYST_PROMPT_VERSION)
                 texto = (cuerpo["choices"][0]["message"].get("content") or "").strip()
                 return (texto, recolectado) if texto else None
         except Exception:
@@ -1251,7 +1289,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=25.0) as client:
-                response = await _post_chat(client, base_url, headers, payload, provider=provider)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (análisis del chat) devolvió error %s: %s",
@@ -1259,7 +1297,7 @@ class OpenRouterClient:
                     )
                     return None
                 result = response.json()
-                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"), CAMPAIGN_CHAT_ANSWER_PROMPT_VERSION)
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para analizar el historial.")
@@ -1339,7 +1377,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                response = await _post_chat(client, base_url, headers, payload, provider=provider)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (reescritura del chat) devolvió error %s: %s",
@@ -1347,7 +1385,7 @@ class OpenRouterClient:
                     )
                     return None
                 result = response.json()
-                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"), CAMPAIGN_CHAT_REPHRASE_PROMPT_VERSION)
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para reescribir un mensaje.")
@@ -1435,7 +1473,7 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await _post_chat(client, base_url, headers, payload, provider=provider)
+                response = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if response.status_code != 200:
                     logger.error(
                         "LLM API (clasificación de preguntas) devolvió error %s: %s",
@@ -1443,7 +1481,7 @@ class OpenRouterClient:
                     )
                     return None, None
                 result = response.json()
-                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"), CAMPAIGN_CHAT_QUESTION_PROMPT_VERSION)
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error llamando a la API del LLM para clasificar una pregunta.")
@@ -1537,11 +1575,11 @@ class OpenRouterClient:
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                res = await _post_chat(client, base_url, headers, payload, provider=provider)
+                res = await _post_chat(client, base_url, headers, payload, provider=provider, org_id=getattr(org, 'id', None))
                 if res.status_code != 200:
                     return ChatPlan(blocks=[])
                 result = res.json()
-                await record_token_usage(usage_ctx, provider, model, result.get("usage"))
+                await record_token_usage(usage_ctx, provider, model, result.get("usage"), CHAT_PLAN_PROMPT_VERSION)
                 data = _extract_json_object(result["choices"][0]["message"]["content"])
         except Exception:
             logger.exception("Error en plan_chat_request")

@@ -5,6 +5,7 @@ import httpx
 from app.config import settings
 from app.database import async_session
 from app.models.api_call_log import APICallLog
+from app.services.meta_ads.version import registrar_version_atendida, version_para
 
 logger = logging.getLogger("lejovista.rate_limiter")
 
@@ -42,6 +43,102 @@ class MetaAPIRateLimiter:
                 await session.commit()
             except Exception as e:
                 logger.error(f"Error logging API call to DB: {e}")
+
+    async def _version(self) -> str:
+        """La versión de la API que corresponde a esta cuenta.
+
+        Se resuelve por Organización para que una versión candidata se pueda
+        activar en la cuenta piloto sin tocar al resto (spec 08). Sin cuenta —las
+        llamadas sueltas de diagnóstico— se usa la configurada.
+        """
+        if not self.ad_account_id:
+            return version_para(None)
+
+        from app.database import async_session
+        from app.models.ad_account import AdAccount
+        from app.models.organization import Organization
+
+        try:
+            async with async_session() as db:
+                acc = await db.get(AdAccount, self.ad_account_id)
+                if acc is None:
+                    return version_para(None)
+                org = await db.get(Organization, acc.organization_id)
+                return version_para(org)
+        except Exception:
+            # Un fallo al resolver la versión no puede impedir la llamada: se cae
+            # a la configurada, que es la que se usaba antes de este mecanismo.
+            logger.warning(
+                "No se pudo resolver la versión de Meta para la cuenta %s; se usa la configurada.",
+                self.ad_account_id,
+            )
+            return version_para(None)
+
+    async def _assert_writeback_allowed(self) -> None:
+        """Compuerta de seguridad previa a TODA escritura real en Meta.
+
+        Es el único punto por el que pasan las escrituras —campaña, conjunto,
+        creativo, anuncio, ajustes, subida de medios—, así que es donde la
+        compuerta no se puede olvidar al añadir una operación nueva.
+
+        Dos condiciones, ambas fail-**closed**:
+
+        1. **El mecanismo de revocación responde.** Si no, no se puede afirmar
+           que la sesión o la aprobación que originaron esta escritura sigan
+           siendo válidas. Es la excepción acotada al fail-open general de la
+           capa Redis (ADR-13, corregida por la spec 01): disponibilidad no
+           puede tener prioridad sobre autorización financiera.
+        2. **La organización dueña de la cuenta está activa.** Suspender tiene
+           que cortar el write-back, no solo la interfaz.
+
+        No aplica a las simulaciones: en modo mock no se gasta dinero de nadie,
+        y bloquear el desarrollo por un Redis apagado no protege nada.
+        """
+        from app.utils.security import revocation_backend_available
+        from app.services.meta_ads.exceptions import WritebackBlocked
+
+        if not await revocation_backend_available():
+            raise WritebackBlocked(
+                "No se puede verificar la validez de las credenciales en este "
+                "momento (el mecanismo de revocación no responde), así que la "
+                "escritura hacia Meta queda bloqueada."
+            )
+
+        if not self.ad_account_id:
+            # Sin cuenta no hay organización que comprobar. No se bloquea: son
+            # las llamadas sueltas de diagnóstico, que no escriben campañas.
+            return
+
+        from app.database import async_session
+        from app.models.ad_account import AdAccount
+        from app.services.organization_gate import is_organization_active
+
+        from app.models.operacion import CAP_WRITE_BACK
+        from app.services import interruptores
+
+        async with async_session() as db:
+            acc = await db.get(AdAccount, self.ad_account_id)
+            if acc is None:
+                return
+            if not await is_organization_active(db, acc.organization_id):
+                raise WritebackBlocked(
+                    f"La organización de la cuenta {self.ad_account_id} no está "
+                    f"activa; el write-back queda bloqueado."
+                )
+
+            # 3. El interruptor operativo de write-back (spec 13).
+            #
+            # Va AQUÍ y no en la API porque este es el punto por el que pasan
+            # todas las escrituras, incluidas las de las tareas asíncronas ya
+            # encoladas. Apagarlo solo en la API dejaría la cola vaciándose
+            # sobre el problema que se acaba de intentar contener — y en un
+            # incidente esa cola suele ser justo lo que hay que parar.
+            try:
+                await interruptores.assert_encendida(
+                    db, CAP_WRITE_BACK, organization_id=acc.organization_id,
+                )
+            except interruptores.CapacidadApagada as e:
+                raise WritebackBlocked(str(e)) from e
 
     async def _apply_delay(self, es_post: bool):
         """Pausa de cortesía mínima entre llamadas.
@@ -82,6 +179,9 @@ class MetaAPIRateLimiter:
         # habilitado Y (sin allowlist, o) esta cuenta está en la piloto (F-2).
         simulate = settings.simulate_meta_writes_for(self.ad_account_id, self.external_account_id) if es_escritura else settings.MOCK_SERVICES
 
+        if es_escritura and not simulate:
+            await self._assert_writeback_allowed()
+
         # Aplicar el delay antes de la llamada
         await self._apply_delay(es_escritura)
 
@@ -93,7 +193,8 @@ class MetaAPIRateLimiter:
             return {"mock": True}
 
         # ---- PRODUCCIÓN: Llamada real ----
-        url = f"https://graph.facebook.com/{settings.META_API_VERSION}/{endpoint}"
+        version = await self._version()
+        url = f"https://graph.facebook.com/{version}/{endpoint}"
         
         # Asegurar token en params
         all_params = {**params}
@@ -117,6 +218,11 @@ class MetaAPIRateLimiter:
                     status = response.status_code
                     data = response.json()
                     
+                    # Qué versión atendió Meta realmente. Una divergencia con la
+                    # pedida significa que las llamadas caen a otra versión, y eso
+                    # solo se nota cuando un campo desaparece (spec 08).
+                    registrar_version_atendida(response.headers, version)
+
                     # Registrar log
                     await self._log_api_call(method, endpoint, all_params, status, response.text)
                     
@@ -197,6 +303,9 @@ class MetaAPIRateLimiter:
         - `mock_response`: forma de respuesta simulada específica del endpoint
           (la de `/adimages` no sirve para `/advideos`).
         """
+        if not settings.simulate_meta_writes_for(self.ad_account_id, self.external_account_id):
+            await self._assert_writeback_allowed()
+
         await self._apply_delay(True)
 
         if settings.simulate_meta_writes_for(self.ad_account_id, self.external_account_id):
@@ -207,7 +316,7 @@ class MetaAPIRateLimiter:
             return {"mock": True, "images": {filename: {"hash": f"mock_hash_{filename}"}}}
 
         host = "graph-video.facebook.com" if video_host else "graph.facebook.com"
-        url = f"https://{host}/{settings.META_API_VERSION}/{endpoint}"
+        url = f"https://{host}/{await self._version()}/{endpoint}"
         all_data = {**data}
         if access_token:
             all_data["access_token"] = access_token

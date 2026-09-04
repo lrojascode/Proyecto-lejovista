@@ -166,3 +166,13 @@ def extract_meta_error_diagnostic(error_or_response: Any) -> tuple[Optional[int]
         return code or 200, "Falta el permiso ads_read o ads_management. Revisa los permisos de tu app en Meta Developers."
 
     return code, raw_msg or "Error no especificado al comunicar con Meta Ads."
+
+
+class WritebackBlocked(Exception):
+    """Una compuerta de seguridad impidió una escritura real hacia Meta.
+
+    NO es un error transitorio de Meta: reintentarla sin que la causa
+    desaparezca vuelve a fallar igual. Se deja fuera de `autoretry_for` a
+    propósito — la Saga tiene que detenerse y decir por qué, no insistir contra
+    una compuerta cerrada.
+    """

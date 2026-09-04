@@ -7,6 +7,7 @@ from app.database import async_session, engine
 from app.models.ad_account import AdAccount
 from app.models.sync_job import SyncJob
 from app.models.organization import Organization
+from app.services.organization_gate import is_organization_active
 from app.models.ai_action import AIAction
 from app.models.meta_page import MetaPage
 from app.services.meta_ads.sync import MetaAdsSyncService, SYNC_TYPE_BACKFILL
@@ -394,7 +395,35 @@ def sync_ad_account(self, ad_account_id: str, sync_type: str = "INCREMENTAL"):
             if not acc:
                 logger.error(f"Cuenta de anuncios {ad_account_id} no encontrada para sync.")
                 return
-            
+
+            # Suspensión efectiva: una organización suspendida deja de consumir
+            # llamadas a Meta. Se comprueba acá y no solo al agendar porque una
+            # tarea encolada antes de la suspensión sigue viva en la cola.
+            if not await is_organization_active(db, acc.organization_id):
+                logger.info(
+                    "Sync de %s omitido: la organización %s no está activa.",
+                    acc.id, acc.organization_id,
+                )
+                return
+
+            # Interruptor operativo de sync (spec 13, criterio 2). Se comprueba
+            # DENTRO de la tarea por el mismo motivo que la suspensión de
+            # arriba: una tarea encolada antes de apagar el interruptor sigue
+            # viva en la cola, y cortar solo la puerta de entrada dejaría la
+            # cola vaciándose sobre el problema que se acaba de contener.
+            from app.models.operacion import CAP_SYNC
+            from app.services import interruptores
+
+            estado_sync = await interruptores.estado(
+                db, CAP_SYNC, organization_id=acc.organization_id,
+            )
+            if not estado_sync.encendida:
+                logger.warning(
+                    "Sync de %s omitido: la capacidad '%s' está apagada (%s). %s",
+                    acc.id, CAP_SYNC, estado_sync.ambito, estado_sync.motivo or "",
+                )
+                return
+
             sync_service = MetaAdsSyncService(db)
             logger.info(f"Iniciando sync {sync_type} para cuenta {acc.name} ({acc.id})...")
             job = await sync_service.run_sync(acc, sync_type)
@@ -515,6 +544,16 @@ def run_ai_analysis(org_id: str):
                 logger.error(f"Organización {org_id} no encontrada para análisis.")
                 return
 
+            # `schedule_all_analyses` ya filtra por ACTIVE, pero el análisis
+            # también se encola encadenado tras cada sync y desde el endpoint
+            # manual: la compuerta tiene que estar donde se ejecuta.
+            if org.status != "ACTIVE":
+                logger.info(
+                    "Análisis de %s omitido: la organización está en estado %s.",
+                    org_id, org.status,
+                )
+                return
+
             engine = AIEngine(db)
             logger.info(f"Iniciando análisis de IA para {org.name}...")
             result = await engine.run_analysis(org_id)
@@ -585,6 +624,28 @@ def archive_old_snapshots_task():
             logger.info(f"Archivado de snapshots completado: {counts}")
 
     run_async(_impl())
+
+
+@celery_app.task(name="app.workers.tasks.limpiar_medios_vencidos_task")
+def limpiar_medios_vencidos_task():
+    """Borra del almacenamiento los medios cuya caducidad pasó (spec 07).
+
+    Todo medio nace con caducidad: un archivo subido para una propuesta que nunca
+    se aprobó permanecía indefinidamente, y nadie sabía cuáles eran esos. La
+    tarea es idempotente —correrla dos veces da el mismo resultado— y no toca los
+    medios en uso: los que sostienen una campaña viva no caducan por reloj.
+    """
+    async def _impl():
+        from app.services.media_service import limpiar_vencidos
+
+        async with async_session() as db:
+            borrados = await limpiar_vencidos(db)
+            await db.commit()
+            if borrados:
+                logger.info("Limpieza de medios: %d archivo(s) vencido(s) eliminados.", borrados)
+            return borrados
+
+    return run_async(_impl())
 
 
 @celery_app.task(name="app.workers.tasks.check_expiring_tokens_task")
