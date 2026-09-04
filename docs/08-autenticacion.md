@@ -103,3 +103,77 @@ Resuelve la **cuenta publicitaria** de la request (aislamiento multi-cuenta dent
 
 - El **token de Meta** nunca es una credencial de sesión del usuario; se cifra en `MetaCredential` y se usa solo server-side. Ver [09-seguridad](09-seguridad.md).
 - (S-2, resuelto) El frontend ya **no** guarda ningún token en `localStorage`. El access token vive en memoria (`frontend/lib/api.ts`); el refresh token es una cookie `httpOnly`. Solo `user` (nombre, email, rol, organization_id — no sensible para XSS) sigue en `localStorage`, para mostrar la sesión sin un round-trip extra. Ver [09-seguridad](09-seguridad.md).
+
+---
+
+## Spec 01 — Tipos de credencial, revocación y suspensión
+
+Tres cambios de contrato que rigen desde la spec 01
+([docs/specs/01](specs/01-autenticacion-sesiones-suspension-e-invitaciones.md)).
+
+### Tipos de credencial por superficie
+
+Cada token lleva un `type` y cada superficie declara cuál acepta. El tipo se
+comprueba **antes** de resolver el sujeto, y un tipo inesperado es
+indistinguible de una firma inválida para el llamador.
+
+| Tipo | Emisión | Vida | Dónde vale |
+|------|---------|------|-----------|
+| `access` | login, signup, refresh, cambio de contraseña, aceptar invitación | `ACCESS_TOKEN_EXPIRE_MINUTES` | cabecera `Authorization: Bearer` de la API |
+| `refresh` | igual que `access` | `REFRESH_TOKEN_EXPIRE_MINUTES` | **solo** `POST /auth/refresh`, por cookie httpOnly |
+| `ws_ticket` | `POST /auth/ws-ticket` | 30 s, un solo uso | **solo** el handshake del WebSocket |
+
+Antes de esto la API solo validaba la firma: un refresh token —siete días de
+vida, adjuntado solo por el navegador— servía como Bearer contra todo.
+
+### El WebSocket no recibe credenciales por la URL
+
+El handshake toma el ticket del subprotocolo `lejovista.ticket.<ticket>`
+(`Sec-WebSocket-Protocol`), que es el único campo de cabecera que la API del
+navegador deja controlar y que los logs de acceso no registran. La URL de una
+conexión queda en el proxy y en el historial; ahí vivía el access token.
+
+`WS_ALLOW_QUERY_TOKEN` (por defecto `false`) reactiva el `?token=` anterior solo
+durante el despliegue en el que aún puede haber pestañas con la app vieja
+cargada.
+
+### Dos mecanismos de revocación, con disponibilidad distinta
+
+| Mecanismo | Dónde vive | Qué revoca | Ante caída |
+|-----------|-----------|-----------|-----------|
+| `users.sessions_valid_from` | PostgreSQL | **todas** las credenciales del usuario emitidas antes del corte | siempre comprobable |
+| blocklist por `jti` | Redis | un token concreto (logout, rotación del refresh) | fail-open en lectura, fail-closed en renovación/aprobación/write-back |
+
+El corte por usuario se comprueba **antes** que la blocklist: si no, un token
+revocado por cambio de contraseña recibía un 503 genérico durante una caída de
+Redis en vez del 401 que le corresponde.
+
+Lo mueven: cambiar la contraseña, restablecerla y suspender la organización.
+Cambiar la contraseña devuelve un par de tokens nuevo — el corte alcanza también
+al token con el que llegó la petición, así que sin eso te deslogueabas a vos
+mismo.
+
+La comparación usa el claim `iat_ms` (milisegundos) y no el `iat` estándar
+(segundos): con resolución de segundos, el token emitido justo después del corte
+no se distingue de los que hay que expulsar.
+
+### Suspensión efectiva
+
+Una organización que no está `ACTIVE` bloquea login, API, sync, IA y write-back.
+Se comprueba en tres cuellos, nunca por endpoint: `get_current_user`,
+`app/services/organization_gate.py` (workers) y `MetaAPIRateLimiter` (escrituras
+a Meta). Suspender revoca además las credenciales de Meta y corta las sesiones
+vivas de los miembros. El administrador de plataforma atraviesa la compuerta:
+necesita entrar justamente a las organizaciones suspendidas.
+
+### Invitaciones
+
+Se persiste el SHA-256 del token, no el token (mismo criterio que los enlaces de
+recuperación de contraseña). Consecuencia operativa: **el enlace solo existe en
+la respuesta que crea la invitación**. Al listarlas no hay enlace que copiar; si
+hace falta otra vez, se revoca y se vuelve a invitar.
+
+La aceptación es un `UPDATE` condicional sobre `accepted_at`: comprobar y marcar
+en una sola operación. Antes eran dos pasos con todo el alta del usuario en
+medio, y dos peticiones simultáneas con el mismo enlace pasaban las dos. La
+restricción única `uq_org_user_membership` es la defensa dura debajo.

@@ -10,6 +10,13 @@ from sqlalchemy.orm import selectinload
 from app.config import settings
 from app.database import async_session
 from app.models.user import User
+from app.utils.security import (
+    TOKEN_TYPE_WS_TICKET,
+    consume_ws_ticket,
+    decode_token,
+    load_user_with_organizations,
+    token_predates_session_cutoff,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +27,8 @@ class ConnectionManager:
         # tenant_id -> list of active connections
         self.active_connections: Dict[str, List[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, tenant_id: str):
-        await websocket.accept()
+    async def connect(self, websocket: WebSocket, tenant_id: str, subprotocol: Optional[str] = None):
+        await websocket.accept(subprotocol=subprotocol)
         if tenant_id not in self.active_connections:
             self.active_connections[tenant_id] = []
         self.active_connections[tenant_id].append(websocket)
@@ -82,51 +89,105 @@ async def redis_listener():
             logger.error(f"Redis Pub/Sub error: {e}. Reconnecting in 5 seconds...")
             await asyncio.sleep(5)
 
-async def _authenticate_ws(token: Optional[str], tenant_id: str) -> bool:
-    """
-    Valida el JWT recibido por query param y comprueba que el usuario
-    pertenezca a la organización (tenant_id = organization_id) del canal.
-    Devuelve False ante cualquier fallo (token ausente, inválido o sin pertenencia).
-    """
-    if not token:
-        return False
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        user_id = payload.get("sub")
-    except Exception:
-        return False
+# Prefijo del subprotocolo que transporta el ticket. El handshake de un
+# WebSocket no admite cabeceras propias desde el navegador; `Sec-WebSocket-
+# Protocol` es el único campo que la API del navegador deja controlar, y a
+# diferencia de la URL no lo registran los logs de acceso del proxy.
+WS_TICKET_SUBPROTOCOL_PREFIX = "lejovista.ticket."
 
+
+def _ticket_from_subprotocols(websocket: WebSocket) -> Optional[str]:
+    """Extrae el ticket de `Sec-WebSocket-Protocol`, si viene."""
+    crudo = websocket.headers.get("sec-websocket-protocol") or ""
+    for propuesto in (p.strip() for p in crudo.split(",")):
+        if propuesto.startswith(WS_TICKET_SUBPROTOCOL_PREFIX):
+            return propuesto[len(WS_TICKET_SUBPROTOCOL_PREFIX):]
+    return None
+
+
+async def _authenticate_ws(ticket: Optional[str], tenant_id: str) -> Optional[str]:
+    """Valida el ticket y la pertenencia al tenant del canal.
+
+    Devuelve el subprotocolo a confirmar en el `accept` (el handshake exige
+    devolver uno de los propuestos) o `None` ante cualquier fallo: ticket
+    ausente, de otro tipo, vencido, de un usuario inexistente, ajeno a la
+    organización, revocado en bloque, o de una organización suspendida.
+
+    El TIPO se comprueba igual que en la API: un refresh token bien firmado
+    abría este canal, y por él viajan las notificaciones de toda la
+    organización.
+    """
+    if not ticket:
+        return None
+
+    payload = decode_token(ticket, expected_type=TOKEN_TYPE_WS_TICKET)
+    if not payload:
+        return None
+    user_id = payload.get("sub")
     if not user_id:
-        return False
+        return None
+
+    # Un ticket es de un solo uso: se marca consumido ANTES de aceptar. Si el
+    # mecanismo no responde no se puede garantizar la unicidad, y como el ticket
+    # ya vive 30 segundos, se prefiere aceptar a dejar sin notificaciones a todo
+    # el producto por una caída del cache.
+    if not await consume_ws_ticket(payload.get("jti")):
+        return None
 
     async with async_session() as db:
-        q = select(User).options(selectinload(User.organizations)).where(User.id == user_id)
-        res = await db.execute(q)
-        user = res.scalar_one_or_none()
+        user = await load_user_with_organizations(db, user_id)
         if not user:
-            return False
-        user_org_ids = [ou.organization_id for ou in user.organizations]
-        return tenant_id in user_org_ids
+            return None
+        if token_predates_session_cutoff(payload, user):
+            return None
+        for ou in (user.organizations or []):
+            if ou.organization_id != tenant_id:
+                continue
+            org = ou.organization
+            if org is not None and org.status != "ACTIVE" and not user.is_platform_admin:
+                return None
+            return f"{WS_TICKET_SUBPROTOCOL_PREFIX}{ticket}"
+    return None
 
 
 @router.websocket("/notifications/{tenant_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
     tenant_id: str,
-    token: Optional[str] = Query(default=None)
+    token: Optional[str] = Query(default=None),
 ):
     """
     WebSocket endpoint para el frontend.
-    tenant_id es el organization_id (UUID) del tenant. Requiere ?token=<JWT>
-    y que ese usuario pertenezca a la organización; si no, se cierra la conexión.
+
+    `tenant_id` es el organization_id (UUID) del tenant. La credencial es un
+    ticket de un solo uso (`POST /auth/ws-ticket`) que viaja en el subprotocolo
+    `lejovista.ticket.<ticket>`, no en el query string.
+
+    `?token=` sigue admitiéndose solo si `WS_ALLOW_QUERY_TOKEN` está encendido,
+    para la ventana en la que conviven navegadores con la app vieja ya cargada.
+    Por defecto está apagado.
     """
-    authorized = await _authenticate_ws(token, tenant_id)
-    if not authorized:
+    ticket = _ticket_from_subprotocols(websocket)
+    if ticket is None and token and settings.WS_ALLOW_QUERY_TOKEN:
+        logger.warning(
+            "WebSocket autenticado por query string (mecanismo obsoleto). "
+            "Apagar WS_ALLOW_QUERY_TOKEN en cuanto no queden clientes viejos."
+        )
+        ticket = token
+
+    subprotocolo = await _authenticate_ws(ticket, tenant_id)
+    if subprotocolo is None:
         # 4401: violación de política / no autorizado en el handshake
         await websocket.close(code=4401)
         return
 
-    await manager.connect(websocket, tenant_id)
+    await manager.connect(
+        websocket,
+        tenant_id,
+        # Solo se confirma el subprotocolo si el cliente lo propuso: devolver uno
+        # que no ofreció rompe el handshake.
+        subprotocol=subprotocolo if _ticket_from_subprotocols(websocket) else None,
+    )
     try:
         while True:
             # Mantener la conexión abierta, podemos recibir un ping del cliente

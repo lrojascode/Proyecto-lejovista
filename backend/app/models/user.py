@@ -1,6 +1,7 @@
 from datetime import datetime
 import logging
 import uuid
+from typing import Optional
 from sqlalchemy import String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
@@ -26,6 +27,22 @@ class User(Base):
     # mecanismo aparte -- impersonacion explicita, con registro y con aviso al
     # cliente -- no un permiso permanente.
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Corte de validez de las sesiones de ESTE usuario. Todo access/refresh
+    # emitido antes de este instante queda rechazado, sin necesidad de enumerar
+    # sus jti (spec 01, historia 64).
+    #
+    # Va en la base y no en Redis a proposito: la revocacion por cambio de
+    # contrasena tiene que sobrevivir a una caida del cache. La blocklist por
+    # jti de Redis sigue existiendo para revocar UN token suelto (logout,
+    # rotacion del refresh); esto revoca TODOS de una vez.
+    #
+    # NULL = nunca se revoco en bloque, que es el estado de toda cuenta hasta
+    # que alguien cambia su contrasena. Los tokens anteriores a la migracion no
+    # llevan `iat`; con el corte puesto no se puede probar que sean posteriores,
+    # asi que se rechazan — es el lado seguro del desconocimiento.
+    sessions_valid_from: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     # Relaciones

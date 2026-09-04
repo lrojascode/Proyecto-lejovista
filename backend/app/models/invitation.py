@@ -14,7 +14,15 @@ class Invitation(Base):
     )
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="OPERATOR")
-    token: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    # Lo que se guardaba ANTES era el token en claro: cualquiera con lectura
+    # sobre esta tabla —un dump, un backup, un log de consultas— podia entrar
+    # como el invitado. Ahora se guarda su SHA-256, igual que
+    # `password_reset_tokens`: lo persistido no sirve para aceptar nada.
+    #
+    # `token` se conserva NULLABLE durante la fase de expansion de la migracion
+    # y deja de leerse; se retira en la contraccion.
+    token: Mapped[str] = mapped_column(String(100), unique=True, nullable=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     accepted_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
     invited_by_user_id: Mapped[str] = mapped_column(
@@ -38,3 +46,19 @@ class Invitation(Base):
     @property
     def is_accepted(self) -> bool:
         return self.accepted_at is not None
+
+
+def hash_invitation_token(token: str) -> str:
+    """SHA-256 del token de invitacion.
+
+    Mismo criterio que el hash de los tokens de recuperacion de contrasena: la
+    tabla de invitaciones es un objetivo tan bueno como `users`, y lo que se
+    guarda no puede ser suficiente para entrar.
+
+    SHA-256 sin sal ni estiramiento es lo correcto aqui y no en una contrasena:
+    el token son 32 bytes aleatorios de `secrets`, no hay diccionario que
+    recorrer.
+    """
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()

@@ -1,11 +1,12 @@
 import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.database import get_db
-from app.models.invitation import Invitation
+from app.models.invitation import Invitation, hash_invitation_token
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.user import User
@@ -30,7 +31,7 @@ async def get_invitation_details(
     token: str, db: AsyncSession = Depends(get_db)
 ):
     """Consulta pública de los detalles de una invitación por su token."""
-    q = select(Invitation).where(Invitation.token == token)
+    q = select(Invitation).where(Invitation.token_hash == hash_invitation_token(token))
     inv = (await db.execute(q)).scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Invitación no encontrada.")
@@ -58,19 +59,29 @@ async def accept_invitation(
     db: AsyncSession = Depends(get_db),
 ):
     """Acepta una invitación, creando el usuario (si no existe) y vinculándolo con el rol asignado."""
-    q = select(Invitation).where(Invitation.token == token)
+    q = select(Invitation).where(Invitation.token_hash == hash_invitation_token(token))
     inv = (await db.execute(q)).scalar_one_or_none()
     if not inv:
         raise HTTPException(status_code=404, detail="Invitación no encontrada.")
 
-    if inv.is_accepted:
-        raise HTTPException(
-            status_code=400, detail="Esta invitación ya fue aceptada previamente."
-        )
-
     if inv.is_expired:
         raise HTTPException(
             status_code=400, detail="Esta invitación ha expirado. Solicita una nueva."
+        )
+
+    # CONSUMO ATÓMICO. Antes esto eran dos pasos —leer `accepted_at`, y más
+    # abajo escribirlo— con todo el alta del usuario en medio: dos peticiones
+    # simultáneas con el mismo enlace leían las dos "sin aceptar" y las dos
+    # seguían adelante. El UPDATE condicional hace la comprobación y la marca en
+    # una sola operación: exactamente una de las dos cambia una fila.
+    marcada = await db.execute(
+        update(Invitation)
+        .where(Invitation.id == inv.id, Invitation.accepted_at.is_(None))
+        .values(accepted_at=datetime.datetime.utcnow())
+    )
+    if marcada.rowcount != 1:
+        raise HTTPException(
+            status_code=400, detail="Esta invitación ya fue aceptada previamente."
         )
 
     org = await db.get(Organization, inv.organization_id)
@@ -144,9 +155,16 @@ async def accept_invitation(
                 user_id=user.id, ad_account_id=acc_id, organization_id=org.id,
             ))
 
-    inv.accepted_at = datetime.datetime.utcnow()
-    db.add(inv)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # La restricción única de membresía disparó: otra transacción insertó la
+        # misma (usuario, organización) entre nuestra comprobación y nuestro
+        # INSERT. La base es la que decide, y decidió que la fila ya existe.
+        await db.rollback()
+        raise HTTPException(
+            status_code=400, detail="Esta invitación ya fue aceptada previamente."
+        )
 
     access_token = create_access_token(subject=user.id, org=org.id)
     refresh_token = create_refresh_token(subject=user.id, org=org.id)

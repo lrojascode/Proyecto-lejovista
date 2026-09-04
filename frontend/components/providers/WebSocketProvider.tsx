@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { getAccessToken } from "@/lib/api";
+import { api } from "@/lib/api";
 
 // Este contexto exporta el último evento recibido para que los componentes reaccionen
 type WSEvent = {
@@ -32,18 +32,34 @@ export const WebSocketProvider = ({ children, tenantId }: { children: ReactNode;
       return;
     }
 
-    let ws: WebSocket;
+    let ws: WebSocket | undefined;
     let reconnectTimeout: NodeJS.Timeout;
+    let cancelado = false;
 
-    const connect = () => {
+    const connect = async () => {
       // Usar variable de entorno en prod, en local asume puerto 8000
       const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
-      // El backend exige el JWT por query param y valida la pertenencia al
-      // tenant. (S-2) El access token vive en memoria (lib/api.ts) — el
-      // layout ya completó bootstrapSession() antes de montar este provider.
-      const token = getAccessToken();
-      const qs = token ? `?token=${encodeURIComponent(token)}` : "";
-      ws = new WebSocket(`${wsUrl}/ws/notifications/${tenantId}${qs}`);
+
+      // La credencial NO va en la URL. La URL de la conexión la registran el
+      // proxy y el historial del navegador, y ahí quedaba el access token —
+      // 24 horas de vida— en texto plano. Se pide un ticket de un solo uso y
+      // 30 segundos, y viaja en `Sec-WebSocket-Protocol`, que es el único
+      // campo de cabecera que la API del navegador deja controlar en un
+      // handshake y que los logs de acceso no registran.
+      let ticket: string;
+      try {
+        ticket = (await api.getWsTicket()).ticket;
+      } catch (e) {
+        // Sin ticket no hay canal. Se reintenta como con cualquier corte: la
+        // causa habitual es que la sesión todavía no está lista.
+        if (!cancelado) reconnectTimeout = setTimeout(connect, 3000);
+        return;
+      }
+      if (cancelado) return;
+
+      ws = new WebSocket(`${wsUrl}/ws/notifications/${tenantId}`, [
+        `lejovista.ticket.${ticket}`,
+      ]);
 
       ws.onopen = () => {
         console.log("WebSocket connected");
@@ -66,18 +82,20 @@ export const WebSocketProvider = ({ children, tenantId }: { children: ReactNode;
       ws.onclose = () => {
         console.log("WebSocket disconnected. Reconnecting in 3s...");
         setIsConnected(false);
-        reconnectTimeout = setTimeout(connect, 3000);
+        // Cada reconexión pide su propio ticket: el anterior ya se consumió.
+        if (!cancelado) reconnectTimeout = setTimeout(connect, 3000);
       };
 
       ws.onerror = (err) => {
         console.error("WebSocket error", err);
-        ws.close();
+        ws?.close();
       };
     };
 
     connect();
 
     return () => {
+      cancelado = true;
       clearTimeout(reconnectTimeout);
       if (ws) ws.close();
     };

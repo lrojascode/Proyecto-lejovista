@@ -5,7 +5,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.invitation import Invitation
+from app.models.invitation import Invitation, hash_invitation_token
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
 from app.models.user import User
@@ -124,8 +124,9 @@ async def test_invitation_expiration_is_enforced(async_client: AsyncClient, db_s
     )
     token = inv_res.json()["token"]
 
-    # Forzar fecha de expiración al pasado en DB
-    q = select(Invitation).where(Invitation.token == token)
+    # Forzar fecha de expiración al pasado en DB. La fila se busca por el HASH
+    # del token: lo que se persiste ya no es el secreto (spec 01).
+    q = select(Invitation).where(Invitation.token_hash == hash_invitation_token(token))
     inv = (await db_session.execute(q)).scalar_one()
     inv.expires_at = datetime.datetime.utcnow() - datetime.timedelta(days=1)
     db_session.add(inv)
