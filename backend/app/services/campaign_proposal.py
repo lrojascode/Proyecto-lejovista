@@ -1,3 +1,4 @@
+import datetime
 from typing import Optional
 
 from fastapi import HTTPException
@@ -11,6 +12,7 @@ from app.services.ai.token_tracking import UsageContext
 from app.services.campaign_risk import assess_campaign_risk
 from app.services.campaign_suggester import CampaignSuggester
 from app.services.campaign_validator import normalize_product_name
+from app.services.recuperacion import recuperar_comparables
 
 
 async def build_campaign_proposal(
@@ -55,6 +57,24 @@ async def build_campaign_proposal(
         ),
     )
 
+    # Campañas históricas comparables de ESTA cuenta (spec 11). Se recupera
+    # después de la sugerencia porque la referencia se arma con lo que la
+    # sugerencia decidió: objetivo, evento de conversión y presupuesto.
+    #
+    # Es una lectura, no una escritura: la trazabilidad se persiste cuando la
+    # propuesta se materializa (`start_campaign_creation`), no cada vez que
+    # alguien abre el formulario.
+    evidencia_comparable = await recuperar_comparables(
+        db, ad_account,
+        referencia={
+            "campaign_id": None,
+            "objetivo": suggestion["objective"],
+            "optimization_goal": suggestion["optimization_goal"],
+            "gasto": suggestion["suggested_budget"],
+            "fecha": datetime.date.today(),
+        },
+    )
+
     risk = assess_campaign_risk(
         budget=suggestion["suggested_budget"],
         # 3.4: primary_text ahora es un array de 2 variantes; se evalúa la
@@ -83,4 +103,7 @@ async def build_campaign_proposal(
         "evidence": suggestion["evidence"],
         "copy": copy,
         "suggested_product_name": copy.get("suggested_product_name"),
+        # La evidencia que respalda esta propuesta, o la marca de exploratoria
+        # cuando no hay ninguna (spec 11, criterios 1, 5, 7 y 8).
+        "evidencia": evidencia_comparable.as_dict(),
     }

@@ -50,6 +50,9 @@ class AdsetSnapshot(Base):
     ctr: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Resumen del targeting (geo, edad, placements, tipo de audiencia)
+    # Evento que este conjunto optimizaba. Es de donde sale el de la campana
+    # (spec 11); en Meta vive aca, no en la campana.
+    optimization_goal: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     targeting_summary: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Fecha de fin del adset en Meta. Nullable: no siempre viene, y su ausencia

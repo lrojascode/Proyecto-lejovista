@@ -59,7 +59,7 @@ Sobre 14-30 días de historia por campaña (mínimo `min_history_days=7`):
   - **Diagnósticos (F6)**: recibe el `analysis` del `CampaignSuggester` (fortalezas, debilidades, `past_failures`, `track_record`) — el mismo que ya se le mostraba al usuario, pero no al redactor. Se interpola con `_delimit_untrusted` como el resto del contexto no confiable.
   - La regla AI-1 no cambia: el LLM sigue redactando **solo texto**; las cifras las decide `CampaignSuggester`.
 - **Fallback local determinista**: si `MOCK_SERVICES`, sin key o error, usa plantillas locales que derivan cifras de datos reales y respetan el mismo contrato; se marca `used_fallback` (`C-4`).
-- **Proveedor** auto-seleccionado (OpenAI > Gemini > OpenRouter). Consumo registrado en `AITokenUsage` (`token_tracking.py`).
+- **Proveedor**: EXPLÍCITO por Organización desde la spec 10 (ver §10). La cascada `OpenAI > Gemini > OpenRouter` quedó derogada. Consumo registrado en `AITokenUsage` (`token_tracking.py`), ahora con `prompt_version`.
 
 ## 6. Planner (`planner.py`)
 
@@ -117,5 +117,190 @@ Fuera de alcance (anotado): atribuir un LOSS a un parámetro concreto y la varia
 ## 9. Medición de consumo (`token_tracking.py`)
 
 - `record_token_usage` persiste el bloque `usage` de la respuesta del LLM en `AITokenUsage`, etiquetado por `feature` (`master_brief`, `campaign_copy`, `campaign_copy_action`).
-- `estimate_cost_usd` usa `MODEL_PRICING` (por 1M tokens); si el modelo no está tarifado, deja `None` en vez de mentir un 0.
+- `estimate_cost_usd` toma las tarifas del **catálogo** (`ai/catalogo.py`); `MODEL_PRICING` queda como respaldo en código para el arranque previo a la siembra. Si el modelo no está tarifado deja `None` en vez de mentir un 0 — y `None` importa más desde la spec 10: un cero aportaría gasto invisible a la suma que decide contra el presupuesto.
+- `estimated_cost_usd_exact` (`Numeric(12,6)`) es la columna que **decide**; el `Float` se conserva para el panel (expansión, spec 02).
 - Canal lateral: usa su propia sesión de DB y traga excepciones — medir nunca rompe la funcionalidad medida. Expuesto en `GET /ai-usage`.
+
+## 10. Gobernanza del LLM (spec 10)
+
+Cuatro mecanismos que acotan qué puede hacer el modelo, con qué y cuánto.
+
+### 10.1 Proveedor y modelo explícitos (`proveedor.py`, `catalogo.py`)
+
+**El proveedor es el que la Organización declara.** La credencial se busca solo
+para ese proveedor —primero la suya, si no la global—; si falta, la llamada falla
+de forma visible y `config_error` dice qué cargar y dónde. Nunca se usa la
+credencial de otro proveedor, ni siquiera cuando es la única disponible.
+
+Lo que había antes eran dos cascadas y las dos cambiaban de proveedor sin que
+nadie lo decidiera: una deducía el proveedor por la **forma** de la clave, y la
+otra tomaba la primera credencial global del entorno. Añadir `OPENAI_API_KEY`
+movía a todas las organizaciones sin clave propia en el siguiente reinicio.
+
+El catálogo (`ai_model_catalog`) es **dato**: capacidades, precio y estado
+(`disponible` / `en_retirada` / `retirado`) en una fila. Retirar un modelo lo saca
+del selector y **señala** a quien lo usaba, sin reasignarlo — reasignar sería el
+mismo cambio silencioso por otra puerta, y el modelo nuevo puede costar un
+múltiplo.
+
+Cambios registrados en `ai_config_changes` con actor, momento y valores. La
+credencial se registra como el *hecho* de que cambió, nunca su valor.
+
+### 10.2 Guardas de salida (`validacion.py`, `guardas.py`, `contrato.py`)
+
+Una sola función valida toda salida del modelo y registra el descarte con su
+motivo. Antes cada camino elegía qué guardas aplicar, así que el camino nuevo no
+tenía ninguna.
+
+| Guarda | Qué ataja | Por qué no basta la numérica |
+|---|---|---|
+| Cuenta ajena | La respuesta habla de otra AdAccount | Los nombres de cuenta son texto: todas las cifras están respaldadas y la conclusión es falsa |
+| Periodo cambiado | Otro mes u otra ventana | Un mes se escribe con letras; una ventana de 30 días puede estar respaldada por cualquier otra cifra |
+| Promesa de éxito visual | "esta imagen va a funcionar" | No es una cifra |
+| Cifras sin respaldo | La guarda de AI-1 de siempre | — |
+
+Cualquiera invalida la salida **completa**: una respuesta parcialmente inventada
+no es parcialmente confiable. La única excepción es el enlace, que se limpia.
+
+El **contrato de salida** (`contrato.py`) se declara antes de la llamada: campos,
+tipos y catálogos cerrados. Lo que no encaja se descarta — no se corrige ni se
+rellena con defaults. Un corrector de "casi encaja" es una elección que nadie
+tomó sobre un campo que termina en una campaña con dinero real.
+
+**Modo de registro** (`GROUNDING_MODO_REGISTRO=true`): la guarda anota lo que
+descartaría y **no** descarta. Es como se activa el endurecimiento, midiendo el
+falso positivo sobre tráfico real. El riesgo no es teórico: un tope mal calibrado
+ya dejó al analista contestando plantillas durante días, con los tests en verde.
+
+### 10.3 Presupuesto y límites (`presupuesto.py`, `limites.py`, `compuerta.py`)
+
+La clave del LLM es del **cliente**. Techo mensual por Organización en USD, con
+avisos al 70 % y 90 % y bloqueo al 100 %; aritmética en `Decimal` y ventana en la
+zona horaria del negocio, igual que la compuerta publicitaria de la spec 02.
+
+El bloqueo **no apaga el producto**: métricas, estados, tablas, clasificador e
+informes deterministas siguen funcionando. El cliente pierde el redactor, no el
+tablero, y el chat se lo dice.
+
+Vive en `_post_chat`, el punto por el que pasa toda llamada real, para que una
+superficie nueva quede cubierta por construcción. `NULL` = sin techo, que es el
+estado de toda organización anterior a la spec.
+
+Dos topes independientes: **reintentos** (repetir una llamada, con retroceso) y
+**frecuencia** por minuto (volver a empezar). Contra el segundo, el tope de
+reintentos no puede nada. Fail-open ante caída de Redis —es un throttle, no
+autoriza gasto irreversible— pero con un contador en memoria del proceso que
+sigue acotando el caso que importa: un proceso girando en falso.
+
+### 10.4 Origen de la respuesta (`origen.py`)
+
+Tres orígenes donde antes había dos:
+
+- `modelo` — lo redactó el LLM y pasó las guardas.
+- `determinista` — lo escribió el código con datos reales. **Legítimo en
+  producción**, identificado como tal.
+- `simulado` — texto de relleno con datos de ejemplo. **Prohibido en producción**,
+  sin excepción; `assert_no_simulado` levanta en vez de devolver.
+
+Los dos últimos se llamaban "fallback" y volvían por el mismo camino, así que el
+cliente no tenía forma de saber cuál estaba leyendo. El producto tampoco.
+
+### 10.5 Conjunto de evaluación (`backend/evaluacion/`)
+
+Requisito de **publicación**, no de CI: corre cuando cambia un prompt, una regla
+o un modelo, y compara contra la línea base en grounding, seguridad y costo.
+
+```bash
+.venv/bin/python scripts/evaluar_cambio_ia.py --etiqueta "prompt analista v2"
+```
+
+Sale con código distinto de cero si alguna dimensión se degrada. El corpus tiene
+casos **hostiles** y **legítimos**: uno solo de hostiles se aprueba endureciendo
+la guarda hasta que rechace todo, que es la regresión que ya ocurrió.
+
+### 10.6 Observabilidad
+
+- `GET /ai-usage/budget` — techo, consumo, margen y umbral. Misma fuente que la
+  compuerta: calcularlo aparte permitiría que la pantalla muestre margen mientras
+  el backend bloquea.
+- `GET /ai-usage/discards` — descartes por motivo, separando los aplicados de los
+  del modo de registro. Convierte "el chat suena a plantilla" en un diagnóstico.
+
+Ambos solo para agencia (spec 05).
+
+## 11. Recuperación, evidencia y aprendizaje por cliente (spec 11)
+
+Lo que convierte una recomendación en una recomendación *respaldada*.
+
+### 11.1 Comparabilidad (`comparabilidad.py`)
+
+Puro y determinista: el LLM no decide qué campañas son comparables.
+
+**Dos condiciones duras.** Mismo `objective` y mismo evento de conversión. Sin
+eso las métricas no se pueden poner en la misma escala, y una mediana sobre
+campañas de tráfico y de mensajería no describe nada. Las incompatibles se
+**excluyen** antes de puntuar; ponderarlas a cero las deja dentro con peso
+minúsculo y hace que el conjunto parezca grande.
+
+El evento de conversión sale de `optimization_goal`, que el sync captura del
+adset y sube a la campaña. Para las filas anteriores a esa columna se **deriva**
+de qué métrica primaria tuvo la campaña — el mismo hecho por la otra cara.
+`desconocido` no es comparable con nada, ni siquiera con otro desconocido.
+
+**Un grado sobre el resto.** Temporada, presupuesto, público, formato y
+ubicación producen un número entre 0 y 1 que solo ORDENA el conjunto. Las
+dimensiones que no se pueden evaluar se sacan del promedio en vez de contarse
+como cero: contarlas castigaría a las campañas peor registradas.
+
+Los pesos no son una calibración empírica y el código lo dice. Son un orden de
+prioridad declarado, para poder discutirlo con evidencia.
+
+### 11.2 Confianza y registros de lenguaje (`evidencia.py`)
+
+La confianza sale del conjunto: cuántas campañas, cuánto se parecen, cuánto
+volumen aportan y qué **dispersos** son sus costos. Se degrada, nunca se
+promueve — así muchas campañas no pueden compensar una dispersión enorme.
+
+| Nivel | Cuándo | Qué implica |
+|---|---|---|
+| `sin_evidencia` | Ninguna comparable | Propuesta exploratoria |
+| `baja` | Pocas, dispersas o poco parecidas | Propuesta exploratoria |
+| `media` / `alta` | Conjunto suficiente y consistente | Sostiene la recomendación |
+
+Tres registros, marcados **estructuralmente** y no por redacción: *hecho
+observado*, *asociación* e *hipótesis*. Cada uno viaja con su explicación,
+porque "Asociación" a secas se lee como causa. El lenguaje causal no se admite
+en ninguno: haría falta una prueba controlada y ese mecanismo no existe.
+
+### 11.3 Recuperación y aislamiento (`recuperacion.py`)
+
+Lee de las tablas calientes **y del archivo**: una campaña archivada tiene que
+poder seguir siendo evidencia, o el producto pierde su propuesta de valor a
+medida que envejece.
+
+Restringida a la Organización y a la AdAccount activas, sin excepción para el
+usuario que alcanza las dos. Dos cuentas de la misma Organización tampoco se
+mezclan (ADR-31).
+
+### 11.4 Trazabilidad y aprendizaje
+
+`proposal_evidence` fija, **al proponer**, las campañas fuente, la ventana, el
+baseline congelado, la versión de reglas, la de prompt, el modelo y la
+confianza. Al proponer y no al crear: una propuesta rechazada tiene que dejar
+rastro, y esas son las que conviene revisar.
+
+`proposal_changes` guarda cada corrección humana con motivo obligatorio y
+estructurado — `NOT NULL` en el esquema, no solo en la validación.
+
+`candidate_rules` propone como regla los motivos que se repiten, con sus
+ocurrencias. **No entra en vigor hasta que alguien la acepta**; el rechazo abre
+un plazo de espera.
+
+El Outcome loop compara contra el baseline **congelado** de esa versión
+(`expectativa_origen: "baseline_congelado"`), no contra el vigente.
+
+### 11.5 Observabilidad
+
+`GET /proposals/aprendizaje` — proporción de exploratorias, confianza y tamaño
+del conjunto por propuesta, correcciones por motivo y veredictos del Outcome
+loop. Solo agencia.

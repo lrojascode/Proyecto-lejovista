@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.campaign_draft import CampaignDraft
 from app.models.campaign_learning_log import CampaignLearningLog
 from app.models.campaign_snapshot import CampaignSnapshot
+from app.models.proposal_evidence import ProposalEvidence
 from app.utils.formatting import money
 
 logger = logging.getLogger("lejovista.outcome")
@@ -102,14 +103,35 @@ async def evaluate_learning_log(db: AsyncSession, log: CampaignLearningLog) -> D
     analysis = log.analysis_json or {}
     window_days = int(analysis.get("evaluation_window_days") or DEFAULT_EVALUATION_DAYS)
 
-    # Expectativa que usó la IA: presupuesto = colchón de ~20 conversaciones al
-    # menor costo observado → costo esperado por conversación = presupuesto/20.
-    suggested_budget = params.get("suggested_budget")
-    expected_cost = round(suggested_budget / 20, 2) if suggested_budget and suggested_budget > 0 else None
+    # El baseline CONGELADO en el momento de proponer (spec 11, criterio 13).
+    #
+    # El veredicto tiene que compararse contra la referencia que estaba vigente
+    # cuando se tomó la decisión, no contra la de hoy. El baseline se recalibra
+    # —entran campañas nuevas, salen las viejas de la ventana— y juzgar una
+    # campaña de hace dos meses contra la referencia actual la premia o la
+    # castiga por lo que hicieron OTRAS campañas después. Eso no es medir el
+    # resultado de una decisión, es medir el ruido posterior.
+    congelado = await _baseline_congelado(db, log)
+    expected_cost = congelado.get("mediana") if congelado else None
+    origen_expectativa = "baseline_congelado" if expected_cost else None
+
+    # Sin baseline congelado se cae a la expectativa que usó el suggester:
+    # presupuesto = colchón de ~20 conversaciones → costo esperado =
+    # presupuesto/20. Es lo que había antes de esta spec, y sigue siendo lo
+    # correcto para las propuestas anteriores a ella.
+    if not expected_cost:
+        suggested_budget = params.get("suggested_budget")
+        if suggested_budget and suggested_budget > 0:
+            expected_cost = round(suggested_budget / 20, 2)
+            origen_expectativa = "presupuesto_sugerido"
 
     outcome: Dict[str, Any] = {
         "evaluation_window_days": window_days,
         "expected_cost_per_conv": expected_cost,
+        # De dónde salió la expectativa. Sin esto, dos veredictos calculados
+        # contra referencias distintas se leen como si fueran comparables.
+        "expectativa_origen": origen_expectativa,
+        "baseline_congelado": congelado,
         "hypothesis": analysis.get("summary"),
     }
 
@@ -165,6 +187,30 @@ async def evaluate_learning_log(db: AsyncSession, log: CampaignLearningLog) -> D
         expected_cost_per_conv=expected_cost,
     ))
     return await _persist_outcome(db, log, outcome)
+
+
+async def _baseline_congelado(
+    db: AsyncSession, log: CampaignLearningLog
+) -> Optional[Dict[str, Any]]:
+    """El baseline que se fijó al proponer esta campaña, si lo hay.
+
+    Se busca por `draft_id`, que es lo que une el registro de aprendizaje con la
+    trazabilidad de la propuesta. Devuelve `None` para las campañas anteriores a
+    la spec 11: no tienen evidencia persistida y no se puede reconstruir, porque
+    reconstruirla hoy daría el baseline de hoy, que es exactamente lo que este
+    mecanismo evita.
+    """
+    if not log.draft_id:
+        return None
+    fila = (await db.execute(
+        select(ProposalEvidence)
+        .where(ProposalEvidence.draft_id == log.draft_id)
+        .order_by(ProposalEvidence.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if fila is None or not fila.baseline_json:
+        return None
+    return dict(fila.baseline_json)
 
 
 async def _persist_outcome(db: AsyncSession, log: CampaignLearningLog, outcome: Dict[str, Any]) -> Dict[str, Any]:

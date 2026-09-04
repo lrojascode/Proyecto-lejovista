@@ -27,6 +27,16 @@ class CampaignSnapshot(Base):
     # Datos estructurales de Meta (objetivo declarado y calendario de la campaña).
     # Nullable: Meta no siempre los devuelve, y un campo ausente no puede romper el sync.
     objective: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # QUE contaba esta campana como resultado (spec 11). Es la segunda condicion
+    # dura de comparabilidad: dos campanas del mismo objetivo, una optimizada a
+    # conversaciones y otra a formularios, producen costos que no se pueden
+    # poner en la misma escala aunque la etiqueta del objetivo coincida.
+    #
+    # Vive en el adset en Meta (`optimization_goal`); se sube al nivel de
+    # campana durante el sync. Nullable: las filas anteriores a la migracion no
+    # lo tienen, y ahi la comparabilidad lo DERIVA de que metrica primaria tuvo
+    # la campana — que es el mismo hecho visto por la otra cara.
+    optimization_goal: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     stop_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

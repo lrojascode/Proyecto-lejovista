@@ -298,6 +298,7 @@ class MetaAdsSyncService:
                 ),
                 "creative_cta_type": "WHATSAPP_MESSAGE",
                 "objective": "OUTCOME_ENGAGEMENT",
+                "optimization_goal": "CONVERSATIONS",
                 "created_time": _mock_dt(60),
                 "start_time": _mock_dt(60),
                 "stop_time": None,
@@ -313,6 +314,7 @@ class MetaAdsSyncService:
                 "cpl_target": 4.50,
                 "high_frequency": True,
                 "objective": "OUTCOME_ENGAGEMENT",
+                "optimization_goal": "CONVERSATIONS",
                 "created_time": _mock_dt(40),
                 "start_time": _mock_dt(40),
                 "stop_time": None,
@@ -332,6 +334,7 @@ class MetaAdsSyncService:
                 "cpl_target": 12.00,
                 "failing": True,
                 "objective": "OUTCOME_LEADS",
+                "optimization_goal": "LEAD_GENERATION",
                 "created_time": _mock_dt(20),
                 "start_time": _mock_dt(20),
                 "stop_time": None,
@@ -350,6 +353,7 @@ class MetaAdsSyncService:
                 )
                 .values(
                     objective=c["objective"],
+                    optimization_goal=c.get("optimization_goal"),
                     created_time=c["created_time"],
                     start_time=c["start_time"],
                     stop_time=c["stop_time"],
@@ -657,7 +661,7 @@ class MetaAdsSyncService:
         if sync_type != SYNC_TYPE_BACKFILL:
             acc_info = await limiter.call_api(
                 ad_account.external_account_id,
-                {"fields": "amount_spent,spend_cap,account_status"},
+                {"fields": "amount_spent,spend_cap,account_status,currency"},
                 access_token=token
             )
 
@@ -668,6 +672,13 @@ class MetaAdsSyncService:
             # Actualizar ad_account
             ad_account.spend_cap = float(acc_info.get("spend_cap", 0)) / 100.0  # Meta retorna centavos
             ad_account.amount_spent = float(acc_info.get("amount_spent", 0)) / 100.0
+
+            # La moneda gobierna la compuerta de presupuesto mensual (spec 02):
+            # una organización con cuentas en monedas distintas se rechaza en
+            # vez de sumar cifras incomparables.
+            moneda = acc_info.get("currency")
+            if moneda:
+                ad_account.currency = str(moneda).upper()
 
             status_code = acc_info.get("account_status", 1)
             ad_account.status = "ACTIVE" if status_code == 1 else "SUSPENDED"
@@ -1177,13 +1188,14 @@ class MetaAdsSyncService:
         effective_status_map: Dict[str, str] = {}   # adset_id -> effective_status (entrega real)
         campaign_of: Dict[str, str] = {}       # adset_id -> campaign_id
         end_time_map: Dict[str, Any] = {}      # adset_id -> end_time (datetime u None)
+        goal_map: Dict[str, Any] = {}          # adset_id -> optimization_goal
 
         # P-1: estructura e insights son lecturas independientes (insights no
         # depende de la estructura para pedirse, solo para combinarse después).
         structure, insights = await asyncio.gather(
             self._structure_once("adsets", lambda: limiter.call_api_paginated(
                 f"{ad_account.external_account_id}/adsets",
-                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status,effective_status,end_time",
+                {"fields": "id,name,campaign_id,targeting,daily_budget,lifetime_budget,status,effective_status,end_time,optimization_goal",
                  "limit": 200},
                 access_token=token,
             )),
@@ -1205,6 +1217,7 @@ class MetaAdsSyncService:
                 effective_status_map[aid] = a.get("effective_status")
                 campaign_of[aid] = a.get("campaign_id")
                 end_time_map[aid] = self._parse_meta_datetime(a.get("end_time"))
+                goal_map[aid] = a.get("optimization_goal")
         else:
             self._maybe_mark_expired(ad_account, structure)
 
@@ -1248,6 +1261,40 @@ class MetaAdsSyncService:
             row.effective_status = effective_status_map.get(adset_id)
             row.budget = budget_map.get(adset_id, 0.0)
             row.end_time = end_time_map.get(adset_id)
+            row.optimization_goal = goal_map.get(adset_id)
+
+        # El evento de conversion de cada campana, subido desde sus adsets
+        # (spec 11). En Meta vive en el adset; la comparabilidad lo necesita a
+        # nivel de campana.
+        #
+        # Si los adsets de una campana declaran objetivos distintos, se deja en
+        # None: una campana que optimiza dos cosas a la vez no tiene UN evento
+        # de conversion, y elegir el primero inventaria una homogeneidad que no
+        # existe. La comparabilidad tratara None como desconocido y la excluira,
+        # que es el resultado correcto.
+        goal_by_campaign: Dict[str, Any] = {}
+        for aid, camp_id in campaign_of.items():
+            if not camp_id:
+                continue
+            goal = goal_map.get(aid)
+            if not goal:
+                continue
+            if camp_id in goal_by_campaign and goal_by_campaign[camp_id] != goal:
+                goal_by_campaign[camp_id] = None
+            else:
+                goal_by_campaign.setdefault(camp_id, goal)
+
+        for camp_id, goal in goal_by_campaign.items():
+            if goal is None:
+                continue
+            await self.db.execute(
+                update(CampaignSnapshot)
+                .where(
+                    CampaignSnapshot.ad_account_id == ad_account.id,
+                    CampaignSnapshot.campaign_id == camp_id,
+                )
+                .values(optimization_goal=goal)
+            )
 
         return dict(adset_budget_by_campaign)
 
