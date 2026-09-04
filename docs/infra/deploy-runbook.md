@@ -21,25 +21,53 @@ El stack de prod está en [`coolify/lejovista.compose.yml`](coolify/lejovista.co
 3. **CI** (`.github/workflows/ci.yml`) corre los tests. Si fallan, nada más ocurre.
 4. **Build** (`.github/workflows/deploy.yml`, tras CI verde): construye y publica las
    imágenes en GHCR con dos tags:
-   - `:latest` — lo que Coolify pullea en un Redeploy normal.
-   - `:<sha>` — inmutable, para rollback determinista.
-5. **Deploy** (manual): entrás a Coolify → proyecto → recurso **lejovista** →
-   botón **Redeploy**. Coolify:
-   - hace `pull` de las imágenes `:latest` desde GHCR,
+   - `:<sha>` — inmutable. **Es lo que se despliega**, y a lo que se vuelve.
+   - `:latest` — conveniencia de desarrollo. Ya no se despliega con él.
+5. **Deploy** (manual): Coolify → proyecto → recurso **lejovista** →
+   Environment Variables → `IMAGE_TAG=<sha>` → **Redeploy**. Coolify:
+   - hace `pull` de las imágenes de ese sha desde GHCR,
    - corre el servicio `migrate` (`alembic upgrade head`) una sola vez,
    - reinicia backend + workers + beat + frontend.
+6. **Verificar**, que es parte del despliegue y no un extra:
 
-Esperá a que el deploy quede *healthy* en Coolify y verificá el cambio en
-`https://lejovista.agenciakibo.com`.
+   ```bash
+   COMMIT_ESPERADO=<sha> SMOKE_EMAIL=... SMOKE_PASSWORD=... \
+     scripts/despliegue/smoke.sh https://api.lejovista.agenciakibo.com
+   ```
 
-### Requisito de configuración (una sola vez)
+Esperá a que el deploy quede *healthy* en Coolify y a que el smoke test dé
+`DESPLIEGUE VERIFICADO`. Deja su resultado fechado en
+`docs/infra/operacion/despliegues/`.
+
+## Por qué el sha y no `latest`
+
+`latest` no es un artefacto: es "lo último que se construyó". Con él, saber qué
+está corriendo en producción es una deducción —mirar la hora del último build y
+suponer que el pull la trajo— en vez de un dato.
+
+Y sin ese dato el rollback no tiene a qué volver. Desplegando por sha, la
+pregunta "¿qué hay desplegado?" se responde con una llamada:
+
+```bash
+curl -s https://api.lejovista.agenciakibo.com/version
+```
+
+que devuelve el commit horneado en la imagen y, además, si las migraciones que
+esa imagen trae están aplicadas. Ese segundo dato atrapa el fallo más caro y más
+silencioso de un despliegue: que el contenedor `migrate` no corriera. La app
+arranca igual, responde igual, y va rompiéndose por donde toca el esquema nuevo.
+
+### Requisito de configuración
 
 En el recurso lejovista de Coolify → **Environment Variables**:
 
-- `IMAGE_TAG=latest` (y `IMAGE_PREFIX=ghcr.io/lrojascode`).
-- Activar **"Force pull"** (o equivalente) para que cada Redeploy re-descargue la
-  imagen `:latest` de GHCR y no reuse la cacheada. **Sin esto, un Redeploy puede no
-  traer el código nuevo.**
+- `IMAGE_PREFIX=ghcr.io/lrojascode` (una vez).
+- `IMAGE_TAG=<sha>` — **se actualiza en cada despliegue**. Es el paso que
+  convierte "desplegar" en "desplegar algo identificable".
+- "Force pull" deja de ser imprescindible al desplegar por sha: un tag inmutable
+  no cambia de contenido, así que la caché no puede servir algo distinto. Con
+  `latest` sí hacía falta, y **sin él un Redeploy podía no traer el código
+  nuevo** — otra razón para no volver a la etiqueta flotante.
 - GHCR debe ser accesible por Coolify (registry privado conectado, o paquetes
   públicos).
 
@@ -93,13 +121,20 @@ De más rápido a más robusto:
 ### 1. Repin de `IMAGE_TAG` (recomendado, determinista)
 
 Como cada build queda publicado en GHCR con su `:<sha>` inmutable, podés volver a
-**cualquier** versión pasada:
+**cualquier** versión pasada. Las imágenes anteriores no se borran: son el camino
+de vuelta, y por eso este repositorio no tiene ninguna política de limpieza de
+paquetes en GHCR.
 
 1. Coolify → recurso lejovista → **Environment Variables** → `IMAGE_TAG` = el
-   `<sha>` de la versión buena (el SHA del commit; aparece en la corrida de Actions
-   y en los tags de los paquetes GHCR).
+   `<sha>` de la versión buena (aparece en el resumen de la corrida de Actions y
+   en los tags de los paquetes GHCR).
 2. **Redeploy**.
-3. Para volver a la normalidad más adelante: `IMAGE_TAG=latest` → Redeploy.
+3. Verificar que volvió la que se quería:
+
+   ```bash
+   COMMIT_ESPERADO=<sha bueno> SMOKE_EMAIL=... SMOKE_PASSWORD=... \
+     scripts/despliegue/smoke.sh https://api.lejovista.agenciakibo.com
+   ```
 
 Funciona siempre, aunque la caché local del VPS se haya podado, porque la imagen
 vieja sigue viva en GHCR.
@@ -118,16 +153,19 @@ historia coherente (producción siempre refleja `main`).
 
 ---
 
-## ⚠️ Caveat: migraciones de base de datos
+## Migraciones de base de datos
 
-El rollback de **imagen** NO revierte migraciones de alembic ya aplicadas. Regla
-operativa:
+El rollback de **imagen** NO revierte migraciones ya aplicadas, y no hace falta
+que lo haga: la política es que toda migración deje funcionando a la imagen
+anterior. Se añade, se escribe en paralelo, se conmuta la lectura, y la retirada
+de lo viejo va en un despliegue posterior.
 
-- Mantener migraciones **forward-compatible** (aditivas): agregar columnas/tablas
-  nullable, no borrar ni renombrar en el mismo deploy que el código que lo usa.
-- Si un deploy incluye una migración destructiva y hay que revertir el código, puede
-  hacer falta un `alembic downgrade` manual dentro del contenedor antes de que el
-  código viejo funcione. Evaluá caso por caso.
+Eso no es una recomendación: `verificar_migraciones_compatibles.py` corre en CI y
+falla la construcción si una migración borra una columna o una tabla sin
+declararlo. El procedimiento completo, y qué hacer con los cambios que de verdad
+no admiten la escalera —ventana de mantenimiento, modo de solo lectura, respaldo
+externo comprobado antes— está en
+[`operacion/migraciones.md`](operacion/migraciones.md).
 
 ---
 

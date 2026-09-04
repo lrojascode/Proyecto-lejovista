@@ -1,0 +1,7 @@
+# Dependencias que solo necesitan CI y el desarrollo local.
+#
+# NO se instalan en la imagen de produccion: un linter no tiene nada que hacer
+# dentro del contenedor que atiende peticiones. (requirements.txt si arrastra
+# pytest y compania por herencia; separarlos es trabajo aparte.)
+ruff>=0.6.0
+PyYAML>=6.0

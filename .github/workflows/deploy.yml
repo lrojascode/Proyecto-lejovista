@@ -4,9 +4,14 @@ name: Deploy
 # imágenes solo arranca si los tests ya pasaron — no hay una segunda carrera
 # de jobs comprobando lo mismo.
 #
-# Este workflow SOLO construye y publica las imágenes en GHCR (tags `latest` +
-# `${head_sha}`). El despliegue lo hace Coolify: panel → recurso lejovista →
+# Este workflow SOLO construye y publica las imágenes en GHCR. El despliegue lo
+# hace Coolify: panel → recurso lejovista → IMAGE_TAG = el sha de este commit →
 # "Redeploy". Flujo completo y rollback en docs/infra/deploy-runbook.md.
+#
+# Spec 14, criterio 7: a producción se despliega por identificador de commit. La
+# etiqueta `latest` se sigue publicando como conveniencia de desarrollo, pero ya
+# no es lo que se despliega: "lo último que se construyó" no es un artefacto
+# identificable, y con ella un rollback no tiene a qué volver.
 on:
   workflow_run:
     workflows: ["CI"]
@@ -43,6 +48,11 @@ jobs:
         with:
           context: ./backend
           push: true
+          # GIT_SHA queda horneado en la imagen y lo publica `/version`: es lo
+          # que permite comprobar DESDE FUERA qué commit está corriendo, en vez
+          # de deducirlo del panel (criterio 8).
+          build-args: |
+            GIT_SHA=${{ github.event.workflow_run.head_sha }}
           tags: |
             ghcr.io/lrojascode/proyectolejovista-backend:latest
             ghcr.io/lrojascode/proyectolejovista-backend:${{ github.event.workflow_run.head_sha }}
@@ -55,6 +65,7 @@ jobs:
           context: ./frontend
           push: true
           build-args: |
+            GIT_SHA=${{ github.event.workflow_run.head_sha }}
             NEXT_PUBLIC_API_URL=https://api.${{ vars.BASE_DOMAIN }}
             NEXT_PUBLIC_BASE_DOMAIN=${{ vars.BASE_DOMAIN }}
             NEXT_PUBLIC_WS_URL=wss://api.${{ vars.BASE_DOMAIN }}
@@ -63,14 +74,32 @@ jobs:
             ghcr.io/lrojascode/proyectolejovista-frontend:latest
             ghcr.io/lrojascode/proyectolejovista-frontend:${{ github.event.workflow_run.head_sha }}
 
-      # Cada imagen se publica con dos tags: `latest` (lo que Coolify pullea en un
-      # Redeploy normal) y `${head_sha}` inmutable (para rollback determinista:
-      # apuntar IMAGE_TAG al sha anterior en Coolify — ver deploy-runbook.md).
+      # Cada imagen se publica con dos tags: `${head_sha}` inmutable, que es lo
+      # que se despliega y a lo que se vuelve en un rollback, y `latest`, que
+      # queda como conveniencia de desarrollo. Las imágenes anteriores NO se
+      # borran: son el camino de vuelta (criterio 9), y por eso este repositorio
+      # no tiene ninguna política de limpieza de paquetes en GHCR.
       - name: Resumen
         run: |
           SHA='${{ github.event.workflow_run.head_sha }}'
-          echo "Imágenes publicadas en GHCR con tags: latest y $SHA"
-          echo "Para desplegar: Coolify → recurso lejovista → Redeploy."
+          {
+            echo "## Imágenes publicadas"
+            echo
+            echo '`ghcr.io/lrojascode/proyectolejovista-backend:'"$SHA"'`'
+            echo
+            echo '`ghcr.io/lrojascode/proyectolejovista-frontend:'"$SHA"'`'
+            echo
+            echo "## Para desplegar"
+            echo
+            echo "1. Coolify → recurso lejovista → Environment Variables → \`IMAGE_TAG=$SHA\`"
+            echo "2. Redeploy."
+            echo "3. Verificar, que es parte del despliegue y no un extra:"
+            echo
+            echo '```bash'
+            echo "COMMIT_ESPERADO=$SHA SMOKE_EMAIL=... SMOKE_PASSWORD=... \\"
+            echo "  scripts/despliegue/smoke.sh https://api.lejovista.agenciakibo.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # El deploy al VPS lo gestiona AHORA Coolify, no un job SSH. Se eliminó el job
   # "Deploy al VPS" (appleboy/ssh-action + docker compose -f docker-compose.prod.yml

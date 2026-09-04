@@ -18,6 +18,9 @@ Códigos frecuentes: `400` (regla de negocio), `401` (sin/mal token), `403` (ten
 |--------|------|-------------|
 | GET | `/` | Liveness `{status, mock_mode, base_domain}` |
 | GET | `/health/deep` | Salud del pipeline: `degraded` si no hubo sync exitoso en 24 h |
+| GET | `/version` | Qué está desplegado: `{commit, migracion_en_codigo, migracion_aplicada, migraciones_al_dia}` |
+
+`/version` responde dos preguntas que hasta la spec 14 había que deducir del panel de despliegue. `commit` es el sha horneado en la imagen al construirla, no algo que se calcule al arrancar. Y `migraciones_al_dia` compara la revisión que trae el código con la que tiene la base: si son distintas, el contenedor `migrate` no corrió, y ese es el fallo más caro y más silencioso de un despliegue — la app arranca igual, responde igual y pasa el healthcheck. Lo consulta `scripts/despliegue/smoke.sh` después de cada despliegue.
 
 ## 3. Autenticación — `/api/v1/auth`
 

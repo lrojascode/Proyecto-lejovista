@@ -4,7 +4,11 @@
 
 - **Framework**: `pytest` + `pytest-asyncio` (`asyncio_mode = auto` en `pytest.ini`) + `pytest-mock`.
 - **44 archivos de test** en `backend/tests/`.
-- **Base de datos de test**: SQLite async en archivo temporal (`sqlite+aiosqlite`), con `NullPool` para evitar el binding de conexiones a un event loop (que causaba `MissingGreenlet`). Configurado en `conftest.py`.
+- **Base de datos de test**: la elige el entorno (spec 14). Con `TEST_DATABASE_URL` fijada, la suite entera corre contra **PostgreSQL**, que es el motor de producción; sin ella cae a SQLite async en archivo temporal (`sqlite+aiosqlite`), con `NullPool` para evitar el binding de conexiones a un event loop (que causaba `MissingGreenlet`). Configurado en `conftest.py`.
+  - CI corre **las dos**. El motor embebido es rápido y sirve para lo que no toca el dialecto; PostgreSQL es donde las claves foráneas, las restricciones únicas y las carreras se comportan como en producción. Una divergencia entre los dos resultados es información: dice que algo depende del motor sin haberlo declarado.
+  - Los tests de concurrencia (`test_spec0{1,2,3}_concurrencia_postgres.py`) usan su propia base, vía `TEST_POSTGRES_URL`, porque crean y destruyen el esquema por su cuenta.
+  - Las bases de PostgreSQL tienen que estar en **UTF8**, como producción. `conftest.py` lo comprueba al arrancar y falla con el motivo: una base en `SQL_ASCII` —que es lo que produce un `initdb` con `LC_ALL=C`, necesario para levantar un clúster de pruebas en macOS— revienta en el primer texto con un carácter fuera de ASCII, con un error que no se parece en nada a su causa.
+  - `conftest.py` sustituye además `app.database.async_session` por la sesión de test **antes** de importar la app: sin eso, todo servicio que abre su propia sesión —en vez de recibir la del request— apuntaba a la base del `.env`.
 - **Fixtures** (`conftest.py`):
   - `init_db` (autouse): crea y borra el esquema (`create_all`/`drop_all`) por test.
   - `db_session`: sesión de test.
@@ -32,7 +36,7 @@ Los nombres reflejan que muchos tests nacieron para **fijar hallazgos de auditor
 - **Framework**: Jest 30 + `@testing-library/react` + `jest-environment-jsdom`.
 - **Config**: `jest.config.ts` + `jest.setup.ts` (matchers de `@testing-library/jest-dom`).
 - **4 tests** en `frontend/__tests__/`: `login.test.tsx`, `page.test.tsx`, `diagnostics.test.tsx`, `learning.test.tsx`.
-- **Ejecución**: `npm test`.
+- **Ejecución**: `pnpm exec jest` (el proyecto usa pnpm; ver `docs/14-deployment.md`).
 
 ## 3. Estrategia y filosofía observada
 
@@ -42,7 +46,8 @@ Los nombres reflejan que muchos tests nacieron para **fijar hallazgos de auditor
 
 ## 4. Cobertura no automatizada / verificación manual
 
-- No se detecta un umbral de cobertura configurado ni CI que lo imponga (ver [15-deuda-tecnica](15-deuda-tecnica.md) y [14-deployment](14-deployment.md)).
+- CI impone `--cov-fail-under=80` sobre la corrida contra PostgreSQL.
+- Lo que NO cubre pytest: la construcción, la publicación, el despliegue por identificador, el smoke test y el rollback. Esa frontera es operativa y su evidencia vive fechada en `docs/infra/operacion/despliegues/`. Lo automatizable de ella —que los verificadores de paridad, límites y migraciones fallen cuando alguien los desalinea— está en `tests/test_spec14_ci_y_despliegue.py`, probado en los dos sentidos.
 - La verificación de escrituras reales a Meta se hace manualmente con la cuenta piloto y el allowlist (`F-2`), no en tests automatizados (por diseño: escribir de verdad cuesta dinero).
 
 ## 5. Cómo escribir un test nuevo (backend)

@@ -21,6 +21,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # CONTRACCION-APROBADA (declarada en la spec 14, sobre una migracion ya
+    # aplicada). La imagen anterior mapeaba el modelo pero ningun router,
+    # servicio ni worker lo consultaba: el rate limiting real vive en Redis.
+    # Borrar la tabla no le quita nada que use, asi que sigue funcionando.
     op.drop_table('tenant_api_quotas')
 
 

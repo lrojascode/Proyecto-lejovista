@@ -1,4 +1,5 @@
 from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import engine, Base
@@ -6,14 +7,19 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.organizations import router as org_router
 from app.api.v1.campaign_chat import router as campaign_chat_router
 from app.api.v1.campaigns import router as campaign_router
+from app.api.v1.media import router as media_router
+from app.api.v1.proposals import router as proposals_router
 from app.api.v1.insights import router as insight_router
 from app.api.v1.actions import router as action_router
 from app.api.v1.reports import router as report_router
 from app.api.v1.ai_usage import router as ai_usage_router
 from app.api.v1.admin import router as admin_router
+from app.api.v1.operacion import router as operacion_router
+from app.services.interruptores import CapacidadApagada
 from app.api.v1.invitations import router as invitations_router
 from app.api.v1.ws import router as ws_router, redis_listener
-from app.utils.security import require_module
+from app.utils.log_sanitizer import instalar_saneador
+from app.utils.security import require_agency, require_module
 import logging
 import asyncio
 import re
@@ -23,6 +29,14 @@ logging.basicConfig(
     level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+
+# Saneado de registros (spec 07, base de la 09): se instala inmediatamente
+# después de configurar el logging y ANTES de que la app registre nada. Borra
+# credenciales y datos personales de TODO lo que se registre, incluido lo que
+# emiten las librerías de terceros — confiar en que cada punto de llamada
+# recuerde no registrar un secreto garantiza que alguna vez se olvide.
+instalar_saneador()
+
 logger = logging.getLogger("lejovista.main")
 
 # Sentry opcional: se activa solo si hay DSN configurado. Import guardado para no
@@ -47,6 +61,24 @@ async def lifespan(app: FastAPI):
         logger.info("Base de datos inicializada (create_all).")
     else:
         logger.info("AUTO_CREATE_TABLES=false → el esquema se gestiona con Alembic (alembic upgrade head).")
+
+    # Catálogo de modelos de IA (spec 10). Idempotente y no destructivo: solo
+    # inserta los que faltan, así que un precio corregido a mano o un modelo
+    # puesto en retirada sobreviven al reinicio. La migración lo siembra en
+    # producción; esto cubre los entornos que arrancan con `create_all`.
+    try:
+        from app.database import async_session
+        from app.services.ai import catalogo
+        async with async_session() as session:
+            nuevos = await catalogo.sembrar(session)
+            await session.commit()
+        if nuevos:
+            logger.info("Catálogo de modelos de IA: %d modelo(s) sembrado(s).", nuevos)
+    except Exception:
+        logger.exception(
+            "No se pudo sembrar el catálogo de modelos de IA. El selector de "
+            "modelos va a aparecer vacío hasta que se resuelva."
+        )
     
     # Estado del write-back, bien visible al arrancar. Sin esto hay que deducirlo
     # de un `[MOCK] API CALL` perdido en los logs del worker, o peor: descubrirlo
@@ -123,6 +155,25 @@ async def tenant_slug_middleware(request: Request, call_next):
 
 
 # Incluir Rutas de la API v1
+# Una capacidad apagada por un interruptor operativo se convierte en 503 en
+# cualquier ruta desde la que se levante (spec 13). Como manejador global y no
+# como `try/except` por endpoint: los interruptores se aplican en el punto de
+# EJECUCIÓN —el limitador de Meta, el servicio de medios, la creación— y esos
+# puntos están a varias capas de distancia de la ruta. Un manejador cubre
+# también el camino que se añada mañana.
+#
+# 503 y no 403: no es que falte permiso, es que la capacidad no está disponible
+# ahora. La diferencia importa para el cliente y para cualquier reintento
+# automático.
+@app.exception_handler(CapacidadApagada)
+async def _capacidad_apagada(request, exc: CapacidadApagada):
+    logger.warning(
+        "Petición rechazada por el interruptor '%s' (%s): %s",
+        exc.capacidad, exc.ambito, request.url.path,
+    )
+    return JSONResponse(status_code=503, content={"detail": exc.as_detail()})
+
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(org_router, prefix="/api/v1")
 # Módulos habilitables (execution/01 §3). Ojo con la granularidad: los módulos
@@ -137,14 +188,27 @@ app.include_router(org_router, prefix="/api/v1")
 # módulo decide es qué funcionalidad se contrató, no a qué datos se accede.
 app.include_router(campaign_chat_router, prefix="/api/v1", dependencies=[Depends(require_module("chat"))])
 app.include_router(campaign_router, prefix="/api/v1")
+app.include_router(proposals_router, prefix="/api/v1")
 app.include_router(insight_router, prefix="/api/v1")
 app.include_router(action_router, prefix="/api/v1", dependencies=[Depends(require_module("acciones"))])
 app.include_router(report_router, prefix="/api/v1")
-app.include_router(ai_usage_router, prefix="/api/v1", dependencies=[Depends(require_module("ai_usage"))])
+# Consumo y costo de IA: altura de agencia. El modulo sigue existiendo para
+# decidir si se OFRECE, pero la superficie es operativa — proveedor, modelo,
+# tokens y costo son las palancas con las que la agencia opera el servicio, no
+# informacion que el cliente pueda usar (spec 05).
+app.include_router(
+    ai_usage_router, prefix="/api/v1",
+    dependencies=[Depends(require_module("ai_usage")), Depends(require_agency)],
+)
+app.include_router(media_router, prefix="/api/v1")
 app.include_router(invitations_router, prefix="/api/v1")
 # Panel de plataforma. Sin require_module: no es un modulo de cliente, y su
 # gate --require_platform_admin-- vive en cada ruta del router.
 app.include_router(admin_router, prefix="/api/v1")
+# Operación (spec 13): interruptores, feature flags, señales, incidente y
+# métricas. Sin `require_module`: apagar un módulo no puede dejar sin acceso
+# a la palanca que sirve para contener un incidente.
+app.include_router(operacion_router, prefix="/api/v1")
 app.include_router(ws_router) # Not prefixed with api/v1 to keep ws://host/ws/
 
 # Servir archivos estáticos subidos (/media)
@@ -210,3 +274,53 @@ async def health_deep():
         "last_successful_sync": last_ok.isoformat(),
         "hours_since_last_sync": round(age_hours, 1),
     }
+
+
+# Spec 14, criterios 7 y 8. Un despliegue por identificador de commit no sirve de
+# nada si despues no se puede comprobar cual llego. Esto responde tres cosas que
+# el runbook y el smoke test necesitan y que hasta ahora habia que suponer:
+#
+#   - `commit`: el sha horneado en la imagen. "desconocido" en desarrollo, donde
+#     el codigo viene de un volumen montado y no de un artefacto construido.
+#   - `migracion_en_codigo` vs `migracion_aplicada`: si no coinciden, el
+#     contenedor `migrate` no corrio o fallo, y el backend esta hablando con un
+#     esquema que no es el suyo. Es el fallo silencioso mas caro de un
+#     despliegue: la app arranca igual.
+#
+# Sin auth, como `/health/deep`: no expone datos de ningun tenant, y un
+# despliegue tiene que poder verificarse desde fuera.
+@app.get("/version")
+async def version():
+    from sqlalchemy import text
+    from app.database import async_session
+
+    en_codigo = _revision_de_codigo()
+    try:
+        async with async_session() as db:
+            aplicada = (
+                await db.execute(text("SELECT version_num FROM alembic_version"))
+            ).scalar_one_or_none()
+    except Exception:
+        # Base inalcanzable o sin la tabla (instalacion que nunca migro). No se
+        # inventa un valor: se dice que no se pudo leer.
+        aplicada = None
+
+    return {
+        "commit": settings.GIT_SHA,
+        "migracion_en_codigo": en_codigo,
+        "migracion_aplicada": aplicada,
+        "migraciones_al_dia": aplicada is not None and aplicada == en_codigo,
+    }
+
+
+def _revision_de_codigo() -> str | None:
+    """La revision `head` de la cadena de migraciones que trae ESTA imagen."""
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script = ScriptDirectory.from_config(Config(os.path.join(raiz, "alembic.ini")))
+        return script.get_current_head()
+    except Exception:
+        return None

@@ -22,6 +22,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # CONTRACCION-APROBADA (declarada en la spec 14, sobre una migracion ya
+    # aplicada). Las tres tablas quedaron sin lectores ni escritores: el
+    # historico real vive en `campaign_snapshots` y el servicio de auditoria que
+    # usaba `action_logs` se elimino en el mismo cambio. La imagen anterior las
+    # mapeaba sin tocarlas nunca.
     # campaign_metrics_history referencia campaigns — se borra primero.
     op.drop_index(op.f('ix_campaign_metrics_history_date'), table_name='campaign_metrics_history')
     op.drop_index(op.f('ix_campaign_metrics_history_campaign_id'), table_name='campaign_metrics_history')

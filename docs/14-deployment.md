@@ -41,12 +41,13 @@ Filosofía: **no se construye nada en el VPS**. Las imágenes se compilan en CI 
 **Flujo de despliegue** (detalle y rollback en [`docs/infra/deploy-runbook.md`](infra/deploy-runbook.md)):
 
 1. Push a `main` → CI corre los tests.
-2. CI verde → `deploy.yml` construye y publica las imágenes en GHCR (tags `latest` + `${sha}`).
+2. CI verde → `deploy.yml` construye y publica las imágenes en GHCR con dos tags: `${sha}` inmutable, que es **lo que se despliega**, y `latest` como conveniencia de desarrollo.
 3. Coolify → recurso lejovista → **Redeploy**: pullea las imágenes, corre `migrate` (`alembic upgrade head`) y reinicia el stack.
 
 El `Redeploy` deja el esquema al día igual que en local — el servicio `migrate` corre una sola vez (no una por réplica) antes de que `backend` levante.
 
-- `IMAGE_PREFIX` / `IMAGE_TAG` son variables del recurso en Coolify (default `ghcr.io/lrojascode` / `latest`). Cambiar `IMAGE_TAG` a un `${sha}` inmutable y redeployar = rollback determinista.
+- `IMAGE_PREFIX` / `IMAGE_TAG` son variables del recurso en Coolify. **`IMAGE_TAG` se actualiza al `${sha}` en cada despliegue** (spec 14): `latest` no es un artefacto identificable, y sin identificador el rollback no tiene a qué volver. Volver atrás es repinear `IMAGE_TAG` al sha bueno y redeployar; las imágenes anteriores no se borran.
+- Qué commit corre se pregunta, no se deduce: `GET /version` devuelve el sha horneado en la imagen y si sus migraciones están aplicadas.
 - El backend **no** publica puertos al host (acceso solo vía el proxy de Coolify).
 - Volúmenes: `postgres_data`, `redis_data`, `media_data` (imágenes subidas, compartido entre `backend` y `celery-worker-creation`).
 
@@ -65,8 +66,8 @@ Multi-stage:
 
 ### Frontend (`frontend/Dockerfile`)
 Multi-stage:
-- **deps**: `npm ci`.
-- **builder**: `npm run build` con las `NEXT_PUBLIC_*` como ARG → genera `.next/standalone`.
+- **deps**: `pnpm install --frozen-lockfile`, con la versión de pnpm que declara `packageManager` en `package.json` e instalada por corepack. Node 22, el mismo que CI. Falla si el lockfile no corresponde al manifiesto.
+- **builder**: `pnpm run build` con las `NEXT_PUBLIC_*` como ARG → genera `.next/standalone`.
 - **runner**: imagen mínima (~250 MB), usuario sin privilegios `nextjs`, copia `public/`, `.next/standalone`, `.next/static`. `CMD ["node", "server.js"]`.
 
 ## 5. Nginx (reverse proxy multi-tenant)
@@ -97,8 +98,8 @@ No hay archivo de nginx en prod: **Coolify actúa de reverse proxy y termina el 
 
 ## 8. CI/CD
 
-- **CI** (`.github/workflows/ci.yml`): en cada push/PR a `main` corre pytest+alembic (backend) y tsc+jest+build (frontend).
-- **CD** (`.github/workflows/deploy.yml`): se dispara solo si CI termina en éxito sobre `main` (`workflow_run`). **Solo construye y publica** backend/frontend en GHCR con tags `latest` + `${sha}` (reemplaza el uso rutinario de `build-push.sh`, que queda como alternativa manual/local). **No despliega**: el deploy lo hace Coolify.
+- **CI** (`.github/workflows/ci.yml`): en cada push/PR a `main` corre, en la misma ejecución, cinco trabajos — coherencia (paridad de versiones, límites de recursos, migraciones compatibles hacia atrás), backend contra PostgreSQL y Redis reales, backend contra el motor embebido, frontend (lint+tsc+jest+build) y construcción de las dos imágenes sin publicarlas.
+- **CD** (`.github/workflows/deploy.yml`): se dispara solo si CI termina en éxito sobre `main` (`workflow_run`). **Solo construye y publica** backend/frontend en GHCR con tags `${sha}` + `latest` (reemplaza el uso rutinario de `build-push.sh`, que queda como alternativa manual/local). **No despliega**: el deploy lo hace Coolify.
 - **Deploy**: manual desde el panel de Coolify (recurso lejovista → Redeploy). Automatizable a futuro con un *deploy webhook* de Coolify llamado como paso extra en `deploy.yml`. Flujo completo y rollback en [`docs/infra/deploy-runbook.md`](infra/deploy-runbook.md).
 - Variable necesaria en el repo: `BASE_DOMAIN` (Actions variable) — se inlina en las `NEXT_PUBLIC_*` del build del frontend. Los secrets de deploy por SSH (`VPS_*`) ya **no se usan** (se eliminó el job SSH con la migración a Coolify).
 

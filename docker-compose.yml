@@ -49,6 +49,8 @@ services:
     env_file: .env
     volumes:
       - ./backend:/app
+    mem_limit: 448m
+    cpus: 1.0
 
   backend:
     # Se construye UNA sola imagen; los workers y beat la reutilizan (image:).

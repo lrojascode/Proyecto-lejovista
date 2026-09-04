@@ -1,0 +1,14 @@
+# Spec 14, criterio 4: CI corre lint.
+#
+# El conjunto de reglas es deliberadamente corto. `select` trae los fallos que
+# son errores de verdad —sintaxis, nombres no definidos, comparaciones que
+# siempre dan lo mismo, formatos rotos— y deja fuera el estilo. Un lint que
+# marca 155 importaciones sin usar en el primer dia se apaga el segundo, y con
+# el se va la unica red que atrapa un `NameError` antes de produccion.
+#
+# Ampliar el conjunto es bienvenido; hacerlo junto con la limpieza que exige,
+# no en un commit que deje CI rojo para todos.
+line-length = 120
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]

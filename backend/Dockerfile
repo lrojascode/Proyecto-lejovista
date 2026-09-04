@@ -54,6 +54,14 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY . .
 
+# Spec 14, criterios 7 y 8: el artefacto de despliegue es el identificador del
+# commit, y tiene que poder leerse desde el sistema en marcha. Se hornea aqui —
+# no se calcula en tiempo de ejecucion — porque la imagen no lleva git ni el
+# repositorio: lo que responda `/version` es lo que se construyo, no lo que
+# alguien supone que esta corriendo.
+ARG GIT_SHA=desconocido
+ENV GIT_SHA=$GIT_SHA
+
 EXPOSE 8000
 
 # CMD apto para producción (sin --reload). El compose local sobreescribe este

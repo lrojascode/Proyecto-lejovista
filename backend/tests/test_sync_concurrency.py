@@ -40,7 +40,15 @@ class AsyncContextManagerMock:
 
 @pytest.fixture(autouse=True)
 def mock_db_session(mocker, db_session):
-    mocker.patch("app.workers.tasks.async_session", lambda: AsyncContextManagerMock(db_session))
+
+# Spec 14: la tarea corre en OTRO hilo, con su propio bucle de eventos. Pasarle
+# la sesion del test —creada en el bucle de pytest— funcionaba con el motor
+# embebido y revienta contra PostgreSQL: la conexion de asyncpg queda atada a un
+# bucle y el cierre ocurre en otro. Se le da una FABRICA, que es lo que la tarea
+# usa en produccion: abre su propia sesion en el bucle donde corre.
+    from conftest import TestingSessionLocal
+
+    mocker.patch("app.workers.tasks.async_session", TestingSessionLocal)
 
 
 @pytest.fixture
