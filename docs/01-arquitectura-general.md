@@ -53,7 +53,7 @@ flowchart TB
     end
 
     subgraph Ext["Servicios externos"]
-        META["Meta Graph API v25.0"]
+        META["Meta Graph API v26.0"]
         LLM["OpenAI / Gemini / OpenRouter"]
         SENTRY["Sentry (opcional)"]
     end

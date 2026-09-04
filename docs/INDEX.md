@@ -19,6 +19,7 @@ Documentación técnica generada a partir del análisis directo del código fuen
 | 09 | [Seguridad](09-seguridad.md) | Cifrado, aislamiento de tenants, write-back gating, rate limiting |
 | 10 | [Configuración](10-configuracion.md) | Variables de entorno y feature flags |
 | 11 | [Servicios externos](11-servicios-externos.md) | Meta Graph API, LLMs, Redis, Sentry |
+| 11b | [Inventario de la API de Meta](11-inventario-meta.md) | Endpoints, campos, permisos y comportamientos de los que depende el producto (spec 08) |
 | 12 | [Flujos](12-flujos.md) | Ciclo de vida de peticiones, sync, análisis, creación de campañas |
 | 13 | [Testing](13-testing.md) | Estrategia de pruebas, fixtures, cobertura |
 | 14 | [Deployment](14-deployment.md) | Docker Compose, build-push, Nginx, túnel, healthchecks |
