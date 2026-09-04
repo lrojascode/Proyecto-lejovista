@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# OBSOLETO — sustituido por scripts/backup/restore.sh (spec 04).
+# Restauraba desde una copia LOCAL sin cifrar. Ver docs/infra/backups/README.md.
 set -euo pipefail
 
 # ==============================================================================

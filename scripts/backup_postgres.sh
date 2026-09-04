@@ -1,4 +1,20 @@
 #!/usr/bin/env bash
+# OBSOLETO — sustituido por scripts/backup/ (spec 04).
+#
+# Este script escribia y leia EN EL MISMO VPS que protege, sin cifrar, y solo
+# cubria la base de datos: ni la configuracion ni los medios. Un fallo de disco
+# se llevaba la base y sus copias a la vez, y sin ENCRYPTION_KEY una
+# restauracion dejaba las credenciales de Meta ilegibles.
+#
+# Usar en su lugar:
+#   scripts/backup/backup.sh   — respaldo cifrado hacia un destino externo
+#   scripts/backup/verify.sh   — verificacion diaria con alerta externa
+#   scripts/backup/restore.sh  — restauracion desde host limpio
+#   scripts/backup/drill.sh    — ejercicio trimestral con evidencia
+#
+# Ver docs/infra/backups/README.md. Se conserva mientras la transicion no este
+# confirmada en produccion; no se retira hasta que el primer drill contra el
+# remoto real haya pasado.
 set -euo pipefail
 
 # ==============================================================================
