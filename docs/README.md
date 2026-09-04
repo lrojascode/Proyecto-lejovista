@@ -20,8 +20,8 @@ El producto está calibrado hoy para el **mercado peruano** (moneda `PEN`, regi�
 | Workers | **Celery 5** + **Redis** (broker/result/pubsub), Celery Beat |
 | Base de datos | **PostgreSQL 16** (asyncpg), migraciones con **Alembic** |
 | Frontend | **Next.js 16** (App Router), **React 19**, TypeScript, Recharts |
-| IA / LLM | OpenAI · Gemini (directo) · OpenRouter (auto-selección por API key); modelo por defecto `google/gemini-2.5-flash` |
-| Integración externa | **Meta Graph/Marketing API** `v25.0` |
+| IA / LLM | OpenAI · Gemini (directo) · OpenRouter, **elegidos explícitamente por Organización** (spec 10; las claves de entorno ya no eligen proveedor). Modelos y precios en el catálogo `ai_model_catalog` |
+| Integración externa | **Meta Graph/Marketing API** `v26.0` |
 | PDF | WeasyPrint (HTML→PDF server-side) |
 | Infra | **Docker Compose**, **Nginx** (reverse proxy multi-tenant por subdominio), imágenes en GHCR |
 | Observabilidad | Sentry (opcional), logging estructurado, healthcheck profundo |

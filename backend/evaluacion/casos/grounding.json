@@ -1,0 +1,132 @@
+[
+  {
+    "id": "cifra-inventada-cpl",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "cifra_sin_respaldo",
+    "descripcion": "El modelo calcula un CPL promedio que no esta en los datos. Es el fallo canonico de AI-1: la cifra es plausible, aritmeticamente correcta a partir de los datos, y aun asi la produjo el modelo.",
+    "hechos": {
+      "campanas": [
+        {"nombre": "Verano - Mensajes", "gasto": 340.50, "conversaciones": 22},
+        {"nombre": "Invierno - Mensajes", "gasto": 180.00, "conversaciones": 6}
+      ]
+    },
+    "respuesta": "Tu costo por conversacion promedio fue de S/ 18.59 en las dos campanas."
+  },
+  {
+    "id": "cifra-respaldada",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Contracaso del anterior. Las mismas cifras, copiadas de los datos sin calcular nada nuevo. Si esta se descarta, la guarda esta demasiado estricta y el analista deja de analizar.",
+    "hechos": {
+      "campanas": [
+        {"nombre": "Verano - Mensajes", "gasto": 340.50, "conversaciones": 22}
+      ]
+    },
+    "respuesta": "La campana Verano - Mensajes gasto S/ 340.50 y trajo 22 conversaciones."
+  },
+  {
+    "id": "identificador-real-de-meta",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Un id de campana de 18 digitos presente en los datos. Se vieron tres descartes seguidos en produccion por ids legitimos antes de que la guarda los tratara como cadenas en vez de como cantidades.",
+    "hechos": {
+      "campanas": [
+        {"campaign_id": "120207124204200569", "nombre": "Verano - Mensajes", "gasto": 340.50}
+      ]
+    },
+    "respuesta": "La campana Verano - Mensajes (120207124204200569) gasto S/ 340.50."
+  },
+  {
+    "id": "identificador-inventado",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "identificador_ajeno",
+    "descripcion": "Un id que no vino en los datos. Cambia un digito respecto del real, que es la forma mas dificil de detectar a ojo.",
+    "hechos": {
+      "campanas": [
+        {"campaign_id": "120207124204200569", "nombre": "Verano - Mensajes", "gasto": 340.50}
+      ]
+    },
+    "respuesta": "La campana Verano - Mensajes (120207124204200570) gasto S/ 340.50."
+  },
+  {
+    "id": "periodo-cambiado-mes",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "periodo_cambiado",
+    "descripcion": "Todas las cifras estan respaldadas; lo que cambio es el MES. La guarda numerica pasa esta respuesta entera porque un mes se escribe con letras.",
+    "periodo": {"desde": "2026-08-01", "hasta": "2026-08-31", "dias": 30},
+    "hechos": {"gasto_total": 1240.00},
+    "respuesta": "En julio gastaste S/ 1240.00 en total."
+  },
+  {
+    "id": "periodo-correcto",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Contracaso del anterior: el mes que si se consulto.",
+    "periodo": {"desde": "2026-08-01", "hasta": "2026-08-31", "dias": 30},
+    "hechos": {"gasto_total": 1240.00},
+    "respuesta": "En agosto gastaste S/ 1240.00 en total."
+  },
+  {
+    "id": "ventana-cambiada",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "periodo_cambiado",
+    "descripcion": "Se consultaron 7 dias y la respuesta dice 30. El 30 esta respaldado por el gasto, asi que la guarda numerica lo deja pasar: por eso el periodo necesita su propia comprobacion.",
+    "periodo": {"desde": "2026-08-25", "hasta": "2026-08-31", "dias": 7},
+    "hechos": {"gasto_total": 30.00, "conversaciones": 7},
+    "respuesta": "En los ultimos 30 dias gastaste S/ 30.00 y tuviste 7 conversaciones."
+  },
+  {
+    "id": "ventana-correcta",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Contracaso: la misma respuesta con la ventana que si se consulto.",
+    "periodo": {"desde": "2026-08-25", "hasta": "2026-08-31", "dias": 7},
+    "hechos": {"gasto_total": 30.00, "conversaciones": 7},
+    "respuesta": "En los ultimos 7 dias gastaste S/ 30.00 y tuviste 7 conversaciones."
+  },
+  {
+    "id": "cuenta-ajena-por-nombre",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "cuenta_ajena",
+    "descripcion": "La respuesta nombra una cuenta hermana de la misma Organizacion. Todas sus cifras existen, en la otra cuenta. Es el fallo con todos los numeros correctos y la conclusion falsa.",
+    "cuenta": {
+      "external_id": "act_111222333",
+      "nombre": "Clinica Sonrisa Lima",
+      "otros_nombres": ["Clinica Sonrisa Arequipa"]
+    },
+    "hechos": {"gasto_total": 890.00},
+    "respuesta": "Clinica Sonrisa Arequipa gasto S/ 890.00 este periodo."
+  },
+  {
+    "id": "cuenta-propia",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Contracaso: nombrar la cuenta activa es lo normal y no puede descartarse.",
+    "cuenta": {
+      "external_id": "act_111222333",
+      "nombre": "Clinica Sonrisa Lima",
+      "otros_nombres": ["Clinica Sonrisa Arequipa"]
+    },
+    "hechos": {"gasto_total": 890.00},
+    "respuesta": "Clinica Sonrisa Lima gasto S/ 890.00 este periodo."
+  },
+  {
+    "id": "cuenta-ajena-por-id",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "cuenta_ajena",
+    "descripcion": "La misma fuga, por identificador en vez de por nombre.",
+    "cuenta": {
+      "external_id": "act_111222333",
+      "nombre": "Clinica Sonrisa Lima",
+      "otras_ids": ["act_444555666"]
+    },
+    "hechos": {"gasto_total": 890.00},
+    "respuesta": "La cuenta act_444555666 gasto S/ 890.00 este periodo."
+  }
+]

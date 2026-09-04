@@ -1,0 +1,45 @@
+[
+  {
+    "id": "objetivo-fuera-de-catalogo",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "fuera_de_catalogo",
+    "descripcion": "Casi encaja, y ahi esta el riesgo. Un corrector de 'quiso decir OUTCOME_LEADS' seria una eleccion que nadie tomo, hecha sobre un campo que termina en una campana con dinero real.",
+    "contrato": {"campo": "objetivo", "catalogo": ["OUTCOME_LEADS", "OUTCOME_ENGAGEMENT", "OUTCOME_TRAFFIC"]},
+    "salida": {"objetivo": "LEADS"}
+  },
+  {
+    "id": "objetivo-del-catalogo",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Contracaso: el valor exacto del catalogo pasa.",
+    "contrato": {"campo": "objetivo", "catalogo": ["OUTCOME_LEADS", "OUTCOME_ENGAGEMENT", "OUTCOME_TRAFFIC"]},
+    "salida": {"objetivo": "OUTCOME_LEADS"}
+  },
+  {
+    "id": "periodo-fuera-del-enum",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "fuera_de_catalogo",
+    "descripcion": "El enum de periodos existe justamente para que el modelo no pueda acercarse a inventar un numero de dias.",
+    "contrato": {"campo": "periodo", "catalogo": ["7d", "30d", "90d", "180d", "all"]},
+    "salida": {"periodo": "37d"}
+  },
+  {
+    "id": "periodo-del-enum",
+    "dimension": "grounding",
+    "espera": "aceptar",
+    "descripcion": "Contracaso del anterior.",
+    "contrato": {"campo": "periodo", "catalogo": ["7d", "30d", "90d", "180d", "all"]},
+    "salida": {"periodo": "30d"}
+  },
+  {
+    "id": "campo-obligatorio-ausente",
+    "dimension": "grounding",
+    "espera": "descartar",
+    "motivo": "contrato_invalido",
+    "descripcion": "Un campo requerido ausente no toma su valor por defecto: un default silencioso convierte 'el modelo no supo' en 'el modelo eligio esto'.",
+    "contrato": {"campo": "objetivo", "catalogo": ["OUTCOME_LEADS", "OUTCOME_ENGAGEMENT"]},
+    "salida": {}
+  }
+]

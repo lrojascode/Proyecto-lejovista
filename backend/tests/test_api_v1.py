@@ -99,14 +99,18 @@ async def test_organization_and_ad_accounts(async_client: AsyncClient, mock_cele
     # --- ACT: PUT organization/my ---
     update_payload = {
         "name": "Updated Org Name",
-        "ai_model": "google/gemini-1.5-pro",
+        # Un modelo del catálogo del proveedor declarado. Antes valía cualquier
+        # cadena; desde la spec 10 se valida al guardar, porque un modelo
+        # inexistente dejaba al cliente con todas sus llamadas fallando y la
+        # pantalla mostrándolo como si estuviera configurado.
+        "ai_model": "gpt-5.4-mini",
         "max_budget": 2500.0
     }
     update_res = await async_client.put("/api/v1/organizations/my", json=update_payload, headers=headers)
     assert update_res.status_code == 200
     updated_data = update_res.json()
     assert updated_data["name"] == "Updated Org Name"
-    assert updated_data["ai_model"] == "google/gemini-1.5-pro"
+    assert updated_data["ai_model"] == "gpt-5.4-mini"
     assert updated_data["max_budget"] == 2500.0
     
     # --- ACT: POST connect ad account ---

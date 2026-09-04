@@ -55,6 +55,12 @@ def _llm_enabled(monkeypatch):
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key")
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
+    # Desde la spec 10 el proveedor no se deduce de qué clave esté presente: se
+    # declara al crear la organización. Estas pruebas crean la suya por la API,
+    # así que el default tiene que apuntar al proveedor cuya credencial se
+    # configura arriba — si no, la organización nace declarando OpenAI y la
+    # clave de OpenRouter no le sirve, que es justo el criterio 8.
+    monkeypatch.setattr(settings, "DEFAULT_AI_PROVIDER", "openrouter")
     # `CampaignValidator.validate` real hace un GET a Meta; en el resto de los
     # tests eso se evita con MOCK_SERVICES=true, que acá deliberadamente
     # apagamos para probar la extracción LLM — así que se mockea aparte.

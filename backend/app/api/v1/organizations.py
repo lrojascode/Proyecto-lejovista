@@ -10,7 +10,11 @@ from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_user import OrganizationUser
-from app.models.invitation import Invitation
+from app.models.invitation import Invitation, hash_invitation_token
+from app.services.budget_gate import MixedCurrencies, estado_del_mes
+from app.services.experiencia import (
+    ACCESO_CLIENTE, acceso_de, es_cliente, sanear_para_cliente,
+)
 from app.models.ad_account import AdAccount
 from app.models.meta_page import MetaPage
 from app.models.whatsapp_number import WhatsAppNumber
@@ -34,6 +38,9 @@ from app.schemas.schemas import MemberAdAccountsUpdate, MemberRoleUpdate
 from app.schemas.response_schemas import (
     AiModelsResponse, BusinessPoliciesResponse, MessageResponse, InvitationResponse,
     CampaignRulesConfigResponse, AIThresholdsConfigResponse,
+    MonthlyBudgetResponse,
+
+    ExperienceResponse,
 )
 from app.utils.urls import invitation_url
 from app.utils.security import (
@@ -43,6 +50,8 @@ from app.utils.throttle import enforce_cooldown
 from app.services.meta_ads.token_exchange import exchange_for_long_lived_token
 from app.workers.tasks import sync_ad_account, refresh_org_pages
 from app.services.ai.llm import OpenRouterClient, MODELS_BY_PROVIDER, pick_model
+from app.services.ai import catalogo, presupuesto, proveedor
+from app.services.money import MoneyConversionError
 from app.services.policy_catalog import INDUSTRIES, get_policies_for_industry
 from app.services.asset_scope import (
     page_ids_of_accounts, link_number_to_accounts, adoptar_huerfanos,
@@ -62,26 +71,57 @@ async def get_available_ai_models(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Modelos de IA que el selector de Preferencias debería ofrecer: si se pasa un
-    proveedor específico, sus modelos; si no, los del proveedor activo de la
-    organización o del sistema.
-    """
-    if provider and provider in MODELS_BY_PROVIDER:
-        return {"active_provider": provider, "models": MODELS_BY_PROVIDER[provider]}
+    """Modelos que el selector debe ofrecer, leídos del CATÁLOGO (spec 10).
 
+    Tres cambios respecto de la versión anterior, y los tres son criterios de la
+    spec:
+
+    * El proveedor activo es el que la Organización **declara**, no el que
+      resulte de qué credencial esté presente en el entorno (criterio 9).
+    * Solo se ofrecen modelos disponibles del catálogo: uno retirado deja de
+      aparecer sin necesidad de desplegar código (criterio 11).
+    * Si el modelo guardado ya no se ofrece, la Organización queda señalada con
+      el motivo y sigue funcionando (criterio 12). Reasignarla automáticamente
+      sería el cambio silencioso de modelo —y de precio— que la spec prohíbe.
+    """
     org = await db.get(Organization, current_user.organization_id)
-    client = OpenRouterClient(organization=org)
-    active_provider = client.provider
-    # Se devuelve lo EFECTIVO, no lo elegido. Una credencial guardada en otra
-    # organización deja a ésta resolviendo a un proveedor sin key, y hasta ahora
-    # la pantalla no tenía forma de mostrarlo: se veía todo conectado mientras
-    # el analista contestaba con plantillas.
+
+    if provider and provider in catalogo.PROVEEDORES:
+        filas = await catalogo.modelos_de(db, provider)
+        return {
+            "active_provider": provider,
+            "models": [{"value": f.model, "label": f.label} for f in filas],
+        }
+
+    activo = (getattr(org, "llm_provider", None) or "").strip()
+    cfg_error = None
+    try:
+        proveedor.resolver(org)
+        credencial_ok = True
+    except proveedor.ConfiguracionDeIAInvalida as e:
+        credencial_ok = False
+        cfg_error = str(e)
+
+    filas = await catalogo.modelos_de(db, activo) if activo in catalogo.PROVEEDORES else []
+
+    elegido = (getattr(org, "ai_model", None) or "").strip()
+    no_elegible = False
+    motivo_no_elegible = None
+    if activo in catalogo.PROVEEDORES and elegido:
+        try:
+            await catalogo.assert_elegible(db, activo, elegido)
+        except catalogo.ModeloNoElegible as e:
+            no_elegible = True
+            motivo_no_elegible = e.motivo
+
     return {
-        "active_provider": active_provider,
-        "models": MODELS_BY_PROVIDER.get(active_provider, []),
-        "credential_ok": bool(client.api_key),
-        "effective_model": pick_model(org, active_provider),
+        "active_provider": activo,
+        "models": [{"value": f.model, "label": f.label} for f in filas],
+        "credential_ok": credencial_ok,
+        "effective_model": elegido or None,
+        "config_error": cfg_error,
+        "modelo_no_elegible": no_elegible,
+        "modelo_no_elegible_motivo": motivo_no_elegible,
     }
 
 @router.get("/my", response_model=OrganizationResponse)
@@ -92,7 +132,49 @@ async def get_my_organization(
     org = await db.get(Organization, current_user.organization_id)
     if not org:
         raise HTTPException(status_code=404, detail="Organización no encontrada.")
+    if es_cliente(current_user):
+        # El proveedor de IA, el modelo y la vista previa de la clave son
+        # palancas de la agencia. El cliente ve que hay una configuración y su
+        # estado; nunca su contenido (spec 05, criterio 13).
+        return sanear_para_cliente(OrganizationResponse.model_validate(org).model_dump())
     return org
+
+
+@router.get("/my/experience", response_model=ExperienceResponse)
+async def get_my_experience(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Qué superficie le corresponde a esta sesión, y con qué alcance.
+
+    La experiencia se DERIVA del acceso; no se elige. Este endpoint la informa
+    para que el frontend arme la navegación correcta, pero no la decide: aunque
+    alguien mienta en el cliente, cada endpoint vuelve a comprobar módulo y rol
+    en el backend. Filtrar el menú es experiencia de usuario; lo único que es
+    seguridad son las compuertas.
+    """
+    org = await db.get(Organization, current_user.organization_id)
+    if not org:
+        raise HTTPException(status_code=404, detail="Organización no encontrada.")
+
+    rol = next(
+        (ou.role for ou in (current_user.organizations or [])
+         if ou.organization_id == org.id),
+        None,
+    )
+    acceso = acceso_de(current_user)
+    return ExperienceResponse(
+        experiencia="cliente" if acceso == ACCESO_CLIENTE else "agencia",
+        rol=rol or "VIEWER",
+        # Los módulos acotan la vista del CLIENTE. Para la agencia se informa el
+        # catálogo completo: sus herramientas se gobiernan por rol.
+        modulos=(
+            enabled_modules_for(org) if acceso == ACCESO_CLIENTE
+            else list(AVAILABLE_MODULES)
+        ),
+        es_admin_de_plataforma=bool(getattr(current_user, "is_platform_admin", False)),
+        organizacion_slug=org.slug,
+    )
 
 @router.put("/my", response_model=OrganizationResponse)
 @router.patch("/my", response_model=OrganizationResponse)
@@ -106,17 +188,114 @@ async def update_my_organization(
         raise HTTPException(status_code=404, detail="Organización no encontrada.")
         
     dump = org_update.model_dump(exclude_unset=True)
+
+    # Configuración de IA: se valida ANTES de tocar nada y se registra después
+    # (spec 10, criterios 10, 11 y 12). Validar antes importa: aplicar el
+    # proveedor y fallar al validar el modelo dejaría la organización en un
+    # estado que nadie pidió.
+    proveedor_nuevo = (dump.get("llm_provider") or org.llm_provider or "").strip()
+    modelo_nuevo = (dump.get("ai_model") or org.ai_model or "").strip()
+
+    if "llm_provider" in dump and proveedor_nuevo not in catalogo.PROVEEDORES:
+        raise HTTPException(status_code=400, detail={
+            "code": "AI_PROVIDER_INVALID",
+            "message": (
+                f"'{proveedor_nuevo}' no es un proveedor válido. "
+                f"Los válidos son: {', '.join(catalogo.PROVEEDORES)}."
+            ),
+        })
+
+    if ("ai_model" in dump or "llm_provider" in dump) and proveedor_nuevo and modelo_nuevo:
+        try:
+            await catalogo.assert_elegible(db, proveedor_nuevo, modelo_nuevo)
+        except catalogo.ModeloNoElegible as e:
+            raise HTTPException(status_code=400, detail={
+                "code": "AI_MODEL_NOT_ELIGIBLE",
+                "message": (
+                    f"El modelo '{modelo_nuevo}' no se puede elegir con el "
+                    f"proveedor '{proveedor_nuevo}': {e.motivo}."
+                ),
+            })
+
+    if "ai_monthly_budget_usd" in dump:
+        try:
+            dump["ai_monthly_budget_usd"] = presupuesto.limite_desde_entrada(
+                dump["ai_monthly_budget_usd"]
+            )
+        except (ValueError, MoneyConversionError) as e:
+            raise HTTPException(status_code=400, detail={
+                "code": "AI_BUDGET_INVALID", "message": str(e),
+            })
+
+    # Los valores anteriores, para la bitácora. Se leen ANTES de escribir.
+    antes = {
+        campo: getattr(org, campo, None)
+        for campo in ("llm_provider", "ai_model", "ai_monthly_budget_usd")
+    }
+    tenia_credencial = org.has_llm_api_key
+
     if "llm_api_key" in dump:
         new_key = dump.pop("llm_api_key")
         org.set_llm_api_key(new_key)
+        await proveedor.registrar_cambio(
+            db, org, campo="llm_api_key",
+            valor_anterior="presente" if tenia_credencial else None,
+            valor_nuevo="presente" if new_key else None,
+            actor_user_id=current_user.id, actor_email=current_user.email,
+        )
+
+    if "max_budget" in dump:
+        # Las dos columnas a la vez (fase de expansión de la spec 02): la que
+        # decide es la exacta, la antigua se conserva para que la imagen
+        # anterior siga funcionando sobre este esquema.
+        org.set_limite_mensual(dump.pop("max_budget"))
 
     for k, v in dump.items():
         setattr(org, k, v)
-        
+
+    for campo, anterior in antes.items():
+        if campo in dump:
+            await proveedor.registrar_cambio(
+                db, org, campo=campo,
+                valor_anterior=None if anterior is None else str(anterior),
+                valor_nuevo=None if dump[campo] is None else str(dump[campo]),
+                actor_user_id=current_user.id, actor_email=current_user.email,
+            )
+
     db.add(org)
     await db.commit()
     await db.refresh(org)
     return org
+
+
+@router.get("/my/budget", response_model=MonthlyBudgetResponse)
+async def get_my_monthly_budget(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Límite mensual, consumo y margen de la organización activa.
+
+    Misma fuente que la compuerta: la cifra que ve el cliente, la que ve la
+    agencia y la que decide son la misma. Si cada consumidor la calculara por su
+    cuenta, la pantalla podría prometer margen que el backend rechaza.
+
+    No expone identificadores internos ni configuración de la agencia: es una
+    superficie del cliente (spec 02, criterio 10).
+    """
+    try:
+        estado = await estado_del_mes(db, current_user.organization_id)
+    except MixedCurrencies as e:
+        raise HTTPException(status_code=400, detail=e.as_detail())
+
+    return MonthlyBudgetResponse(
+        periodo=estado.periodo,
+        moneda=estado.moneda,
+        limite_mensual=str(estado.limite),
+        gasto_real=str(estado.gasto_real),
+        comprometido=str(estado.comprometido),
+        consumido=str(estado.consumo),
+        margen_disponible=str(estado.margen),
+    )
 
 
 _ALLOWED_LOGO_TYPES = {
@@ -1212,15 +1391,14 @@ async def list_org_invitations(
     invitations = res.scalars().all()
     out = []
     for inv in invitations:
-        invite_url = invitation_url(inv.token)
+        # Sin `token` ni `invite_url`: lo persistido es el hash, no el secreto.
+        # Para volver a tener el enlace hay que reemitir la invitación.
         out.append(
             InvitationResponse(
                 id=inv.id,
                 email=inv.email,
                 role=inv.role,
                 organization_id=inv.organization_id,
-                token=inv.token,
-                invite_url=invite_url,
                 expires_at=inv.expires_at.isoformat(),
                 accepted_at=inv.accepted_at.isoformat() if inv.accepted_at else None,
                 created_at=inv.created_at.isoformat(),
@@ -1275,7 +1453,7 @@ async def create_org_invitation(
         organization_id=org.id,
         email=payload.email,
         role=payload.role,
-        token=token,
+        token_hash=hash_invitation_token(token),
         expires_at=expires_at,
         invited_by_user_id=current_user.id,
         ad_account_ids=cuentas_concedidas,
@@ -1316,7 +1494,7 @@ async def create_org_invitation(
         email=inv.email,
         role=inv.role,
         organization_id=inv.organization_id,
-        token=inv.token,
+        token=token,
         invite_url=invite_url,
         expires_at=inv.expires_at.isoformat(),
         accepted_at=None,

@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { APP_NAME } from "@/lib/config";
 import { useAdAccount } from "@/components/providers/AdAccountProvider";
 import { badgeIcon } from "@/lib/badge";
+import { modeloSeleccionado, opcionesDelSelector } from "@/lib/ai-models";
 import type {
   Organization, AdAccount, MetaPage, WhatsAppNumber, OrgMember, Invitation,
   CampaignRulesConfig, AIThresholdsConfig,
@@ -26,6 +27,9 @@ export default function Settings() {
   // plantillas. Sin esto no había forma de darse cuenta.
   const [credentialOk, setCredentialOk] = useState(true);
   const [effectiveModel, setEffectiveModel] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [modeloNoElegible, setModeloNoElegible] = useState<string | null>(null);
+  const [aiBudget, setAiBudget] = useState<string>("");
   const [aiProvider, setAiProvider] = useState<string>("");
   const [industry, setIndustry] = useState("");
   const [industries, setIndustries] = useState<{ value: string; label: string }[]>([]);
@@ -218,16 +222,30 @@ export default function Settings() {
         console.error("Error loading rules or thresholds:", err);
       }
 
-      // Solo se ofrecen los modelos del proveedor de IA realmente activo
-      // (según qué API key esté configurada en el backend), para no guardar
-      // un modelo que el proveedor activo no reconocería.
+      // El selector ofrece los modelos DISPONIBLES del catálogo para el
+      // proveedor que la organización declara (spec 10). Un modelo retirado
+      // deja de aparecer sin desplegar código.
       const modelsData = await api.getAiModels(orgData.llm_provider || undefined);
       setAiProvider(modelsData.active_provider);
       setAiModels(modelsData.models);
       setCredentialOk(modelsData.credential_ok ?? true);
       setEffectiveModel(modelsData.effective_model ?? null);
-      const isKnownModel = modelsData.models.some((m) => m.value === orgData.ai_model);
-      setAiModel(isKnownModel ? orgData.ai_model : modelsData.models[0]?.value ?? orgData.ai_model);
+      setConfigError(modelsData.config_error ?? null);
+      setModeloNoElegible(
+        modelsData.modelo_no_elegible ? (modelsData.modelo_no_elegible_motivo ?? "ya no se ofrece") : null,
+      );
+      setAiBudget(orgData.ai_monthly_budget_usd != null ? String(orgData.ai_monthly_budget_usd) : "");
+      // `ai_model` no llega en la experiencia del CLIENTE: proveedor, modelo y
+      // clave son palancas de la agencia (spec 05). Esta pantalla es de
+      // agencia, pero el tipo ya no garantiza el campo, y caer a "" es mejor
+      // que romper el render con `undefined`.
+      //
+      // Se muestra EL MODELO GUARDADO, aunque el catálogo ya no lo ofrezca.
+      // Antes se caía al primero de la lista, y eso hacía que el formulario
+      // mostrara un modelo distinto del configurado: guardar sin tocar nada
+      // cambiaba el modelo —y el precio— sin que nadie lo decidiera. Es el
+      // mismo cambio silencioso que la spec 10 elimina en el backend.
+      setAiModel(modeloSeleccionado(orgData.ai_model, modelsData.models));
     } catch (e) {
       console.error("Error fetching settings:", e);
     } finally {
@@ -370,9 +388,14 @@ export default function Settings() {
     }
   };
 
+  // El enlace solo existe en la respuesta que CREA la invitación: lo que se
+  // guarda es el hash del token, así que al recargar la página ya no hay enlace
+  // que copiar (spec 01). Para volver a tenerlo hay que revocar y volver a
+  // invitar, que es lo correcto: un enlace de invitación es una llave viva.
   const copyInviteLink = (inv: Invitation) => {
+    if (!inv.invite_url) return;
     navigator.clipboard.writeText(inv.invite_url);
-    setCopiedToken(inv.token);
+    setCopiedToken(inv.id);
     setTimeout(() => setCopiedToken(null), 2500);
   };
 
@@ -430,6 +453,10 @@ export default function Settings() {
         display_name: displayName.trim() || null,
         accent_color: accentColor.trim() || null,
         llm_provider: llmProvider || null,
+        // Vacío significa SIN TECHO, que no es lo mismo que cero: cero es "sin
+        // IA". Se mandan como texto para que el backend los convierta a
+        // Decimal sin pasar por float (spec 02).
+        ai_monthly_budget_usd: aiBudget.trim() || null,
       };
       if (llmApiKey.trim()) {
         payload.llm_api_key = llmApiKey.trim();
@@ -846,13 +873,15 @@ export default function Settings() {
                   border: "1px solid rgba(248, 113, 113, 0.3)",
                   color: "var(--color-paper)",
                 }}>
-                  <strong>Esta organización no tiene credencial de IA.</strong> Las
-                  llamadas están saliendo a{" "}
-                  {({ openai: "OpenAI", gemini_direct: "Gemini", openrouter: "OpenRouter" }[aiProvider] ?? aiProvider)}
-                  {effectiveModel ? ` con ${effectiveModel}` : ""} y fallan todas, así que
-                  el analista responde con textos genéricos en vez de analizar tus datos.
+                  <strong>La IA no está disponible para esta organización.</strong>{" "}
+                  {/* El motivo lo da el backend, que es quien resuelve. Antes esta
+                      pantalla lo deducía y podía contar una historia distinta de la
+                      real. */}
+                  {configError ??
+                    `Las llamadas saldrían a ${({ openai: "OpenAI", gemini_direct: "Gemini", openrouter: "OpenRouter" }[aiProvider] ?? aiProvider)}${effectiveModel ? ` con ${effectiveModel}` : ""} y fallarían todas.`}
+                  {" "}El analista responde con textos deterministas en vez de analizar tus datos.
                   {org?.has_llm_api_key
-                    ? " Hay una key guardada, pero no resuelve para esta organización — guardala de nuevo desde acá."
+                    ? " Hay una key guardada; si es de otro proveedor, no se usa — guardá la del proveedor elegido."
                     : " Pegá tu API key abajo y guardá."}
                 </div>
               )}
@@ -919,12 +948,51 @@ export default function Settings() {
                 onChange={(e) => setAiModel(e.target.value)}
                 style={{ background: "var(--color-obsidian)" }}
               >
-                {aiModels.map((m) => (
+                {/* El modelo guardado se ofrece aunque el catálogo ya no lo
+                    liste, para que el desplegable no muestre uno distinto del
+                    configurado. Va marcado, no oculto. */}
+                {opcionesDelSelector(aiModel, aiModels).map((m) => (
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
+              {modeloNoElegible && (
+                <div style={{
+                  marginTop: "0.5rem",
+                  fontSize: "0.8rem",
+                  lineHeight: 1.5,
+                  padding: "0.7rem 0.85rem",
+                  borderRadius: "6px",
+                  background: "rgba(251, 191, 36, 0.1)",
+                  border: "1px solid rgba(251, 191, 36, 0.3)",
+                  color: "var(--color-paper)",
+                }}>
+                  <strong>El modelo configurado ya no se puede elegir:</strong> {modeloNoElegible}.
+                  Sigue funcionando por ahora, pero conviene elegir otro antes de que el
+                  proveedor lo apague. No se cambió solo a propósito: el modelo nuevo puede
+                  costar bastante más y esa es una decisión tuya.
+                </div>
+              )}
               <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
-                Solo se muestran los modelos compatibles con el proveedor seleccionado.
+                Solo se muestran los modelos disponibles del proveedor seleccionado.
+              </span>
+            </div>
+
+            <div>
+              <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "0.35rem" }}>
+                Techo mensual de consumo de IA (USD)
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                className="form-input"
+                value={aiBudget}
+                onChange={(e) => setAiBudget(e.target.value)}
+                placeholder="Sin techo"
+              />
+              <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
+                Al 70 % y al 90 % te avisamos por correo. Al 100 % se pausan las respuestas
+                redactadas por el asistente; el tablero, las métricas y los informes siguen
+                funcionando igual. Vacío = sin techo.
               </span>
             </div>
 
@@ -1374,14 +1442,23 @@ export default function Settings() {
                       <div style={{ fontSize: "11px", color: "var(--color-fog)" }}>Rol: {inv.role}</div>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                      <button
-                        type="button"
-                        onClick={() => copyInviteLink(inv)}
-                        className="btn-secondary"
-                        style={{ padding: "4px 8px", fontSize: "11px" }}
-                      >
-                        {copiedToken === inv.token ? "¡Copiado!" : "Copiar enlace"}
-                      </button>
+                      {inv.invite_url ? (
+                        <button
+                          type="button"
+                          onClick={() => copyInviteLink(inv)}
+                          className="btn-secondary"
+                          style={{ padding: "4px 8px", fontSize: "11px" }}
+                        >
+                          {copiedToken === inv.id ? "¡Copiado!" : "Copiar enlace"}
+                        </button>
+                      ) : (
+                        <span
+                          style={{ fontSize: "11px", color: "var(--color-fog)" }}
+                          title="El enlace solo se muestra al crear la invitación. Revócala y vuelve a invitar para generar uno nuevo."
+                        >
+                          Enlace ya no visible
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleDeleteInvite(inv.id)}

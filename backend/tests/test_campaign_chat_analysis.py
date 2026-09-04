@@ -88,7 +88,12 @@ def test_grounded_or_canonical_falls_back():
 # --- El método del LLM ---
 
 def _org():
-    return Organization(slug="chat-analisis", name="Chat Analisis", ai_model="gpt-5.4-mini")
+    # `_key_env` configura OPENROUTER_API_KEY, así que la organización declara
+    # ese proveedor: desde la spec 10 la credencial de otro proveedor no sirve.
+    return Organization(
+        slug="chat-analisis", name="Chat Analisis",
+        llm_provider="openrouter", ai_model="gpt-5.4-mini",
+    )
 
 
 def _answer_response(payload: str):

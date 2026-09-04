@@ -125,19 +125,28 @@ def test_se_usa_el_modelo_que_eligio_la_organizacion():
     assert pick_model(Org(), "openai") == "gpt-5.6-sol"
 
 
-def test_un_modelo_de_otro_proveedor_cae_al_del_proveedor_activo():
-    """Guardar un modelo de OpenAI y que las llamadas salgan por OpenRouter da
-    un 404 que no dice nada útil."""
+def test_un_modelo_de_otro_proveedor_no_se_sustituye_en_silencio():
+    """Antes se reemplazaba por el primero del proveedor activo, para evitar un
+    404 que no dice nada útil. La spec 10 lo prohíbe: el reemplazo es un cambio
+    silencioso de modelo —y de precio— y el único rastro queda en la factura.
+
+    Ahora la incompatibilidad se detecta donde se ELIGE el modelo
+    (`catalogo.assert_elegible`, en el selector y en el alta), y una
+    organización que igual quede apuntando a un modelo ajeno se señala en
+    `/organizations/ai-models`.
+    """
     class Org:
         ai_model = "gpt-5.6-sol"
-    elegido = pick_model(Org(), "openrouter")
-    assert elegido in {m["value"] for m in MODELS_BY_PROVIDER["openrouter"]}
+    assert pick_model(Org(), "openrouter") == "gpt-5.6-sol"
 
 
-def test_sin_modelo_configurado_usa_el_primero_del_proveedor():
+def test_sin_modelo_configurado_usa_el_default_de_configuracion():
+    """No es una sustitución: es el valor con el que nace una Organización."""
+    from app.config import settings
+
     class Org:
         ai_model = None
-    assert pick_model(Org(), "openai") == MODELS_BY_PROVIDER["openai"][0]["value"]
+    assert pick_model(Org(), "openai") == settings.DEFAULT_AI_MODEL
 
 
 # --- Se tiene que poder saber POR QUE se descartó una respuesta ---

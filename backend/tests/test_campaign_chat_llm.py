@@ -43,8 +43,15 @@ class _FakeAsyncClient:
         return self._response
 
 
-def _org():
-    return Organization(slug="chat-llm-org", name="Chat LLM Org", ai_model="gpt-5.4-mini")
+def _org(provider="openrouter"):
+    # El proveedor se declara: desde la spec 10 no se deduce de qué credencial
+    # esté presente. Estos tests configuran OPENROUTER_API_KEY, así que la
+    # organización tiene que declarar ese proveedor para que la credencial le
+    # sirva — que la clave de OTRO proveedor no valga es el criterio 8.
+    return Organization(
+        slug="chat-llm-org", name="Chat LLM Org",
+        llm_provider=provider, ai_model="gpt-5.4-mini",
+    )
 
 
 @pytest.mark.asyncio
@@ -405,7 +412,10 @@ async def test_el_payload_con_herramientas_desactiva_reasoning_effort(monkeypatc
     cliente = _ClienteQueCaptura()
     monkeypatch.setattr(httpx, "AsyncClient", cliente)
 
-    org = _org()
+    # Este test configura la credencial de OpenAI, así que la organización
+    # declara OpenAI: el `reasoning_effort` que se está probando es un default
+    # de ESE proveedor.
+    org = _org(provider="openai")
     await OpenRouterClient(organization=org).answer_with_tools(
         org, "cuántas campañas activas hay", ChatTools(None, "org-1", "acc-1"),
     )

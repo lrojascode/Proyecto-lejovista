@@ -15,8 +15,11 @@ from app.models.ad_account import AdAccount
 from app.services.ai.llm import OpenRouterClient
 
 
-def _org_acc():
-    org = Organization(slug="fb-org", name="Fallback Org", ai_model="google/gemini-2.5-flash")
+def _org_acc(provider="gemini_direct"):
+    org = Organization(
+        slug="fb-org", name="Fallback Org",
+        llm_provider=provider, ai_model="google/gemini-2.5-flash",
+    )
     acc = AdAccount(organization_id="o", platform="META", external_account_id="1", name="Acc")
     return org, acc
 

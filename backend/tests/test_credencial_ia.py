@@ -35,18 +35,29 @@ def _org(slug="test", key=None, provider=None):
     return org
 
 
-# --- Una key guardada no se tira porque falte la columna vecina ---
+# --- Una key guardada sin proveedor: falla, pero en voz alta ---
 
-def test_una_key_sin_proveedor_igual_se_usa():
-    """`llm_provider` y `llm_api_key_encrypted` son dos columnas y se guardan
-    por separado. Exigir las dos dejaba a la organización sin IA."""
+def test_una_key_sin_proveedor_no_se_usa_pero_tampoco_se_calla():
+    """Antes esta key se usaba, deduciendo el proveedor de su forma. La spec 10
+    lo prohíbe: rotar la credencial de un cliente por una de otro proveedor le
+    cambiaba proveedor, modelo y precio sin que nadie lo decidiera.
+
+    Lo que NO cambia es la lección del incidente que originó este archivo: la
+    credencial no se descarta en silencio. Ahora el fallo dice qué falta y dónde
+    cargarlo, que es mejor que resolver a un proveedor que nadie eligió.
+    """
+    from app.services.ai import proveedor
+
     org = _org(key="sk-proj-abc123", provider=None)
+    cliente = OpenRouterClient(organization=org)
 
-    api_key, url, provider, _ = OpenRouterClient(organization=org)._resolve_config(org)
+    api_key, _url, _provider, _ = cliente._resolve_config(org)
 
-    assert api_key == "sk-proj-abc123"
-    assert provider == "openai"
-    assert "api.openai.com" in url
+    assert api_key == "", "sin proveedor declarado no se llama a nadie"
+    assert isinstance(cliente.config_error, proveedor.ProveedorNoConfigurado)
+    # El mensaje tiene que ser accionable: quién y qué hacer.
+    assert "test" in str(cliente.config_error)
+    assert "Configuración" in str(cliente.config_error)
 
 
 @pytest.mark.parametrize("key,esperado", [
@@ -54,9 +65,11 @@ def test_una_key_sin_proveedor_igual_se_usa():
     ("sk-or-v1-abc", "openrouter"),
     ("AIzaSyAbc123", "gemini_direct"),
 ])
-def test_el_proveedor_se_deduce_por_la_forma_de_la_key(key, esperado):
-    """Mandar una credencial de OpenAI al endpoint de OpenRouter da un 401 que
-    no explica nada. La key sola alcanza para saber a dónde va."""
+def test_la_forma_de_la_key_sigue_sirviendo_para_diagnosticar(key, esperado):
+    """`_proveedor_por_forma` ya no ELIGE nada (spec 10). Se conserva como
+    diagnóstico: lo usa la migración que fijó el proveedor de facto de cada
+    organización, y sirve para avisar "esta clave no parece de este proveedor".
+    """
     assert llm._proveedor_por_forma(key) == esperado
 
 

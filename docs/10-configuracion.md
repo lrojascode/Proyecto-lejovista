@@ -40,17 +40,30 @@ Toda la configuración del backend vive en `app/config.py` (`pydantic-settings`)
 |----------|---------|-------------|
 | `META_APP_ID` | `mock_app_id` | App ID de Meta |
 | `META_APP_SECRET` | `mock_app_secret` | App Secret |
-| `META_API_VERSION` | `v25.0` | Versión de la Graph/Marketing API (las versiones expiran ~2 años) |
+| `META_API_VERSION` | `v26.0` | Versión de la Graph/Marketing API. La fuente de verdad es `meta_ads/version.py`; CI comprueba que todos los sitios coincidan (spec 08) |
+| `BUSINESS_TIMEZONE` | `America/Lima` | Zona en la que se cuentan los meses calendario del límite de presupuesto. Tiene que coincidir con la zona en la que Meta reporta las fechas de la cuenta |
+| `WS_ALLOW_QUERY_TOKEN` | `false` | Admite el `?token=` obsoleto en el handshake del WebSocket. Solo durante el despliegue de la spec 01, mientras queden clientes viejos cargados |
 
 ### IA / LLM
 | Variable | Default | Descripción |
 |----------|---------|-------------|
-| `OPENAI_API_KEY` | `""` | Si está, el proveedor activo es **OpenAI** (mayor prioridad) |
-| `GEMINI_API_KEY` | `""` | Si está (y sin OpenAI), proveedor **Gemini directo** |
-| `OPENROUTER_API_KEY` | `""` | Fallback: proveedor **OpenRouter** |
-| `DEFAULT_AI_MODEL` | `google/gemini-2.5-flash` | Modelo por defecto si la org no fija otro |
+| `OPENAI_API_KEY` | `""` | Credencial de OpenAI. **Ya no elige proveedor** |
+| `GEMINI_API_KEY` | `""` | Credencial de Gemini directo |
+| `OPENROUTER_API_KEY` | `""` | Credencial de OpenRouter |
+| `DEFAULT_AI_MODEL` | `google/gemini-2.5-flash` | Modelo con el que nace una org nueva |
+| `DEFAULT_AI_PROVIDER` | `openai` | Proveedor que se **fija** en una org nueva. Vacío = nace sin proveedor |
+| `AI_DEFAULT_MONTHLY_BUDGET_USD` | `""` | Techo mensual de IA para orgs nuevas. Vacío = sin techo |
+| `AI_MAX_REINTENTOS` | `2` | Reintentos **adicionales** por llamada (0 = un solo intento) |
+| `AI_MAX_LLAMADAS_POR_MINUTO` | `30` | Llamadas al modelo por minuto y organización (0 = sin límite) |
+| `GROUNDING_MODO_REGISTRO` | `false` | La guarda **anota** lo que descartaría y no descarta |
 
-> El proveedor se auto-selecciona por prioridad OpenAI > Gemini > OpenRouter (`OpenRouterClient.__init__`). El modelo por organización se guarda en `Organization.ai_model`, pero el selector solo ofrece modelos del proveedor activo.
+> **Desde la spec 10 las tres claves NO eligen proveedor.** El proveedor sale de `Organization.llm_provider` y las claves solo aportan la credencial **de ese** proveedor; si falta, la llamada falla de forma visible en vez de salir por otro. Antes, añadir `OPENAI_API_KEY` movía a todas las organizaciones sin clave propia de OpenRouter a OpenAI en el siguiente reinicio — otro modelo, otro precio, sin registro (ADR-26).
+>
+> `DEFAULT_AI_PROVIDER` se aplica **al crear** la organización y se escribe en su fila. No se recalcula después: esa es la diferencia con la cascada anterior.
+>
+> Los modelos elegibles y sus precios viven en el catálogo (`ai_model_catalog`), no en el código. Retirar un modelo es un cambio de dato.
+>
+> `GROUNDING_MODO_REGISTRO=true` es el modo de activación del endurecimiento del grounding: se mide el falso positivo sobre tráfico real (`GET /ai-usage/discards`) antes de encender el descarte. Ver [18-motor-ia](18-motor-ia.md) §10.
 
 ### Observabilidad y retención
 | Variable | Default | Descripción |
@@ -59,10 +72,11 @@ Toda la configuración del backend vive en `app/config.py` (`pydantic-settings`)
 | `LOG_LEVEL` | `INFO` | Nivel de logging |
 | `SNAPSHOT_RETENTION_DAYS` | `180` | Días antes de archivar snapshots (`D-3`) |
 | `MEDIA_ROOT` | `/app/media` | Carpeta de imágenes subidas (compartida backend↔worker de creación) |
+| `GIT_SHA` | `desconocido` | Commit del que salió la imagen. **No se pone a mano**: lo hornea el `Dockerfile` como build arg, y `GET /version` lo publica. En desarrollo queda `desconocido`, que es la respuesta honesta cuando el código viene de un volumen y no de un artefacto construido |
 
 ## 2. Variables del frontend (`NEXT_PUBLIC_*`)
 
-Inlinadas en el bundle del cliente durante `npm run build` (build args del `Dockerfile` / `build-push.sh`):
+Inlinadas en el bundle del cliente durante `pnpm run build` (build args del `Dockerfile` / `build-push.sh`). Puestas como variables de runtime **no llegan al navegador**: el valor se fija al construir:
 
 | Variable | Descripción |
 |----------|-------------|

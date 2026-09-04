@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from datetime import datetime, date
+from decimal import Decimal
 from typing import List, Dict, Any, Literal, Optional
 
 # --- AUTH SCHEMAS ---
@@ -61,10 +62,17 @@ class OrganizationResponse(BaseModel):
     display_name: Optional[str] = None
     logo_url: Optional[str] = None
     accent_color: Optional[str] = None
-    ai_model: str
+    # Opcionales porque la experiencia del CLIENTE no los recibe: proveedor,
+    # modelo y clave son palancas de la agencia (spec 05). Ausentes, no vacios:
+    # devolver `null` diria "no hay configuracion", que es distinto de "esto no
+    # es de tu altura".
+    ai_model: Optional[str] = None
     llm_provider: Optional[str] = None
-    has_llm_api_key: bool = False
+    has_llm_api_key: Optional[bool] = None
     llm_api_key_preview: Optional[str] = None
+    # Igual que proveedor y modelo, es palanca de la agencia y no se muestra al
+    # cliente (spec 05).
+    ai_monthly_budget_usd: Optional[Decimal] = None
     max_budget: float
     status: str
     industry: Optional[str] = None
@@ -83,6 +91,10 @@ class OrganizationUpdate(BaseModel):
     llm_provider: Optional[str] = None
     llm_api_key: Optional[str] = None
     max_budget: Optional[float] = None
+    # Techo mensual de consumo de IA en USD (spec 10). Llega como texto o número
+    # y se convierte a `Decimal` en el endpoint: es una cifra que decide si se
+    # bloquean llamadas, y no se resuelve en coma flotante. Vacío = sin techo.
+    ai_monthly_budget_usd: Optional[str] = None
     industry: Optional[str] = None
 
 class CampaignRulesConfigUpdate(BaseModel):

@@ -94,42 +94,84 @@ async def test_mock_narrative_uses_real_numbers():
     assert money(12.00) not in text
 
 
-# --- Routing multi-proveedor: OpenAI > Gemini directo > OpenRouter (fallback) ---
+# --- Selección de proveedor: EXPLÍCITA por Organización (spec 10) ---
+#
+# Estos tres tests comprobaban la cascada de credenciales de entorno —OpenAI >
+# Gemini > OpenRouter— que la spec 10 deroga (ADR-04, mecanismo de selección).
+# Se reescriben contra el contrato nuevo en vez de borrarse: lo que antes era la
+# garantía es ahora exactamente el fallo que hay que impedir, y un test que lo
+# afirme al revés es la mejor forma de que no vuelva.
+
+
+def _org(provider=None, model="gpt-5.6-luna", clave=None):
+    from app.models.organization import Organization
+    org = Organization(slug="acme", name="Acme", llm_provider=provider, ai_model=model)
+    if clave:
+        org.set_llm_api_key(clave)
+    return org
+
+
 @pytest.mark.asyncio
-async def test_llm_client_routes_to_openai_when_key_present(monkeypatch):
+async def test_el_proveedor_sale_de_la_organizacion_y_no_de_la_clave_presente(monkeypatch):
+    """La credencial global aporta la clave del proveedor DECLARADO, no lo elige."""
     from app.services.ai.llm import OpenRouterClient
     from app.config import settings
+
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test-openai")
-    monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
-    client = OpenRouterClient()
-    assert client.api_key == "sk-test-openai"
-    assert client.base_url == "https://api.openai.com/v1/chat/completions"
-    assert client.is_gemini_direct is False
-
-
-@pytest.mark.asyncio
-async def test_llm_client_routes_to_gemini_direct_without_openai_key(monkeypatch):
-    from app.services.ai.llm import OpenRouterClient
-    from app.config import settings
-    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "gm-test-key")
-    client = OpenRouterClient()
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "or-test-key")
+
+    client = OpenRouterClient(organization=_org(provider="gemini_direct"))
+
+    assert client.provider == "gemini_direct"
     assert client.api_key == "gm-test-key"
-    assert client.base_url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
     assert client.is_gemini_direct is True
+    # La clave de OpenAI está presente y es la primera de la cascada anterior.
+    assert client.api_key != "sk-test-openai"
 
 
 @pytest.mark.asyncio
-async def test_llm_client_falls_back_to_openrouter_without_own_keys(monkeypatch):
+async def test_anadir_la_clave_de_otro_proveedor_no_cambia_el_proveedor(monkeypatch):
+    """Criterio 9. Era el cambio silencioso más caro que tenía el sistema:
+    añadir OPENAI_API_KEY al entorno movía a TODAS las organizaciones sin clave
+    propia de OpenRouter a OpenAI en el siguiente reinicio."""
     from app.services.ai.llm import OpenRouterClient
     from app.config import settings
+
     monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "")
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "or-test-key")
-    client = OpenRouterClient()
-    assert client.api_key == "or-test-key"
-    assert client.base_url == "https://openrouter.ai/api/v1/chat/completions"
-    assert client.is_gemini_direct is False
+
+    org = _org(provider="openrouter")
+    antes = OpenRouterClient(organization=org)
+    assert antes.provider == "openrouter"
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "sk-test-openai")
+    despues = OpenRouterClient(organization=org)
+
+    assert despues.provider == "openrouter"
+    assert despues.api_key == "or-test-key"
+    assert despues.base_url == antes.base_url
+
+
+@pytest.mark.asyncio
+async def test_retirar_la_clave_del_proveedor_configurado_falla_de_forma_visible(monkeypatch):
+    """Criterio 8. Sin la clave de SU proveedor no se usa la de otro: se declara
+    el fallo, con el motivo, en vez de resolver a un proveedor que nadie eligió."""
+    from app.services.ai.llm import OpenRouterClient
+    from app.services.ai import proveedor
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "OPENAI_API_KEY", "")
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "gm-test-key")
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "or-test-key")
+
+    client = OpenRouterClient(organization=_org(provider="openai"))
+
+    assert client.api_key == ""
+    assert client.provider == "openai"
+    assert isinstance(client.config_error, proveedor.CredencialAusente)
+    assert "openai" in str(client.config_error)
 
 
 @pytest.mark.asyncio
@@ -165,7 +207,12 @@ async def test_llm_client_strips_google_prefix_for_gemini_direct(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
 
-    org = Organization(slug="gm-org", name="Gemini Org", ai_model="google/gemini-2.5-flash")
+    # El proveedor se declara: desde la spec 10 no se deduce de qué clave haya
+    # en el entorno. Lo que este test cuida sigue siendo el pelado del prefijo.
+    org = Organization(
+        slug="gm-org", name="Gemini Org",
+        llm_provider="gemini_direct", ai_model="google/gemini-2.5-flash",
+    )
     acc = AdAccount(organization_id="o", platform="META", external_account_id="1", name="Acc")
     await OpenRouterClient().analyze_campaigns(org, acc, "sin alertas", {})
 
@@ -1587,13 +1634,30 @@ async def test_org_custom_llm_key_and_client_resolution(async_client: AsyncClien
     assert "api.openai.com" in client.base_url
 
     # 4. Actualizar vía PUT /organizations/my
+    #
+    # Cambiar SOLO el proveedor se rechaza desde la spec 10: el modelo guardado
+    # no existe en el catálogo del proveedor nuevo, y elegir uno automáticamente
+    # sería el cambio silencioso de modelo —y de precio— que la spec prohíbe. El
+    # error dice exactamente eso, para que se resuelva sin leer código.
     new_key = "AIzaSyTestGoogleGeminiKey9999"
-    res = await async_client.put(
+    solo_proveedor = await async_client.put(
         "/api/v1/organizations/my",
         json={"llm_provider": "gemini_direct", "llm_api_key": new_key},
         headers=headers,
     )
-    assert res.status_code == 200
+    assert solo_proveedor.status_code == 400
+    assert solo_proveedor.json()["detail"]["code"] == "AI_MODEL_NOT_ELIGIBLE"
+
+    res = await async_client.put(
+        "/api/v1/organizations/my",
+        json={
+            "llm_provider": "gemini_direct",
+            "ai_model": "gemini-2.5-flash",
+            "llm_api_key": new_key,
+        },
+        headers=headers,
+    )
+    assert res.status_code == 200, res.text
     data = res.json()
     assert data["llm_provider"] == "gemini_direct"
     assert data["has_llm_api_key"] is True

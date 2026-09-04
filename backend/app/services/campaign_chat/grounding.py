@@ -287,6 +287,20 @@ def _parse_float_candidates(raw: str) -> List[float]:
     return candidates
 
 
+def motivo_de_rechazo(facts_data: Any, answer: str) -> Optional[Tuple[str, Optional[str]]]:
+    """Como `numbers_are_grounded`, pero devuelve (motivo, detalle) o `None`.
+
+    Existe porque "no pasó la guarda" no es un diagnóstico. Que el modelo
+    invente un identificador y que calcule un promedio son fallos distintos:
+    el primero suele ser el modelo citando de memoria y el segundo, un prompt
+    que pide una comparación que no viene calculada en los datos. Se arreglan en
+    sitios distintos, y con un motivo único la diferencia solo estaba en el log.
+
+    Los motivos son los de `app/models/ai_discard.py`.
+    """
+    return _evaluar(facts_data, answer)
+
+
 def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
     """¿Todos los números de la respuesta están respaldados en `facts_data`?
 
@@ -299,20 +313,29 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
     distinguir "el analista no funciona" de "el analista funciona y esta
     respuesta puntual se descartó bien".
     """
+    return _evaluar(facts_data, answer) is None
+
+
+def _evaluar(facts_data: Any, answer: str) -> Optional[Tuple[str, Optional[str]]]:
+    """El motivo del rechazo, o `None` si la respuesta pasa.
+
+    Es el cuerpo que antes vivía en `numbers_are_grounded`. Se separó para que
+    el motivo llegue al registro de descartes en vez de quedarse en el log.
+    """
     answer = (answer or "").strip()
     if not answer:
         logger.warning("Respuesta del analista descartada: vacía.")
-        return False
+        return ("vacia", None)
     if len(answer) > MAX_ANALYSIS_CHARS:
         logger.warning(
             "Respuesta del analista descartada: %d caracteres, el tope es %d. "
             "Si esto se repite, el formato pedido no entra en el tope.",
             len(answer), MAX_ANALYSIS_CHARS,
         )
-        return False
+        return ("demasiado_larga", str(len(answer)))
     if _URL_RE.search(answer):
         logger.warning("Respuesta del analista descartada: contiene un enlace.")
-        return False
+        return ("enlace", None)
 
     gset = GroundingSet.from_data(facts_data)
 
@@ -349,7 +372,7 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
                 "Respuesta del analista descartada: el identificador %r no está en los datos.",
                 raw_num,
             )
-            return False
+            return ("identificador_ajeno", raw_num)
 
         candidates = _parse_float_candidates(raw_num)
         if not candidates:
@@ -357,7 +380,7 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
                 "Respuesta del analista descartada: no se pudo interpretar el número %r.",
                 raw_num,
             )
-            return False
+            return ("cifra_sin_respaldo", raw_num)
 
         # Si ninguna interpretación numérica de este token tiene respaldo, rechazar
         if not any(gset.contains(c, required_unit=req_unit) for c in candidates):
@@ -366,9 +389,9 @@ def numbers_are_grounded(facts_data: Any, answer: str) -> bool:
                 "O el modelo lo calculó, o el dato no se le pasó en los facts.",
                 raw_num, req_unit.name if hasattr(req_unit, "name") else req_unit,
             )
-            return False
+            return ("cifra_sin_respaldo", raw_num)
 
-    return True
+    return None
 
 
 def limpiar_enlaces(texto: str) -> str:

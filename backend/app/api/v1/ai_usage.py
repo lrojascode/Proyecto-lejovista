@@ -14,8 +14,15 @@ from app.database import get_db
 from app.models.user import User
 from app.models.ai_token_usage import AITokenUsage
 from app.models.ad_account import AdAccount
-from app.utils.security import get_current_user
-from app.schemas.response_schemas import AiUsageResponse
+from app.models.ai_discard import AIDiscard
+from app.models.organization import Organization
+from app.services.ai import descartes, presupuesto
+from app.utils.security import get_current_user, require_agency
+from app.schemas.response_schemas import (
+    AiBudgetResponse,
+    AiDiscardsResponse,
+    AiUsageResponse,
+)
 
 router = APIRouter(prefix="/ai-usage", tags=["ai-usage"])
 
@@ -174,4 +181,92 @@ async def get_ai_usage(
         "by_model": by_model,
         "by_ad_account": by_ad_account,
         "daily_timeline": daily_timeline,
+    }
+
+
+@router.get("/budget", response_model=AiBudgetResponse)
+async def get_ai_budget(
+    current_user: User = Depends(require_agency),
+    db: AsyncSession = Depends(get_db),
+):
+    """Techo, consumo y margen de IA del mes en curso (spec 10).
+
+    Solo agencia: el proveedor, el modelo y el consumo son palancas suyas y no
+    se muestran al cliente (dependencia con `05`).
+
+    Sale de `presupuesto.estado_del_mes`, la misma función que usa la compuerta.
+    Si la pantalla lo calculara por su cuenta podría mostrar margen mientras el
+    backend bloquea, que es la clase de discrepancia más difícil de diagnosticar
+    desde una captura de pantalla.
+    """
+    org = await db.get(Organization, current_user.organization_id)
+    estado = await presupuesto.estado_del_mes(db, current_user.organization_id, org=org)
+    return estado.as_dict()
+
+
+@router.get("/discards", response_model=AiDiscardsResponse)
+async def get_ai_discards(
+    days: int = Query(30, ge=1, le=365),
+    current_user: User = Depends(require_agency),
+    db: AsyncSession = Depends(get_db),
+):
+    """Descartes de salidas del modelo, por motivo (spec 10, observabilidad).
+
+    Es lo que convierte "el chat suena a plantilla" en un diagnóstico. Una tasa
+    de descarte que sube de golpe después de tocar un prompt es la señal más
+    temprana de que se rompió, y sin este desglose el síntoma tarda semanas en
+    atribuirse a su causa — ya pasó una vez.
+
+    `aplicados` frente a `solo_registrados` separa los descartes reales de los
+    del modo de registro, que es como se mide el falso positivo sobre tráfico
+    real antes de encender el descarte.
+    """
+    desde = datetime.datetime.utcnow() - datetime.timedelta(days=max(1, days))
+    filtro = [
+        AIDiscard.organization_id == current_user.organization_id,
+        AIDiscard.created_at >= desde,
+    ]
+
+    filas = (await db.execute(
+        select(
+            AIDiscard.motivo,
+            AIDiscard.feature,
+            AIDiscard.aplicado,
+            func.count().label("veces"),
+        )
+        .where(*filtro)
+        .group_by(AIDiscard.motivo, AIDiscard.feature, AIDiscard.aplicado)
+        .order_by(func.count().desc())
+    )).all()
+
+    por_motivo = [
+        {
+            "motivo": r.motivo,
+            "feature": r.feature,
+            "aplicado": bool(r.aplicado),
+            "veces": int(r.veces),
+        }
+        for r in filas
+    ]
+
+    llamadas = (await db.execute(
+        select(func.count()).select_from(AITokenUsage).where(
+            AITokenUsage.organization_id == current_user.organization_id,
+            AITokenUsage.created_at >= desde,
+        )
+    )).scalar() or 0
+
+    aplicados = sum(f["veces"] for f in por_motivo if f["aplicado"])
+    solo_registrados = sum(f["veces"] for f in por_motivo if not f["aplicado"])
+
+    return {
+        "days": days,
+        "llamadas": int(llamadas),
+        "aplicados": aplicados,
+        "solo_registrados": solo_registrados,
+        # Sobre las llamadas del periodo. `None` y no 0 cuando no hubo ninguna:
+        # una tasa de descarte sin llamadas no significa "perfecto".
+        "tasa": round(aplicados / llamadas, 4) if llamadas else None,
+        "modo_registro": not descartes.descarte_activo(),
+        "por_motivo": por_motivo,
     }

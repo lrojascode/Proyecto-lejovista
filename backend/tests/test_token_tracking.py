@@ -65,15 +65,42 @@ async def test_record_token_usage_noop_without_usage(db_session, monkeypatch):
     await record_token_usage(None, "openai", "gpt-5.4", {"prompt_tokens": 1})
 
 
-def test_los_cuatro_modelos_permitidos_tienen_precio():
+def test_todo_modelo_elegible_del_catalogo_tiene_precio():
     """Un modelo sin precio reporta costo `None`, que en Uso de IA se ve como
-    sin dato. Los cuatro que el cliente puede elegir tienen que estar."""
-    from app.services.ai.llm import MODELS_BY_PROVIDER
-    from app.services.ai.token_tracking import estimate_cost_usd
+    sin dato — y, desde la spec 10, aporta CERO a la suma que decide contra el
+    presupuesto mensual. Un modelo caro sin tarifa consumiría presupuesto
+    invisible para siempre.
 
-    for modelo in MODELS_BY_PROVIDER["openai"]:
-        costo = estimate_cost_usd(modelo["value"], 1_000, 1_000)
-        assert costo is not None, f"{modelo['value']} no tiene precio cargado"
+    Antes esto se comprobaba contra `MODELS_BY_PROVIDER`, y los precios vivían
+    en otro diccionario que nadie obligaba a coincidir. En el catálogo son la
+    misma fila, así que se comprueba sobre la semilla completa y no solo sobre
+    un proveedor."""
+    from app.services.ai.catalogo import SEMILLA
+
+    for entrada in SEMILLA:
+        assert entrada.get("input"), f"{entrada['model']}: sin tarifa de entrada"
+        assert entrada.get("output"), f"{entrada['model']}: sin tarifa de salida"
+
+
+def test_el_catalogo_y_el_respaldo_en_codigo_no_pueden_divergir():
+    """`MODELS_BY_PROVIDER` sobrevive como respaldo de `test_key`, que corre sin
+    sesión de base. Que existan dos listas es el problema que el catálogo vino a
+    eliminar, así que al menos tienen que decir lo mismo: sin esta comprobación,
+    agregar un modelo al catálogo y olvidarlo en el respaldo devuelve el
+    desalineamiento por la puerta de atrás."""
+    from app.services.ai.catalogo import SEMILLA
+    from app.services.ai.llm import MODELS_BY_PROVIDER
+
+    del_catalogo = {(e["provider"], e["model"]) for e in SEMILLA}
+    del_codigo = {
+        (proveedor, m["value"])
+        for proveedor, modelos in MODELS_BY_PROVIDER.items()
+        for m in modelos
+    }
+    assert del_catalogo == del_codigo, (
+        f"solo en el catálogo: {sorted(del_catalogo - del_codigo)}; "
+        f"solo en el código: {sorted(del_codigo - del_catalogo)}"
+    )
 
 
 def test_las_tarifas_de_gpt_5_6():
